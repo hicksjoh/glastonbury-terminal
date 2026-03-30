@@ -45,7 +45,38 @@ async function getAlpacaContext(): Promise<string> {
     console.error('Alpaca context fetch error:', err);
   }
 
-  return `${accountStr}\n\n${positionsStr}\n\n${ordersStr}`;
+  // Fetch options positions + Greeks
+  let optionsStr = 'Options Positions: None';
+  try {
+    const optionsRes = await fetch(`${process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : 'http://localhost:3000'}/api/options/positions`, {
+      headers: { 'Content-Type': 'application/json' },
+    });
+    if (optionsRes.ok) {
+      const optData = await optionsRes.json();
+      const optPositions = optData.positions || [];
+      const greeks = optData.greeks;
+
+      if (optPositions.length > 0) {
+        optionsStr = `Options Positions (${optPositions.length}):\n${optPositions.map((p: { underlying: string; contractType: string; strike: number; expiration: string; direction: string; quantity: number; pnl: number; dte: number; delta: number; theta: number }) =>
+          `  - ${p.underlying} ${p.expiration} $${p.strike} ${p.contractType.toUpperCase()} | ${p.direction} ${p.quantity}x | P&L: $${p.pnl.toFixed(0)} | DTE: ${p.dte} | Delta: ${p.delta.toFixed(2)} | Theta: $${p.theta.toFixed(2)}/day`
+        ).join('\n')}`;
+
+        if (greeks) {
+          optionsStr += `\n\nPortfolio Greeks:\n  - Net Delta: ${greeks.netDelta.toFixed(2)} (≈${greeks.sharesEquivalent} shares equivalent)\n  - Daily Theta: $${greeks.netTheta.toFixed(2)} ($${greeks.monthlyTheta.toFixed(0)}/month)\n  - Net Gamma: ${greeks.netGamma.toFixed(3)}\n  - Net Vega: ${greeks.netVega.toFixed(2)}`;
+        }
+
+        // Flag expiring positions
+        const expiringSoon = optPositions.filter((p: { dte: number }) => p.dte <= 7);
+        if (expiringSoon.length > 0) {
+          optionsStr += `\n\n⚠️ EXPIRING SOON (≤7 DTE): ${expiringSoon.map((p: { underlying: string; dte: number; strike: number; contractType: string }) => `${p.underlying} $${p.strike}${p.contractType[0].toUpperCase()} (${p.dte}d)`).join(', ')}`;
+        }
+      }
+    }
+  } catch {
+    // Options data not available — continue without it
+  }
+
+  return `${accountStr}\n\n${positionsStr}\n\n${optionsStr}\n\n${ordersStr}`;
 }
 
 async function getSupabaseContext(): Promise<string> {

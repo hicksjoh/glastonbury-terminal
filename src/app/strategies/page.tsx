@@ -4,7 +4,9 @@ import { AppShell } from '@/components/layout/AppShell';
 import { MOCK_STRATEGIES, MOCK_AUDIT_LOG } from '@/lib/data';
 import { Strategy, AuditLogEntry } from '@/types';
 import { formatDistanceToNow } from 'date-fns';
-import { AlertTriangle } from 'lucide-react';
+import { AlertTriangle, Settings } from 'lucide-react';
+import WheelTracker from '@/components/options/WheelTracker';
+import WheelSettings from '@/components/options/WheelSettings';
 
 const STATUS_COLORS: Record<string, string> = {
   active: '#22c55e',
@@ -103,6 +105,7 @@ export default function StrategiesPage() {
   const [strategies, setStrategies] = useState<Strategy[]>(MOCK_STRATEGIES);
   const [auditEntries, setAuditEntries] = useState<AuditLogEntry[]>(MOCK_AUDIT_LOG);
   const [killSwitchActive, setKillSwitchActive] = useState(false);
+  const [showWheelSettings, setShowWheelSettings] = useState(false);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -180,6 +183,42 @@ export default function StrategiesPage() {
         {strategies.map(s => (
           <StrategyCard key={s.id} strategy={s} onToggle={handleToggle} />
         ))}
+      </div>
+
+      {/* Covered Call Wheel Section */}
+      <div style={{ marginBottom: 40 }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
+          <div>
+            <h2 style={{ fontSize: 18, fontWeight: 700, color: '#e8e8e8', margin: 0 }}>Covered Call Wheel</h2>
+            <p style={{ color: '#6b6b80', fontSize: 12, marginTop: 4 }}>Track your wheel strategy cycles</p>
+          </div>
+          <button
+            onClick={() => setShowWheelSettings(s => !s)}
+            style={{
+              display: 'flex', alignItems: 'center', gap: 6,
+              padding: '8px 14px', backgroundColor: '#1a1a24',
+              border: '1px solid #2a2a3a', borderRadius: 8,
+              color: '#6b6b80', cursor: 'pointer', fontSize: 12,
+            }}
+          >
+            <Settings size={14} />
+            Wheel Settings
+          </button>
+        </div>
+
+        <div style={{ display: 'grid', gridTemplateColumns: showWheelSettings ? '1fr 320px' : '1fr', gap: 20 }}>
+          <div className="terminal-card">
+            <WheelTracker />
+          </div>
+          {showWheelSettings && (
+            <div className="terminal-card">
+              <div style={{ fontSize: 12, color: '#6b6b80', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 16 }}>
+                Wheel Parameters
+              </div>
+              <WheelSettings />
+            </div>
+          )}
+        </div>
       </div>
 
       {/* Audit Log Table */}

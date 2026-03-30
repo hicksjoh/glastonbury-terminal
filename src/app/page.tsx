@@ -196,6 +196,10 @@ export default function DashboardPage() {
   // Portfolio history (sparkline)
   const [historyPoints, setHistoryPoints] = useState<number[]>([]);
 
+  // Options stats
+  const [optionsPnl, setOptionsPnl] = useState(0);
+  const [netTheta, setNetTheta] = useState(0);
+
   // Audit
   const [auditLog, setAuditLog] = useState<AuditLogEntry[]>(MOCK_AUDIT_LOG);
 
@@ -258,6 +262,16 @@ export default function DashboardPage() {
     if (Array.isArray(auditRes) && auditRes.length > 0) {
       setAuditLog(auditRes);
     }
+
+    // Fetch options stats
+    try {
+      const optRes = await fetch('/api/options/positions').then(r => r.ok ? r.json() : null).catch(() => null);
+      if (optRes?.positions && optRes.positions.length > 0) {
+        const totalOptPnl = optRes.positions.reduce((s: number, p: { pnl: number }) => s + (p.pnl || 0), 0);
+        setOptionsPnl(totalOptPnl);
+        if (optRes.greeks?.netTheta) setNetTheta(optRes.greeks.netTheta);
+      }
+    } catch { /* options data optional */ }
 
     setLoading(false);
   }, []);
@@ -424,6 +438,24 @@ export default function DashboardPage() {
             <div style={{ fontSize: 10, color: '#888', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 6 }}>Active Strategies</div>
             <div style={{ fontSize: 20, fontWeight: 700, color: '#c4a6ff', fontFamily: "'JetBrains Mono', monospace" }}>3</div>
             <div style={{ fontSize: 11, color: '#555', marginTop: 4 }}>1 paused</div>
+          </GlassCard>
+
+          {/* Options P&L */}
+          <GlassCard style={{ flex: '1 1 150px', padding: '16px 18px' }} onClick={() => router.push('/trading?tab=options')}>
+            <div style={{ fontSize: 10, color: '#888', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 6 }}>Options P&amp;L</div>
+            <div style={{ fontSize: 20, fontWeight: 700, color: optionsPnl >= 0 ? '#4ade80' : '#f87171', fontFamily: "'JetBrains Mono', monospace" }}>
+              {optionsPnl !== 0 ? `${optionsPnl >= 0 ? '+' : ''}${fmtMoney(Math.round(optionsPnl))}` : '—'}
+            </div>
+            <div style={{ fontSize: 11, color: '#555', marginTop: 4 }}>Open positions</div>
+          </GlassCard>
+
+          {/* Net Theta */}
+          <GlassCard style={{ flex: '1 1 150px', padding: '16px 18px' }} onClick={() => router.push('/trading?tab=options')}>
+            <div style={{ fontSize: 10, color: '#888', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 6 }}>Daily Theta</div>
+            <div style={{ fontSize: 20, fontWeight: 700, color: netTheta >= 0 ? '#4ade80' : '#f87171', fontFamily: "'JetBrains Mono', monospace" }}>
+              {netTheta !== 0 ? `$${netTheta.toFixed(0)}/day` : '—'}
+            </div>
+            <div style={{ fontSize: 11, color: '#555', marginTop: 4 }}>{netTheta !== 0 ? `~$${(netTheta * 30).toFixed(0)}/mo` : 'No options'}</div>
           </GlassCard>
 
           {/* VIX */}

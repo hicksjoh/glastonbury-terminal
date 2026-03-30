@@ -8,9 +8,11 @@ import MarkdownRenderer from '@/components/MarkdownRenderer';
 const SUGGESTED = [
   'What covered call should I write this week?',
   'Am I on track for $50M?',
-  'Analyze my CR3 territory performance',
+  'Is IV high enough to sell premium on NVDA?',
+  "What's my Greeks exposure?",
+  'Build me an income strategy',
+  'Should I roll my expiring positions?',
   'Should I diversify my RSUs now?',
-  "What's my biggest risk right now?",
   'Tax-loss harvest opportunities?',
 ];
 

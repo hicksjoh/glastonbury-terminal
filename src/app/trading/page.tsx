@@ -9,6 +9,8 @@ import OptionsChain from '@/components/options/OptionsChain';
 import OptionsOrderForm from '@/components/options/OptionsOrderForm';
 import type { OrderPreview } from '@/components/options/OptionsOrderForm';
 import OrderConfirmation from '@/components/options/OrderConfirmation';
+import OptionsPositions from '@/components/options/OptionsPositions';
+import GreeksSummary from '@/components/options/GreeksSummary';
 import type { OptionChainEntry } from '@/lib/options/types';
 
 interface MockPosition {
@@ -102,6 +104,9 @@ function TradingPage() {
   const [selectedOption, setSelectedOption] = useState<OptionChainEntry | null>(null);
   const [selectedOptionSide, setSelectedOptionSide] = useState<'call' | 'put'>('call');
   const [confirmOrder, setConfirmOrder] = useState<OrderPreview | null>(null);
+  const [optionsPnl, setOptionsPnl] = useState(0);
+  const [netTheta, setNetTheta] = useState(0);
+  const [positionSubTab, setPositionSubTab] = useState<'all' | 'stocks' | 'options'>('all');
 
   useEffect(() => {
     fetch('/api/alpaca/account')
@@ -128,6 +133,18 @@ function TradingPage() {
             currentPrice: parseFloat(p.current_price),
           }));
           setPositions(mapped);
+        }
+      })
+      .catch(() => {});
+
+    // Fetch options stats
+    fetch('/api/options/positions')
+      .then(r => r.ok ? r.json() : null)
+      .then(data => {
+        if (data?.positions?.length > 0) {
+          const totalPnl = data.positions.reduce((s: number, p: { pnl: number }) => s + (p.pnl || 0), 0);
+          setOptionsPnl(totalPnl);
+          if (data.greeks?.netTheta) setNetTheta(data.greeks.netTheta);
         }
       })
       .catch(() => {});
@@ -337,6 +354,39 @@ function TradingPage() {
           </div>
         ))}
       </div>
+
+      {/* Options Stats Cards — shown only on options tab */}
+      {activeTab === 'options' && (
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1fr', gap: 20, marginBottom: 24 }}>
+          <div className="terminal-card">
+            <div style={{ fontSize: 12, color: '#6b6b80', marginBottom: 4 }}>Options P&amp;L</div>
+            <div style={{ fontSize: 24, fontWeight: 700, color: optionsPnl >= 0 ? '#22c55e' : '#ef4444' }}>
+              {optionsPnl !== 0 ? `${optionsPnl >= 0 ? '+' : ''}$${Math.abs(Math.round(optionsPnl)).toLocaleString()}` : '—'}
+            </div>
+          </div>
+          <div className="terminal-card">
+            <div style={{ fontSize: 12, color: '#6b6b80', marginBottom: 4 }}>Net Theta</div>
+            <div style={{ fontSize: 24, fontWeight: 700, color: netTheta >= 0 ? '#22c55e' : '#ef4444' }}>
+              {netTheta !== 0 ? `$${netTheta.toFixed(0)}/day` : '—'}
+            </div>
+          </div>
+          <div className="terminal-card">
+            <div style={{ fontSize: 12, color: '#6b6b80', marginBottom: 4 }}>Monthly Theta</div>
+            <div style={{ fontSize: 24, fontWeight: 700, color: '#c9a84c' }}>
+              {netTheta !== 0 ? `$${(netTheta * 30).toFixed(0)}` : '—'}
+            </div>
+          </div>
+          <div className="terminal-card" style={{ cursor: 'pointer' }} onClick={() => window.location.href = '/trading/options/screener'}>
+            <div style={{ fontSize: 12, color: '#6b6b80', marginBottom: 4 }}>Tools</div>
+            <div style={{ fontSize: 14, fontWeight: 700, color: '#c9a84c', marginTop: 8 }}>
+              Screener &rarr;
+            </div>
+            <div style={{ fontSize: 11, color: '#555', marginTop: 4 }}>
+              Strategy Builder &rarr;
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* ========== STOCKS TAB ========== */}
       {activeTab === 'stocks' && (
@@ -847,47 +897,87 @@ function TradingPage() {
         </>
       )}
 
-      {/* Positions Table — shown on both tabs */}
+      {/* Positions Section with Sub-Tabs */}
       <div className="terminal-card">
-        <div style={{ fontSize: 12, color: '#6b6b80', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 16 }}>Positions</div>
-        <div style={{ overflowX: 'auto' }}>
-          <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-            <thead>
-              <tr style={{ borderBottom: '1px solid #2a2a3a' }}>
-                {['Symbol', 'Qty', 'Current Price', 'Market Value', 'P&L', 'P&L %'].map(h => (
-                  <th key={h} style={{
-                    textAlign: 'left',
-                    padding: '8px 12px',
-                    fontSize: 11,
-                    color: '#6b6b80',
-                    textTransform: 'uppercase',
-                    letterSpacing: '0.05em',
-                  }}>{h}</th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {positions.map(pos => (
-                <tr key={pos.symbol} style={{ borderBottom: '1px solid #1a1a24' }}>
-                  <td style={{ padding: '12px 12px', fontSize: 14, fontWeight: 700, color: '#c9a84c', cursor: 'pointer', textDecoration: 'underline', textUnderlineOffset: 3 }} onClick={() => window.location.href = `/stock/${pos.symbol}`}>{pos.symbol}</td>
-                  <td style={{ padding: '12px 12px', fontSize: 14 }}>{pos.qty}</td>
-                  <td style={{ padding: '12px 12px', fontSize: 14 }}>${pos.currentPrice.toFixed(2)}</td>
-                  <td style={{ padding: '12px 12px', fontSize: 14 }}>${pos.marketValue.toLocaleString()}</td>
-                  <td style={{ padding: '12px 12px', fontSize: 14, color: pos.unrealizedPL >= 0 ? '#22c55e' : '#ef4444' }}>
-                    {pos.unrealizedPL >= 0 ? '+' : ''}${pos.unrealizedPL.toLocaleString()}
-                  </td>
-                  <td style={{ padding: '12px 12px', fontSize: 14, color: pos.unrealizedPLPercent >= 0 ? '#22c55e' : '#ef4444' }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-                      {pos.unrealizedPLPercent >= 0 ? <TrendingUp size={12} /> : <TrendingDown size={12} />}
-                      {pos.unrealizedPLPercent >= 0 ? '+' : ''}{pos.unrealizedPLPercent.toFixed(1)}%
-                    </div>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+          <div style={{ fontSize: 12, color: '#6b6b80', textTransform: 'uppercase', letterSpacing: '0.08em' }}>Positions</div>
+          <div style={{ display: 'flex', gap: 4 }}>
+            {(['all', 'stocks', 'options'] as const).map(tab => (
+              <button
+                key={tab}
+                onClick={() => setPositionSubTab(tab)}
+                style={{
+                  padding: '4px 12px', borderRadius: 6, border: 'none',
+                  backgroundColor: positionSubTab === tab ? '#c9a84c20' : 'transparent',
+                  color: positionSubTab === tab ? '#c9a84c' : '#6b6b80',
+                  fontSize: 11, fontWeight: 600, cursor: 'pointer', textTransform: 'capitalize',
+                }}
+              >{tab}</button>
+            ))}
+          </div>
         </div>
+
+        {/* Stock Positions Table */}
+        {(positionSubTab === 'all' || positionSubTab === 'stocks') && (
+          <div style={{ overflowX: 'auto', marginBottom: positionSubTab === 'all' ? 20 : 0 }}>
+            {positionSubTab === 'all' && (
+              <div style={{ fontSize: 11, color: '#555', marginBottom: 8, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Stock Positions</div>
+            )}
+            <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+              <thead>
+                <tr style={{ borderBottom: '1px solid #2a2a3a' }}>
+                  {['Symbol', 'Qty', 'Current Price', 'Market Value', 'P&L', 'P&L %'].map(h => (
+                    <th key={h} style={{
+                      textAlign: 'left',
+                      padding: '8px 12px',
+                      fontSize: 11,
+                      color: '#6b6b80',
+                      textTransform: 'uppercase',
+                      letterSpacing: '0.05em',
+                    }}>{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {positions.map(pos => (
+                  <tr key={pos.symbol} style={{ borderBottom: '1px solid #1a1a24' }}>
+                    <td style={{ padding: '12px 12px', fontSize: 14, fontWeight: 700, color: '#c9a84c', cursor: 'pointer', textDecoration: 'underline', textUnderlineOffset: 3 }} onClick={() => window.location.href = `/stock/${pos.symbol}`}>{pos.symbol}</td>
+                    <td style={{ padding: '12px 12px', fontSize: 14 }}>{pos.qty}</td>
+                    <td style={{ padding: '12px 12px', fontSize: 14 }}>${pos.currentPrice.toFixed(2)}</td>
+                    <td style={{ padding: '12px 12px', fontSize: 14 }}>${pos.marketValue.toLocaleString()}</td>
+                    <td style={{ padding: '12px 12px', fontSize: 14, color: pos.unrealizedPL >= 0 ? '#22c55e' : '#ef4444' }}>
+                      {pos.unrealizedPL >= 0 ? '+' : ''}${pos.unrealizedPL.toLocaleString()}
+                    </td>
+                    <td style={{ padding: '12px 12px', fontSize: 14, color: pos.unrealizedPLPercent >= 0 ? '#22c55e' : '#ef4444' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                        {pos.unrealizedPLPercent >= 0 ? <TrendingUp size={12} /> : <TrendingDown size={12} />}
+                        {pos.unrealizedPLPercent >= 0 ? '+' : ''}{pos.unrealizedPLPercent.toFixed(1)}%
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+
+        {/* Options Positions */}
+        {(positionSubTab === 'all' || positionSubTab === 'options') && (
+          <div>
+            {positionSubTab === 'all' && (
+              <div style={{ fontSize: 11, color: '#555', marginBottom: 8, textTransform: 'uppercase', letterSpacing: '0.05em', borderTop: '1px solid #2a2a3a', paddingTop: 16 }}>Options Positions</div>
+            )}
+            <OptionsPositions />
+          </div>
+        )}
       </div>
+
+      {/* Greeks Summary — shown on options tab */}
+      {activeTab === 'options' && (
+        <div style={{ marginTop: 20 }}>
+          <GreeksSummary />
+        </div>
+      )}
 
       {/* Order Confirmation Modal */}
       {confirmOrder && (
