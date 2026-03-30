@@ -9,8 +9,8 @@ interface StockData {
     symbol: string;
     companyName: string;
     price: number;
-    changes: number;
-    changesPercentage: string;
+    change: number;
+    changePercentage: number;
     marketCap: number;
     sector: string;
     industry: string;
@@ -22,7 +22,7 @@ interface StockData {
   quote: {
     price: number;
     change: number;
-    changesPercentage: number;
+    changePercentage: number;
     dayHigh: number;
     dayLow: number;
     yearHigh: number;
@@ -192,8 +192,8 @@ export default function StockDetailPage() {
 
   const { profile, quote } = data;
   const price = quote?.price || profile?.price || 0;
-  const change = quote?.change || profile?.changes || 0;
-  const changePct = quote?.changesPercentage || parseFloat(profile?.changesPercentage || '0');
+  const change = quote?.change || profile?.change || 0;
+  const changePct = quote?.changePercentage || profile?.changePercentage || 0;
   const isUp = change >= 0;
 
   const formatNum = (n: number | undefined | null) => {

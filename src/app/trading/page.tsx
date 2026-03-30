@@ -625,7 +625,7 @@ export default function TradingPage() {
             <tbody>
               {positions.map(pos => (
                 <tr key={pos.symbol} style={{ borderBottom: '1px solid #1a1a24' }}>
-                  <td style={{ padding: '12px 12px', fontSize: 14, fontWeight: 700, color: '#c9a84c' }}>{pos.symbol}</td>
+                  <td style={{ padding: '12px 12px', fontSize: 14, fontWeight: 700, color: '#c9a84c', cursor: 'pointer', textDecoration: 'underline', textUnderlineOffset: 3 }} onClick={() => window.location.href = `/stock/${pos.symbol}`}>{pos.symbol}</td>
                   <td style={{ padding: '12px 12px', fontSize: 14 }}>{pos.qty}</td>
                   <td style={{ padding: '12px 12px', fontSize: 14 }}>${pos.currentPrice.toFixed(2)}</td>
                   <td style={{ padding: '12px 12px', fontSize: 14 }}>${pos.marketValue.toLocaleString()}</td>

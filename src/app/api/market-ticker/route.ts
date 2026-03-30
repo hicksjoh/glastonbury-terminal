@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 
-const FMP_BASE = 'https://financialmodelingprep.com/api/v3';
+const FMP_BASE = 'https://financialmodelingprep.com/stable';
 const FMP_KEY = process.env.FMP_API_KEY || '';
 
 interface FMPQuote {
@@ -8,64 +8,49 @@ interface FMPQuote {
   name: string;
   price: number;
   change: number;
-  changesPercentage: number;
+  changePercentage: number;
 }
+
+const TICKER_SYMBOLS = [
+  { symbol: '^GSPC', label: 'S&P 500' },
+  { symbol: '^DJI', label: 'DOW' },
+  { symbol: '^IXIC', label: 'NASDAQ' },
+  { symbol: '^VIX', label: 'VIX' },
+  { symbol: 'GCUSD', label: 'GOLD' },
+  { symbol: 'BTCUSD', label: 'BTC' },
+];
 
 export async function GET() {
   try {
-    const symbols = [
-      '^GSPC',
-      '^DJI',
-      '^IXIC',
-      '^VIX',
-      '^TNX',
-      'GC=F',
-      'CL=F',
-      'BTC-USD',
-    ];
-
-    const labelMap: Record<string, string> = {
-      '^GSPC': 'S&P 500',
-      '^DJI': 'DOW',
-      '^IXIC': 'NASDAQ',
-      '^VIX': 'VIX',
-      '^TNX': '10Y',
-      'GC=F': 'GOLD',
-      'CL=F': 'OIL',
-      'BTC-USD': 'BTC',
-    };
-
     if (!FMP_KEY) {
       return NextResponse.json({ tickers: [] });
     }
 
-    const res = await fetch(
-      `${FMP_BASE}/quote/${symbols.join(',')}?apikey=${FMP_KEY}`,
-      { next: { revalidate: 60 } }
+    const results = await Promise.all(
+      TICKER_SYMBOLS.map(async ({ symbol, label }) => {
+        try {
+          const res = await fetch(
+            `${FMP_BASE}/quote?symbol=${encodeURIComponent(symbol)}&apikey=${FMP_KEY}`,
+            { next: { revalidate: 60 } }
+          );
+          if (!res.ok) return null;
+          const data: FMPQuote[] = await res.json();
+          if (!Array.isArray(data) || data.length === 0) return null;
+          const quote = data[0];
+          return {
+            symbol,
+            label,
+            price: quote.price || 0,
+            change: quote.change || 0,
+            changePercent: quote.changePercentage || 0,
+          };
+        } catch {
+          return null;
+        }
+      })
     );
 
-    if (!res.ok) {
-      console.error('FMP ticker error:', res.status);
-      return NextResponse.json({ tickers: [] });
-    }
-
-    const data: FMPQuote[] = await res.json();
-
-    const tickers = symbols
-      .map(sym => {
-        const quote = data.find(d => d.symbol === sym);
-        if (!quote) return null;
-        return {
-          symbol: sym,
-          label: labelMap[sym] || sym,
-          price: quote.price || 0,
-          change: quote.change || 0,
-          changePercent: quote.changesPercentage || 0,
-        };
-      })
-      .filter(Boolean);
-
-    return NextResponse.json({ tickers });
+    return NextResponse.json({ tickers: results.filter(Boolean) });
   } catch (error) {
     console.error('Market ticker error:', error);
     return NextResponse.json({ tickers: [] });

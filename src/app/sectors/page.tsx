@@ -26,12 +26,8 @@ export default function SectorsPage() {
   useEffect(() => {
     const fetchData = async () => {
       try {
-        const [sectorRes, stocksRes] = await Promise.all([
-          fetch('/api/sectors'),
-          fetch('/api/sectors?type=stocks'),
-        ]);
+        const sectorRes = await fetch('/api/sectors');
         if (sectorRes.ok) setSectors(await sectorRes.json().then(d => d.sectors || []));
-        if (stocksRes.ok) setStocks(await stocksRes.json().then(d => d.stocks || []));
       } catch (err) {
         console.error('Sectors fetch error:', err);
       } finally {
@@ -40,6 +36,19 @@ export default function SectorsPage() {
     };
     fetchData();
   }, []);
+
+  useEffect(() => {
+    if (!selectedSector) { setStocks([]); return; }
+    const fetchStocks = async () => {
+      try {
+        const res = await fetch(`/api/sectors?type=stocks&sector=${encodeURIComponent(selectedSector)}`);
+        if (res.ok) setStocks(await res.json().then(d => d.stocks || []));
+      } catch (err) {
+        console.error('Sector stocks error:', err);
+      }
+    };
+    fetchStocks();
+  }, [selectedSector]);
 
   const getColor = (pct: number) => {
     if (pct >= 2) return '#22c55e';

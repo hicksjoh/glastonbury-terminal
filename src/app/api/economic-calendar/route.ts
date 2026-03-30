@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 
-const FMP_BASE = 'https://financialmodelingprep.com/api/v3';
+const FMP_BASE = 'https://financialmodelingprep.com/stable';
 const FMP_KEY = process.env.FMP_API_KEY || '';
 
 export async function GET() {
@@ -13,26 +13,41 @@ export async function GET() {
     const to = new Date(today);
     to.setDate(to.getDate() + 14);
 
+    const fromStr = from.toISOString().split('T')[0];
+    const toStr = to.toISOString().split('T')[0];
+
+    // Use earnings-calendar (available on free tier) as the primary data source
     const res = await fetch(
-      `${FMP_BASE}/economic_calendar?from=${from.toISOString().split('T')[0]}&to=${to.toISOString().split('T')[0]}&apikey=${FMP_KEY}`
+      `${FMP_BASE}/earnings-calendar?from=${fromStr}&to=${toStr}&apikey=${FMP_KEY}`
     );
 
     if (!res.ok) return NextResponse.json({ events: [] });
     const data = await res.json();
+    if (!Array.isArray(data)) return NextResponse.json({ events: [] });
 
-    return NextResponse.json({
-      events: (data || []).map((e: Record<string, unknown>) => ({
-        event: e.event,
+    // Map earnings data to calendar event format
+    const events = data.map((e: Record<string, unknown>) => {
+      const epsEst = e.epsEstimated as number | null;
+      const revEst = e.revenueEstimated as number | null;
+      const epsActual = e.epsActual as number | null;
+
+      return {
+        event: `${e.symbol} Earnings`,
         date: e.date,
-        country: e.country,
-        actual: e.actual,
-        previous: e.previous,
-        consensus: e.estimate,
-        impact: e.impact,
-      })),
+        country: 'US',
+        actual: epsActual != null ? `EPS: $${epsActual.toFixed(2)}` : null,
+        previous: null,
+        consensus: epsEst != null ? `EPS Est: $${epsEst.toFixed(2)}` : null,
+        impact: revEst && (revEst as number) > 10_000_000_000 ? 'High' : revEst && (revEst as number) > 1_000_000_000 ? 'Medium' : 'Low',
+        symbol: e.symbol,
+        revenueEstimated: revEst,
+        revenueActual: e.revenueActual,
+      };
     });
+
+    return NextResponse.json({ events });
   } catch (error) {
-    console.error('Econ calendar error:', error);
+    console.error('Calendar error:', error);
     return NextResponse.json({ events: [] });
   }
 }

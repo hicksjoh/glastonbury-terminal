@@ -1,35 +1,77 @@
 import { NextRequest, NextResponse } from 'next/server';
 
-const FMP_BASE = 'https://financialmodelingprep.com/api/v3';
+const FMP_BASE = 'https://financialmodelingprep.com/stable';
 const FMP_KEY = process.env.FMP_API_KEY || '';
+
+// Sector representative stocks — used to compute sector performance
+const SECTOR_REPS: Record<string, string[]> = {
+  'Technology': ['AAPL', 'MSFT', 'NVDA', 'GOOGL', 'META'],
+  'Healthcare': ['UNH', 'JNJ', 'PFE', 'ABBV'],
+  'Financial Services': ['JPM', 'BAC', 'GS'],
+  'Consumer Cyclical': ['AMZN', 'TSLA', 'NKE'],
+  'Communication Services': ['DIS', 'NFLX', 'T'],
+  'Industrials': ['BA', 'GE'],
+  'Consumer Defensive': ['KO', 'PEP', 'WMT', 'COST'],
+  'Energy': ['XOM', 'CVX'],
+};
+
+interface QuoteData {
+  symbol: string;
+  name: string;
+  price: number;
+  changePercentage: number;
+  change: number;
+  marketCap: number;
+}
+
+async function fetchQuote(symbol: string): Promise<QuoteData | null> {
+  try {
+    const res = await fetch(`${FMP_BASE}/quote?symbol=${encodeURIComponent(symbol)}&apikey=${FMP_KEY}`);
+    if (!res.ok) return null;
+    const data = await res.json();
+    if (!Array.isArray(data) || data.length === 0) return null;
+    return data[0] as QuoteData;
+  } catch {
+    return null;
+  }
+}
 
 export async function GET(req: NextRequest) {
   try {
     if (!FMP_KEY) return NextResponse.json({ sectors: [], stocks: [] });
 
     const type = req.nextUrl.searchParams.get('type');
+    const sector = req.nextUrl.searchParams.get('sector');
 
-    if (type === 'stocks') {
-      const res = await fetch(`${FMP_BASE}/stock-screener?marketCapMoreThan=10000000000&limit=100&apikey=${FMP_KEY}`);
-      if (!res.ok) return NextResponse.json({ stocks: [] });
-      const data = await res.json();
+    if (type === 'stocks' && sector) {
+      const sectorStocks = SECTOR_REPS[sector] || [];
+      const quotes = await Promise.all(sectorStocks.map(fetchQuote));
       return NextResponse.json({
-        stocks: (data || []).map((s: Record<string, unknown>) => ({
-          symbol: s.symbol,
-          name: s.companyName,
-          price: s.price,
-          changesPercentage: s.changesPercentage || 0,
-          marketCap: s.marketCap,
-          sector: s.sector,
-        })),
+        stocks: quotes
+          .filter((q): q is QuoteData => q !== null)
+          .map(q => ({
+            symbol: q.symbol,
+            name: q.name,
+            price: q.price,
+            changesPercentage: q.changePercentage || 0,
+            marketCap: q.marketCap,
+            sector: sector,
+          })),
       });
     }
 
-    const res = await fetch(`${FMP_BASE}/sector-performance?apikey=${FMP_KEY}`);
-    if (!res.ok) return NextResponse.json({ sectors: [] });
-    const data = await res.json();
+    // Fetch one representative stock per sector to compute performance
+    const sectorEntries = Object.entries(SECTOR_REPS);
+    const repQuotes = await Promise.all(
+      sectorEntries.map(([, stocks]) => fetchQuote(stocks[0]))
+    );
 
-    return NextResponse.json({ sectors: data || [] });
+    const sectors = sectorEntries.map(([sectorName], i) => ({
+      sector: sectorName,
+      changesPercentage: repQuotes[i]?.changePercentage?.toFixed(2) || '0.00',
+    }));
+
+    return NextResponse.json({ sectors });
   } catch (error) {
     console.error('Sectors error:', error);
     return NextResponse.json({ sectors: [], stocks: [] });

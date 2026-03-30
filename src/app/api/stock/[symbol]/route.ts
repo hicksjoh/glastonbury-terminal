@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 
-const FMP_BASE = 'https://financialmodelingprep.com/api/v3';
+const FMP_BASE = 'https://financialmodelingprep.com/stable';
 const FMP_KEY = process.env.FMP_API_KEY || '';
 const ALPACA_DATA = 'https://data.alpaca.markets';
 
@@ -24,8 +24,8 @@ export async function GET(
     const range = req.nextUrl.searchParams.get('range') || '3M';
 
     const [profileRes, quoteRes, newsRes] = await Promise.all([
-      FMP_KEY ? fetch(`${FMP_BASE}/profile/${symbol}?apikey=${FMP_KEY}`) : null,
-      FMP_KEY ? fetch(`${FMP_BASE}/quote/${symbol}?apikey=${FMP_KEY}`) : null,
+      FMP_KEY ? fetch(`${FMP_BASE}/profile?symbol=${symbol}&apikey=${FMP_KEY}`) : null,
+      FMP_KEY ? fetch(`${FMP_BASE}/quote?symbol=${symbol}&apikey=${FMP_KEY}`) : null,
       fetch(`${ALPACA_DATA}/v1beta1/news?symbols=${symbol}&limit=10&sort=desc`, { headers: alpacaHeaders }),
     ]);
 

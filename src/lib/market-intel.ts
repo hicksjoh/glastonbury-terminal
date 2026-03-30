@@ -2,7 +2,7 @@
 // Provides Keisha with live market data, news, fundamentals, and earnings
 
 const ALPACA_DATA_URL = 'https://data.alpaca.markets';
-const FMP_BASE_URL = 'https://financialmodelingprep.com/api/v3';
+const FMP_BASE_URL = 'https://financialmodelingprep.com/stable';
 
 const alpacaHeaders = {
   'APCA-API-KEY-ID': process.env.ALPACA_API_KEY!,
@@ -77,8 +77,8 @@ export interface CompanyProfile {
   symbol: string;
   companyName: string;
   price: number;
-  changes: number;
-  changesPercentage: string;
+  change: number;
+  changePercentage: number;
   marketCap: number;
   sector: string;
   industry: string;
@@ -88,7 +88,6 @@ export interface CompanyProfile {
   currency: string;
   country: string;
   isActivelyTrading: boolean;
-  dcf: number;
   ipoDate: string;
 }
 
@@ -96,7 +95,7 @@ export interface StockQuote {
   symbol: string;
   name: string;
   price: number;
-  changesPercentage: number;
+  changePercentage: number;
   change: number;
   dayLow: number;
   dayHigh: number;
@@ -115,10 +114,10 @@ export interface StockQuote {
 export interface EarningsData {
   date: string;
   symbol: string;
-  eps: number;
-  epsEstimated: number;
-  revenue: number;
-  revenueEstimated: number;
+  epsActual: number | null;
+  epsEstimated: number | null;
+  revenueActual: number | null;
+  revenueEstimated: number | null;
 }
 
 export interface MarketMover {
@@ -126,7 +125,7 @@ export interface MarketMover {
   name: string;
   change: number;
   price: number;
-  changesPercentage: number;
+  changePercentage: number;
 }
 
 async function fmpFetch<T>(endpoint: string): Promise<T | null> {
@@ -138,10 +137,20 @@ async function fmpFetch<T>(endpoint: string): Promise<T | null> {
     const separator = endpoint.includes('?') ? '&' : '?';
     const res = await fetch(`${FMP_BASE_URL}${endpoint}${separator}apikey=${key}`);
     if (!res.ok) {
+      const text = await res.text();
+      if (text.includes('Legacy') || text.includes('Premium') || text.includes('Restricted')) {
+        console.warn(`FMP endpoint ${endpoint}: not available on current plan`);
+        return null;
+      }
       console.error(`FMP error on ${endpoint}:`, res.status);
       return null;
     }
-    return res.json();
+    const text = await res.text();
+    if (text.includes('Legacy') || text.includes('Premium') || text.includes('Restricted')) {
+      console.warn(`FMP endpoint ${endpoint}: not available on current plan`);
+      return null;
+    }
+    return JSON.parse(text);
   } catch (err) {
     console.error('FMP fetch error:', err);
     return null;
@@ -149,19 +158,21 @@ async function fmpFetch<T>(endpoint: string): Promise<T | null> {
 }
 
 export async function getCompanyProfile(symbol: string): Promise<CompanyProfile | null> {
-  const data = await fmpFetch<CompanyProfile[]>(`/profile/${symbol}`);
+  const data = await fmpFetch<CompanyProfile[]>(`/profile?symbol=${symbol}`);
   return data && data.length > 0 ? data[0] : null;
 }
 
 export async function getStockQuote(symbol: string): Promise<StockQuote | null> {
-  const data = await fmpFetch<StockQuote[]>(`/quote/${symbol}`);
+  const data = await fmpFetch<StockQuote[]>(`/quote?symbol=${symbol}`);
   return data && data.length > 0 ? data[0] : null;
 }
 
 export async function getBatchQuotes(symbols: string[]): Promise<StockQuote[]> {
   if (symbols.length === 0) return [];
-  const data = await fmpFetch<StockQuote[]>(`/quote/${symbols.join(',')}`);
-  return data || [];
+  const results = await Promise.all(
+    symbols.map(sym => getStockQuote(sym))
+  );
+  return results.filter((q): q is StockQuote => q !== null);
 }
 
 export async function getEarningsCalendar(): Promise<EarningsData[]> {
@@ -170,32 +181,32 @@ export async function getEarningsCalendar(): Promise<EarningsData[]> {
   future.setDate(future.getDate() + 30);
   const from = today.toISOString().split('T')[0];
   const to = future.toISOString().split('T')[0];
-  const data = await fmpFetch<EarningsData[]>(`/earning_calendar?from=${from}&to=${to}`);
+  const data = await fmpFetch<EarningsData[]>(`/earnings-calendar?from=${from}&to=${to}`);
   return data || [];
 }
 
 export async function getStockEarnings(symbol: string): Promise<EarningsData[]> {
-  const data = await fmpFetch<EarningsData[]>(`/historical/earning_calendar/${symbol}?limit=4`);
-  return data || [];
+  const data = await fmpFetch<EarningsData[]>(`/earnings-calendar?symbol=${symbol}`);
+  return (data || []).slice(0, 4);
 }
 
 export async function getMarketGainers(): Promise<MarketMover[]> {
-  const data = await fmpFetch<MarketMover[]>('/stock_market/gainers');
-  return (data || []).slice(0, 5);
+  const data = await fmpFetch<{symbol:string;name:string;change:number;price:number;changesPercentage:number}[]>('/biggest-gainers');
+  return (data || []).slice(0, 5).map(d => ({ ...d, changePercentage: d.changesPercentage }));
 }
 
 export async function getMarketLosers(): Promise<MarketMover[]> {
-  const data = await fmpFetch<MarketMover[]>('/stock_market/losers');
-  return (data || []).slice(0, 5);
+  const data = await fmpFetch<{symbol:string;name:string;change:number;price:number;changesPercentage:number}[]>('/biggest-losers');
+  return (data || []).slice(0, 5).map(d => ({ ...d, changePercentage: d.changesPercentage }));
 }
 
 export async function getKeyMetrics(symbol: string): Promise<Record<string, unknown> | null> {
-  const data = await fmpFetch<Record<string, unknown>[]>(`/key-metrics-ttm/${symbol}`);
+  const data = await fmpFetch<Record<string, unknown>[]>(`/key-metrics?symbol=${symbol}&period=annual`);
   return data && data.length > 0 ? data[0] : null;
 }
 
 export async function getAnalystEstimates(symbol: string): Promise<Record<string, unknown>[]> {
-  const data = await fmpFetch<Record<string, unknown>[]>(`/analyst-estimates/${symbol}?limit=1`);
+  const data = await fmpFetch<Record<string, unknown>[]>(`/analyst-estimates?symbol=${symbol}&limit=1`);
   return data || [];
 }
 
@@ -245,7 +256,7 @@ export async function buildMarketContext(portfolioSymbols: string[]): Promise<st
 
   if (portfolioQuotes.length > 0) {
     parts.push(`LIVE QUOTES FOR PORTFOLIO:\n${portfolioQuotes.map(q =>
-      `  - ${q.symbol}: $${q.price?.toFixed(2)} (${q.changesPercentage >= 0 ? '+' : ''}${q.changesPercentage?.toFixed(2)}%) | Vol: ${(q.volume || 0).toLocaleString()} | P/E: ${q.pe?.toFixed(1) || 'N/A'} | EPS: $${q.eps?.toFixed(2) || 'N/A'} | 52w: $${q.yearLow?.toFixed(2)}-$${q.yearHigh?.toFixed(2)}`
+      `  - ${q.symbol}: $${q.price?.toFixed(2)} (${q.changePercentage >= 0 ? '+' : ''}${q.changePercentage?.toFixed(2)}%) | Vol: ${(q.volume || 0).toLocaleString()} | P/E: ${q.pe?.toFixed(1) || 'N/A'} | EPS: $${q.eps?.toFixed(2) || 'N/A'} | 52w: $${q.yearLow?.toFixed(2)}-$${q.yearHigh?.toFixed(2)}`
     ).join('\n')}`);
   }
 
@@ -253,12 +264,12 @@ export async function buildMarketContext(portfolioSymbols: string[]): Promise<st
     let moversStr = 'MARKET MOVERS TODAY:\n';
     if (gainers.length > 0) {
       moversStr += `  Top Gainers:\n${gainers.map(g =>
-        `    - ${g.symbol} (${g.name?.slice(0, 30)}): $${g.price?.toFixed(2)} (+${g.changesPercentage?.toFixed(1)}%)`
+        `    - ${g.symbol} (${g.name?.slice(0, 30)}): $${g.price?.toFixed(2)} (+${g.changePercentage?.toFixed(1)}%)`
       ).join('\n')}\n`;
     }
     if (losers.length > 0) {
       moversStr += `  Top Losers:\n${losers.map(l =>
-        `    - ${l.symbol} (${l.name?.slice(0, 30)}): $${l.price?.toFixed(2)} (${l.changesPercentage?.toFixed(1)}%)`
+        `    - ${l.symbol} (${l.name?.slice(0, 30)}): $${l.price?.toFixed(2)} (${l.changePercentage?.toFixed(1)}%)`
       ).join('\n')}`;
     }
     parts.push(moversStr);

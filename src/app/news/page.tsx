@@ -200,7 +200,7 @@ export default function NewsPage() {
                           <span style={{ color: '#555' }}>&bull;</span>
                           <div style={{ display: 'flex', gap: 4 }}>
                             {article.symbols.slice(0, 4).map(s => (
-                              <span key={s} style={{
+                              <span key={s} onClick={(e) => { e.stopPropagation(); window.location.href = `/stock/${s}`; }} style={{
                                 background: 'rgba(240, 198, 116, 0.1)',
                                 color: '#f0c674',
                                 padding: '2px 6px',
@@ -208,6 +208,7 @@ export default function NewsPage() {
                                 fontSize: 10,
                                 fontFamily: "'JetBrains Mono', monospace",
                                 fontWeight: 600,
+                                cursor: 'pointer',
                               }}>
                                 {s}
                               </span>

@@ -19,8 +19,8 @@ interface WatchlistItem {
 }
 
 const DEFAULT_WATCHLIST = [
-  'AAPL', 'NVDA', 'MSFT', 'GOOGL', 'AMZN', 'META', 'TSLA', 'VTI',
-  'QQQ', 'JPM', 'V', 'BRK-B', 'UNH', 'XOM', 'COIN',
+  'AAPL', 'NVDA', 'MSFT', 'GOOGL', 'AMZN', 'META', 'TSLA',
+  'JPM', 'V', 'UNH', 'XOM', 'COIN', 'NFLX', 'BA', 'DIS',
 ];
 
 export default function WatchlistPage() {
