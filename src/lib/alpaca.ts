@@ -1,22 +1,19 @@
+const ALPACA_BASE_URL = process.env.ALPACA_BASE_URL || 'https://paper-api.alpaca.markets';
 const ALPACA_DATA_URL = 'https://data.alpaca.markets';
+const ALPACA_API_KEY = process.env.ALPACA_API_KEY!;
+const ALPACA_SECRET_KEY = process.env.ALPACA_SECRET_KEY!;
 
-function getConfig() {
-  return {
-    baseUrl: process.env.ALPACA_BASE_URL || 'https://paper-api.alpaca.markets',
-    headers: {
-      'APCA-API-KEY-ID': process.env.ALPACA_API_KEY || '',
-      'APCA-API-SECRET-KEY': process.env.ALPACA_SECRET_KEY || '',
-      'Content-Type': 'application/json',
-    },
-  };
-}
+const alpacaHeaders = {
+  'APCA-API-KEY-ID': ALPACA_API_KEY,
+  'APCA-API-SECRET-KEY': ALPACA_SECRET_KEY,
+  'Content-Type': 'application/json',
+};
 
 export async function alpacaFetch(endpoint: string, options?: RequestInit) {
-  const { baseUrl, headers } = getConfig();
-  const res = await fetch(`${baseUrl}${endpoint}`, {
+  const res = await fetch(`${ALPACA_BASE_URL}${endpoint}`, {
     ...options,
     headers: {
-      ...headers,
+      ...alpacaHeaders,
       ...options?.headers,
     },
   });
@@ -59,9 +56,8 @@ export async function cancelAllOrders() {
 }
 
 export async function getLatestQuote(symbol: string) {
-  const { headers } = getConfig();
   const res = await fetch(`${ALPACA_DATA_URL}/v2/stocks/${symbol}/quotes/latest`, {
-    headers,
+    headers: alpacaHeaders,
   });
   if (!res.ok) throw new Error(`Quote fetch failed for ${symbol}`);
   return res.json();
@@ -91,18 +87,16 @@ export async function searchAssets(query: string, limit = 10) {
 }
 
 export async function getLatestTrade(symbol: string) {
-  const { headers } = getConfig();
   const res = await fetch(`${ALPACA_DATA_URL}/v2/stocks/${symbol}/trades/latest`, {
-    headers,
+    headers: alpacaHeaders,
   });
   if (!res.ok) throw new Error(`Trade fetch failed for ${symbol}`);
   return res.json();
 }
 
 export async function getSnapshot(symbol: string) {
-  const { headers } = getConfig();
   const res = await fetch(`${ALPACA_DATA_URL}/v2/stocks/${symbol}/snapshot`, {
-    headers,
+    headers: alpacaHeaders,
   });
   if (!res.ok) throw new Error(`Snapshot fetch failed for ${symbol}`);
   return res.json();

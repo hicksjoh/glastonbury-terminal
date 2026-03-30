@@ -16,7 +16,7 @@ MASTER TARGET: $50M cumulative wealth by 2032
 Foundation Year 2026 Target: $580K
 
 REVENUE ARCHITECTURE:
-• CR3 American Exteriors (Franchise Operations) — 60-70% of revenue
+- CR3 American Exteriors (Franchise Operations) — 60-70% of revenue
   - 23 territories across 2 AR agreements in South Florida + West Coast FL
   - Seacoast FL (13 territories): Miami, Fort Lauderdale, West Palm Beach, Saint Lucie, Orlando
   - West Coast FL (10 territories): Signed March 2026
@@ -24,11 +24,11 @@ REVENUE ARCHITECTURE:
   - Top performers: Naples 1.8x, Boca Raton 1.5x, Sarasota 1.4x, Jupiter 1.4x, Fort Lauderdale 1.3x
   - Strategy: Operate 3 (Miami North, Miami Central, FTL South), Sell 17, Hybrid 3
 
-• Anthropic Compensation — 10-15% of revenue
+- Anthropic Compensation — 10-15% of revenue
   - 5,749 RSUs at $259.14 grant price, quarterly vesting over 4 years
   - Base salary contributes to investment capital
 
-• Investment Portfolio — 20-30% of revenue
+- Investment Portfolio — 20-30% of revenue
   - Alpaca paper trading account (transitioning to live)
   - Options strategies: Covered Call Wheel, Tax-Loss Harvesting
   - Target: Systematic income generation + capital appreciation
@@ -45,7 +45,7 @@ $50M TRAJECTORY:
 | 2029 | $7.3M      | $14.17M     | Expansion         |
 | 2030 | $10.9M     | $25.07M     | Acceleration      |
 | 2031 | $14.3M     | $39.37M     | Dominance         |
-| 2032 | $17.3M     | $56.67M     | Empire (🎯 $50M)  |
+| 2032 | $17.3M     | $56.67M     | Empire ($50M)     |
 
 ═══════════════════════════════════════════
   ACTIVE INVESTMENT STRATEGIES

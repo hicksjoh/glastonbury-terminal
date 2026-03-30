@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { searchAssets, getSnapshot } from '@/lib/alpaca';
 
-// GET /api/alpaca/search?q=AAPL&limit=8
 export async function GET(req: NextRequest) {
   try {
     const query = req.nextUrl.searchParams.get('q');
@@ -13,7 +12,6 @@ export async function GET(req: NextRequest) {
 
     const results = await searchAssets(query, limit);
 
-    // If we have a short query that looks like an exact symbol, also fetch the snapshot
     if (query.length <= 5 && results.length > 0 && results[0].symbol === query.toUpperCase()) {
       try {
         const snapshot = await getSnapshot(results[0].symbol);
@@ -23,7 +21,7 @@ export async function GET(req: NextRequest) {
           ? ((results[0].price - results[0].prevClose) / results[0].prevClose * 100).toFixed(2)
           : null;
       } catch {
-        // Snapshot not available — not a big deal
+        // Snapshot not available
       }
     }
 
