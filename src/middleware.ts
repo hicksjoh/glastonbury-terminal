@@ -1,9 +1,15 @@
 import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
 
-const APP_PASSWORD = process.env.APP_PASSWORD || 'glastonbury2026';
+async function sha256(input: string): Promise<string> {
+  const data = new TextEncoder().encode(input);
+  const hashBuffer = await crypto.subtle.digest('SHA-256', data);
+  return Array.from(new Uint8Array(hashBuffer))
+    .map(b => b.toString(16).padStart(2, '0'))
+    .join('');
+}
 
-export function middleware(request: NextRequest) {
+export async function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
 
   // Skip API routes and static files
@@ -11,10 +17,19 @@ export function middleware(request: NextRequest) {
     return NextResponse.next();
   }
 
-  // Check for auth cookie
+  const APP_PASSWORD = process.env.APP_PASSWORD || 'glastonbury2026';
   const authCookie = request.cookies.get('gt-auth');
-  if (authCookie?.value === APP_PASSWORD) {
-    return NextResponse.next();
+
+  if (authCookie?.value) {
+    // Check hashed token
+    const expectedHash = await sha256(`gt:${APP_PASSWORD}`);
+    if (authCookie.value === expectedHash) {
+      return NextResponse.next();
+    }
+    // Also accept legacy plaintext cookie for existing sessions
+    if (authCookie.value === APP_PASSWORD) {
+      return NextResponse.next();
+    }
   }
 
   // Redirect to login if not on login page

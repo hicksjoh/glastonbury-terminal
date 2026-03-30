@@ -1,5 +1,5 @@
 'use client';
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { AppShell } from '@/components/layout/AppShell';
 import { MOCK_STRATEGIES, MOCK_AUDIT_LOG } from '@/lib/data';
 import { Strategy, AuditLogEntry } from '@/types';
@@ -100,8 +100,33 @@ function AuditRow({ entry }: { entry: AuditLogEntry }) {
 }
 
 export default function StrategiesPage() {
-  const [strategies, setStrategies] = useState(MOCK_STRATEGIES);
+  const [strategies, setStrategies] = useState<Strategy[]>(MOCK_STRATEGIES);
+  const [auditEntries, setAuditEntries] = useState<AuditLogEntry[]>(MOCK_AUDIT_LOG);
   const [killSwitchActive, setKillSwitchActive] = useState(false);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    async function fetchData() {
+      try {
+        const [stratRes, auditRes] = await Promise.all([
+          fetch('/api/strategies'),
+          fetch('/api/audit-log'),
+        ]);
+        if (stratRes.ok) {
+          const data = await stratRes.json();
+          if (Array.isArray(data) && data.length > 0) setStrategies(data);
+        }
+        if (auditRes.ok) {
+          const data = await auditRes.json();
+          if (Array.isArray(data) && data.length > 0) setAuditEntries(data);
+        }
+      } catch {
+        // Fall back to mock data
+      }
+      setLoading(false);
+    }
+    fetchData();
+  }, []);
 
   function handleToggle(id: string) {
     setStrategies(prev =>
@@ -124,7 +149,10 @@ export default function StrategiesPage() {
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 32 }}>
         <div>
           <h1 style={{ fontSize: 24, fontWeight: 700, color: '#e8e8e8', margin: 0 }}>Strategies</h1>
-          <p style={{ color: '#6b6b80', fontSize: 13, marginTop: 4 }}>Automated wealth-building strategies</p>
+          <p style={{ color: '#6b6b80', fontSize: 13, marginTop: 4 }}>
+            Automated wealth-building strategies
+            {loading && <span style={{ marginLeft: 8, color: '#c9a84c' }}>&#8226; Loading...</span>}
+          </p>
         </div>
         <button
           onClick={handleKillSwitch}
@@ -174,7 +202,7 @@ export default function StrategiesPage() {
               </tr>
             </thead>
             <tbody>
-              {MOCK_AUDIT_LOG.map(entry => (
+              {auditEntries.map(entry => (
                 <AuditRow key={entry.id} entry={entry} />
               ))}
             </tbody>

@@ -1,12 +1,18 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { createHash } from 'crypto';
+
+function hashToken(password: string): string {
+  return createHash('sha256').update(`gt:${password}`).digest('hex');
+}
 
 export async function POST(req: NextRequest) {
   const { password } = await req.json();
   const APP_PASSWORD = process.env.APP_PASSWORD || 'glastonbury2026';
 
   if (password === APP_PASSWORD) {
+    const token = hashToken(APP_PASSWORD);
     const res = NextResponse.json({ success: true });
-    res.cookies.set('gt-auth', APP_PASSWORD, {
+    res.cookies.set('gt-auth', token, {
       httpOnly: true,
       secure: process.env.NODE_ENV === 'production',
       sameSite: 'lax',
