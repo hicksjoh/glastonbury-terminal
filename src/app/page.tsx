@@ -1,85 +1,783 @@
 'use client';
-import { useState, useEffect } from 'react';
+
+import { useState, useEffect, useCallback } from 'react';
+import { useRouter } from 'next/navigation';
 import { AppShell } from '@/components/layout/AppShell';
-import { NetWorthCard } from '@/components/dashboard/NetWorthCard';
-import { BriefingCard } from '@/components/dashboard/BriefingCard';
-import { AuditFeed } from '@/components/dashboard/AuditFeed';
-import { IncomeChart } from '@/components/dashboard/IncomeChart';
-import { RoadmapProgress } from '@/components/dashboard/RoadmapProgress';
-import { PORTFOLIO_SUMMARY, MOCK_AUDIT_LOG } from '@/lib/data';
-import { Portfolio, AuditLogEntry } from '@/types';
+import MarkdownRenderer from '@/components/MarkdownRenderer';
+import { MOCK_AUDIT_LOG, PORTFOLIO_SUMMARY } from '@/lib/data';
+import { AuditLogEntry } from '@/types';
+
+// ─── Count-up animation hook ────────────────────────────────
+function useCountUp(target: number, duration = 1000, startOnMount = true) {
+  const [value, setValue] = useState(0);
+  useEffect(() => {
+    if (!startOnMount || target === 0) { setValue(target); return; }
+    const startTime = Date.now();
+    const tick = () => {
+      const elapsed = Date.now() - startTime;
+      const progress = Math.min(elapsed / duration, 1);
+      const eased = 1 - Math.pow(1 - progress, 3);
+      setValue(Math.round(target * eased));
+      if (progress < 1) requestAnimationFrame(tick);
+    };
+    requestAnimationFrame(tick);
+  }, [target, duration, startOnMount]);
+  return value;
+}
+
+// ─── GlassCard component ────────────────────────────────────
+function GlassCard({ children, style, onClick }: {
+  children: React.ReactNode;
+  style?: React.CSSProperties;
+  onClick?: () => void;
+}) {
+  const [hovered, setHovered] = useState(false);
+  return (
+    <div
+      onClick={onClick}
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
+      style={{
+        background: 'rgba(255, 255, 255, 0.03)',
+        backdropFilter: 'blur(12px)',
+        WebkitBackdropFilter: 'blur(12px)',
+        border: `1px solid rgba(138, 92, 246, ${hovered ? 0.3 : 0.12})`,
+        borderRadius: 14,
+        transition: 'all 0.2s ease',
+        transform: hovered ? 'translateY(-2px)' : 'none',
+        boxShadow: hovered ? '0 8px 32px rgba(138, 92, 246, 0.08)' : 'none',
+        cursor: onClick ? 'pointer' : 'default',
+        ...style,
+      }}
+    >
+      {children}
+    </div>
+  );
+}
+
+// ─── Progress Ring (SVG) ────────────────────────────────────
+function ProgressRing({ percent, size = 120, stroke = 7 }: { percent: number; size?: number; stroke?: number }) {
+  const radius = (size - stroke) / 2;
+  const circ = 2 * Math.PI * radius;
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => { setTimeout(() => setMounted(true), 100); }, []);
+  const offset = mounted ? circ - (percent / 100) * circ : circ;
+  return (
+    <svg width={size} height={size} style={{ transform: 'rotate(-90deg)' }}>
+      <circle cx={size / 2} cy={size / 2} r={radius} fill="none"
+        stroke="rgba(255,255,255,0.06)" strokeWidth={stroke} />
+      <circle cx={size / 2} cy={size / 2} r={radius} fill="none"
+        stroke="#f0c674" strokeWidth={stroke}
+        strokeDasharray={circ} strokeDashoffset={offset}
+        strokeLinecap="round"
+        style={{ transition: 'stroke-dashoffset 1.5s cubic-bezier(0.4, 0, 0.2, 1)' }} />
+    </svg>
+  );
+}
+
+// ─── Mini Sparkline (SVG) ───────────────────────────────────
+function Sparkline({ data, width = 80, height = 28, color = '#4ade80' }: { data: number[]; width?: number; height?: number; color?: string }) {
+  if (data.length < 2) return null;
+  const min = Math.min(...data);
+  const max = Math.max(...data);
+  const range = max - min || 1;
+  const points = data.map((v, i) =>
+    `${(i / (data.length - 1)) * width},${height - ((v - min) / range) * height}`
+  ).join(' ');
+  return (
+    <svg width={width} height={height} style={{ display: 'block' }}>
+      <polyline points={points} fill="none" stroke={color} strokeWidth={1.5} strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+// ─── Format helpers ─────────────────────────────────────────
+function fmtMoney(n: number, compact = false) {
+  if (compact && Math.abs(n) >= 1000000) return `$${(n / 1000000).toFixed(2)}M`;
+  if (compact && Math.abs(n) >= 1000) return `$${(n / 1000).toFixed(0)}K`;
+  return `$${n.toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}`;
+}
+
+function timeAgo(ts: string) {
+  const diff = Date.now() - new Date(ts).getTime();
+  const mins = Math.floor(diff / 60000);
+  if (mins < 1) return 'Just now';
+  if (mins < 60) return `${mins}m ago`;
+  const hrs = Math.floor(mins / 60);
+  if (hrs < 24) return `${hrs}h ago`;
+  return `${Math.floor(hrs / 24)}d ago`;
+}
+
+// ─── Agent color map ────────────────────────────────────────
+const AGENT_COLORS: Record<string, string> = {
+  'Keisha': '#f0c674',
+  'Tax-Loss Harvester': '#4ade80',
+  'Rebalancer': '#8a5cf6',
+  'Morning Brief': '#60a5fa',
+  'Covered Call Wheel': '#fb923c',
+};
+
+// ─── Insight chips ──────────────────────────────────────────
+const INSIGHT_CHIPS = [
+  { icon: '📈', text: 'RSU vest: ~$373K next quarter' },
+  { icon: '🎯', text: '2026 Foundation Year — building base' },
+  { icon: '💰', text: '$100K cash ready to deploy' },
+  { icon: '📋', text: '23 CR3 territories signed' },
+  { icon: '🏠', text: 'Miami Shores: $580K equity' },
+];
+
+// ─── Wealth breakdown config ────────────────────────────────
+const WEALTH_SEGMENTS = [
+  { label: 'CR3 Franchise', key: 'cr3Equity' as const, color: '#4ade80' },
+  { label: 'Miami Shores', key: 'miamiShoresProperty' as const, color: '#8a5cf6' },
+  { label: 'Investment Portfolio', key: 'alpacaEquity' as const, color: '#f0c674' },
+  { label: 'Anthropic RSUs', key: 'anthropicRSUs' as const, color: '#60a5fa' },
+];
+
+// ─── Quick actions ──────────────────────────────────────────
+const QUICK_ACTIONS = [
+  { icon: '💬', label: 'Ask Keisha', href: '/keisha', tint: 'rgba(240, 198, 116, 0.12)', border: 'rgba(240, 198, 116, 0.2)' },
+  { icon: '⚡', label: 'Place Trade', href: '/trading', tint: 'rgba(74, 222, 128, 0.12)', border: 'rgba(74, 222, 128, 0.2)' },
+  { icon: '📰', label: 'View News', href: '/news', tint: 'rgba(138, 92, 246, 0.12)', border: 'rgba(138, 92, 246, 0.2)' },
+  { icon: '⭐', label: 'Watchlist', href: '/watchlist', tint: 'rgba(240, 198, 116, 0.12)', border: 'rgba(240, 198, 116, 0.2)' },
+  { icon: '📊', label: 'Sector Map', href: '/sectors', tint: 'rgba(138, 92, 246, 0.12)', border: 'rgba(138, 92, 246, 0.2)' },
+  { icon: '🔍', label: '⌘K Search', href: '', tint: 'rgba(255, 255, 255, 0.04)', border: 'rgba(255, 255, 255, 0.1)' },
+];
+
+// ═══════════════════════════════════════════════════════════
+//  DASHBOARD PAGE
+// ═══════════════════════════════════════════════════════════
+
+interface PositionData {
+  symbol: string;
+  qty: number;
+  marketValue: number;
+  allocation: number;
+  dailyChange: number;
+}
+
+interface MoverData {
+  symbol: string;
+  name: string;
+  changePercentage: number;
+}
 
 export default function DashboardPage() {
-  const [portfolio, setPortfolio] = useState<Portfolio>(PORTFOLIO_SUMMARY);
-  const [auditLog, setAuditLog] = useState<AuditLogEntry[]>(MOCK_AUDIT_LOG);
+  const router = useRouter();
+
+  // ─── State ──────────────────────────────────────────────
   const [loading, setLoading] = useState(true);
+  const [heroHasImage, setHeroHasImage] = useState(false);
 
-  useEffect(() => {
-    async function fetchLiveData() {
-      try {
-        // Fetch Alpaca account for live portfolio numbers
-        const accountRes = await fetch('/api/alpaca/account');
-        if (accountRes.ok) {
-          const acct = await accountRes.json();
-          if (!acct.error) {
-            setPortfolio(prev => ({
-              ...prev,
-              alpacaEquity: parseFloat(acct.equity) || prev.alpacaEquity,
-              alpacaCash: parseFloat(acct.cash) || prev.alpacaCash,
-              totalNetWorth:
-                (parseFloat(acct.equity) || prev.alpacaEquity) +
-                (parseFloat(acct.cash) || prev.alpacaCash) +
-                prev.cr3Equity +
-                prev.anthropicRSUs +
-                prev.miamiShoresProperty,
-              lastUpdated: new Date().toISOString(),
-            }));
-          }
-        }
-      } catch {
-        // Fall back to static data
-      }
+  // Portfolio / account
+  const [equity, setEquity] = useState(PORTFOLIO_SUMMARY.alpacaEquity);
+  const [cash, setCash] = useState(0);
+  const [todayPL, setTodayPL] = useState(0);
+  const [positions, setPositions] = useState<PositionData[]>([]);
+  const [positionCount, setPositionCount] = useState(0);
+  const [totalInvested, setTotalInvested] = useState(0);
 
-      try {
-        // Fetch audit log from Supabase
-        const auditRes = await fetch('/api/audit-log');
-        if (auditRes.ok) {
-          const entries = await auditRes.json();
-          if (Array.isArray(entries) && entries.length > 0) {
-            setAuditLog(entries);
-          }
-        }
-      } catch {
-        // Fall back to mock data
-      }
+  // Net worth
+  const cr3 = 720000;
+  const rsus = 82000;
+  const miami = 580000;
+  const totalNetWorth = equity + cr3 + rsus + miami;
 
-      setLoading(false);
+  // Briefing
+  const [briefing, setBriefing] = useState('');
+  const [briefingLoading, setBriefingLoading] = useState(true);
+  const [briefingExpanded, setBriefingExpanded] = useState(false);
+
+  // Market
+  const [vix, setVix] = useState(0);
+  const [gainers, setGainers] = useState<MoverData[]>([]);
+  const [losers, setLosers] = useState<MoverData[]>([]);
+
+  // Portfolio history (sparkline)
+  const [historyPoints, setHistoryPoints] = useState<number[]>([]);
+
+  // Audit
+  const [auditLog, setAuditLog] = useState<AuditLogEntry[]>(MOCK_AUDIT_LOG);
+
+  // Count-up animated values
+  const animatedNetWorth = useCountUp(totalNetWorth, 1200, !loading);
+  const animatedCash = useCountUp(cash, 1000, !loading);
+  const animatedEquity = useCountUp(equity, 1000, !loading);
+
+  // ─── Data fetch ─────────────────────────────────────────
+  const fetchDashboardData = useCallback(async () => {
+    const [accountRes, positionsRes, tickerRes, moversRes, historyRes, auditRes] = await Promise.all([
+      fetch('/api/alpaca/account').then(r => r.ok ? r.json() : null).catch(() => null),
+      fetch('/api/alpaca/positions').then(r => r.ok ? r.json() : null).catch(() => null),
+      fetch('/api/market-ticker').then(r => r.ok ? r.json() : null).catch(() => null),
+      fetch('/api/market-intel?action=movers').then(r => r.ok ? r.json() : null).catch(() => null),
+      fetch('/api/portfolio-history?period=1M').then(r => r.ok ? r.json() : null).catch(() => null),
+      fetch('/api/audit-log').then(r => r.ok ? r.json() : null).catch(() => null),
+    ]);
+
+    if (accountRes && !accountRes.error) {
+      const eq = parseFloat(accountRes.equity) || PORTFOLIO_SUMMARY.alpacaEquity;
+      const ca = parseFloat(accountRes.cash) || 0;
+      const lastEq = parseFloat(accountRes.last_equity) || eq;
+      setEquity(eq);
+      setCash(ca);
+      setTodayPL(eq - lastEq);
     }
 
-    fetchLiveData();
+    if (Array.isArray(positionsRes)) {
+      const totalMV = positionsRes.reduce((s: number, p: { market_value: string }) => s + parseFloat(p.market_value || '0'), 0);
+      setPositionCount(positionsRes.length);
+      setTotalInvested(totalMV);
+      const posData: PositionData[] = positionsRes
+        .map((p: { symbol: string; qty: string; market_value: string; unrealized_plpc: string }) => ({
+          symbol: p.symbol,
+          qty: parseFloat(p.qty) || 0,
+          marketValue: parseFloat(p.market_value) || 0,
+          allocation: totalMV > 0 ? (parseFloat(p.market_value) / totalMV) * 100 : 0,
+          dailyChange: (parseFloat(p.unrealized_plpc) || 0) * 100,
+        }))
+        .sort((a: PositionData, b: PositionData) => b.marketValue - a.marketValue)
+        .slice(0, 5);
+      setPositions(posData);
+    }
+
+    if (tickerRes?.tickers) {
+      const vixItem = tickerRes.tickers.find((t: { label: string }) => t.label === 'VIX');
+      if (vixItem) setVix(vixItem.price);
+    }
+
+    if (moversRes) {
+      setGainers((moversRes.gainers || []).slice(0, 3));
+      setLosers((moversRes.losers || []).slice(0, 3));
+    }
+
+    if (historyRes?.history) {
+      setHistoryPoints(historyRes.history.map((h: { equity: number }) => h.equity));
+    }
+
+    if (Array.isArray(auditRes) && auditRes.length > 0) {
+      setAuditLog(auditRes);
+    }
+
+    setLoading(false);
   }, []);
 
+  const fetchBriefing = useCallback(async () => {
+    setBriefingLoading(true);
+    try {
+      const res = await fetch('/api/briefing');
+      const data = await res.json();
+      setBriefing(data.briefing || 'Unable to generate briefing.');
+    } catch {
+      setBriefing('Briefing service unavailable.');
+    }
+    setBriefingLoading(false);
+  }, []);
+
+  useEffect(() => {
+    // Check if hero image exists
+    const img = new Image();
+    img.onload = () => setHeroHasImage(true);
+    img.onerror = () => setHeroHasImage(false);
+    img.src = '/dashboard-hero-bg.jpg';
+
+    fetchDashboardData();
+    fetchBriefing();
+  }, [fetchDashboardData, fetchBriefing]);
+
+  // ─── Time greeting ──────────────────────────────────────
+  const hour = new Date().getHours();
+  const greeting = hour < 12 ? 'Good morning' : hour < 17 ? 'Good afternoon' : 'Good evening';
+  const dateStr = new Date().toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
+
+  // $50M progress
+  const fiftyMPct = (totalNetWorth / 50000000) * 100;
+
+  // VIX status
+  const vixColor = vix > 30 ? '#f87171' : vix > 20 ? '#f0c674' : '#4ade80';
+  const vixLabel = vix > 30 ? 'High vol' : vix > 20 ? 'Elevated' : 'Low vol';
+
+  // ═══════════════════════════════════════════════════════
+  //  RENDER
+  // ═══════════════════════════════════════════════════════
   return (
     <AppShell>
-      <div style={{ marginBottom: 32 }}>
-        <h1 style={{ fontSize: 24, fontWeight: 700, color: '#e8e8e8', margin: 0 }}>Dashboard</h1>
-        <p style={{ color: '#6b6b80', fontSize: 13, marginTop: 4 }}>
-          {new Date().toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}
-          {loading && <span style={{ marginLeft: 8, color: '#c9a84c' }}>&#8226; Syncing live data...</span>}
-        </p>
+      <div style={{
+        minHeight: '100vh',
+        background: `
+          radial-gradient(ellipse at 20% 50%, rgba(138, 92, 246, 0.06) 0%, transparent 50%),
+          radial-gradient(ellipse at 80% 20%, rgba(240, 198, 116, 0.04) 0%, transparent 50%),
+          radial-gradient(ellipse at 50% 100%, rgba(138, 92, 246, 0.03) 0%, transparent 50%)
+        `,
+        margin: '-32px -40px',
+        padding: '32px 40px',
+      }}>
+
+        {/* ═══ ROW 0: Hero Greeting + Net Worth ═══ */}
+        <div style={{
+          position: 'relative',
+          overflow: 'hidden',
+          borderRadius: 16,
+          marginBottom: 20,
+          padding: '32px 36px',
+          border: '1px solid rgba(138, 92, 246, 0.15)',
+        }}>
+          {/* Background image or gradient */}
+          {heroHasImage ? (
+            <>
+              <div style={{
+                position: 'absolute',
+                inset: 0,
+                backgroundImage: 'url(/dashboard-hero-bg.jpg)',
+                backgroundSize: 'cover',
+                backgroundPosition: 'center 30%',
+                filter: 'brightness(0.3) saturate(0.7)',
+                transition: 'filter 0.3s ease',
+              }} />
+              <div style={{
+                position: 'absolute',
+                inset: 0,
+                background: `
+                  linear-gradient(135deg, rgba(8, 11, 20, 0.88) 0%, rgba(8, 11, 20, 0.75) 50%, rgba(138, 92, 246, 0.15) 100%),
+                  linear-gradient(to right, rgba(8, 11, 20, 0.95) 0%, rgba(8, 11, 20, 0.7) 100%)
+                `,
+              }} />
+            </>
+          ) : (
+            <div style={{
+              position: 'absolute',
+              inset: 0,
+              background: `
+                linear-gradient(135deg, rgba(138, 92, 246, 0.08) 0%, transparent 50%),
+                linear-gradient(to right, rgba(240, 198, 116, 0.04) 0%, transparent 50%),
+                rgba(255, 255, 255, 0.02)
+              `,
+            }} />
+          )}
+
+          {/* Content */}
+          <div style={{ position: 'relative', zIndex: 1, display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end' }}>
+            <div>
+              <div style={{ fontSize: 28, fontWeight: 700, color: '#fff', marginBottom: 4 }}>
+                {greeting}, Wes
+              </div>
+              <div style={{ fontSize: 14, color: '#d0d0e0', marginBottom: 2 }}>{dateStr}</div>
+              <div style={{ fontSize: 12, color: '#888', letterSpacing: '0.08em', textTransform: 'uppercase' }}>The Glastonbury Group</div>
+            </div>
+            <div style={{ textAlign: 'right' }}>
+              <div style={{ fontSize: 11, color: '#888', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 4 }}>Total Net Worth</div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 12, justifyContent: 'flex-end' }}>
+                <Sparkline data={historyPoints.length > 2 ? historyPoints : [98000, 99000, 99500, 100000, 100200, 99800, 100500, 101000, 100800, 100000]} color={todayPL >= 0 ? '#4ade80' : '#f87171'} />
+                <span style={{ fontSize: 36, fontWeight: 700, color: '#fff', fontFamily: "'JetBrains Mono', monospace", letterSpacing: '-0.02em' }}>
+                  {fmtMoney(animatedNetWorth, true)}
+                </span>
+              </div>
+              {todayPL !== 0 && (
+                <div style={{ fontSize: 14, color: todayPL >= 0 ? '#4ade80' : '#f87171', fontWeight: 600, fontFamily: "'JetBrains Mono', monospace", marginTop: 2 }}>
+                  {todayPL >= 0 ? '+' : ''}{fmtMoney(Math.round(todayPL))} today
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+
+        {/* ═══ ROW 1: KPI Metric Strip ═══ */}
+        <div style={{ display: 'flex', gap: 12, marginBottom: 20, flexWrap: 'wrap' }}>
+          {/* Cash Available */}
+          <GlassCard style={{ flex: '1 1 150px', padding: '16px 18px' }}>
+            <div style={{ fontSize: 10, color: '#888', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 6 }}>Cash Available</div>
+            <div style={{ fontSize: 20, fontWeight: 700, color: '#fff', fontFamily: "'JetBrains Mono', monospace" }}>
+              {fmtMoney(animatedCash, true)}
+            </div>
+            <div style={{ fontSize: 11, color: '#555', marginTop: 4 }}>Ready to deploy</div>
+          </GlassCard>
+
+          {/* Today's P&L */}
+          <GlassCard style={{ flex: '1 1 150px', padding: '16px 18px' }}>
+            <div style={{ fontSize: 10, color: '#888', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 6 }}>Today&apos;s P&amp;L</div>
+            <div style={{ fontSize: 20, fontWeight: 700, color: todayPL >= 0 ? '#4ade80' : '#f87171', fontFamily: "'JetBrains Mono', monospace" }}>
+              {todayPL >= 0 ? '+' : ''}{fmtMoney(Math.round(todayPL))}
+            </div>
+            <div style={{ fontSize: 11, color: '#555', marginTop: 4 }}>{todayPL >= 0 ? 'Winning day' : 'Down day'}</div>
+          </GlassCard>
+
+          {/* Positions */}
+          <GlassCard style={{ flex: '1 1 150px', padding: '16px 18px' }}>
+            <div style={{ fontSize: 10, color: '#888', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 6 }}>Positions</div>
+            <div style={{ fontSize: 20, fontWeight: 700, color: '#fff', fontFamily: "'JetBrains Mono', monospace" }}>
+              {positionCount}
+            </div>
+            <div style={{ fontSize: 11, color: '#555', marginTop: 4 }}>{fmtMoney(totalInvested, true)} invested</div>
+          </GlassCard>
+
+          {/* $50M Progress */}
+          <GlassCard style={{ flex: '1 1 150px', padding: '16px 18px' }}>
+            <div style={{ fontSize: 10, color: '#888', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 6 }}>$50M Progress</div>
+            <div style={{ fontSize: 20, fontWeight: 700, color: '#f0c674', fontFamily: "'JetBrains Mono', monospace" }}>
+              {fiftyMPct.toFixed(2)}%
+            </div>
+            <div style={{ fontSize: 11, color: '#555', marginTop: 4 }}>{fmtMoney(totalNetWorth, true)} of $50M</div>
+          </GlassCard>
+
+          {/* Active Strategies */}
+          <GlassCard style={{ flex: '1 1 150px', padding: '16px 18px' }}>
+            <div style={{ fontSize: 10, color: '#888', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 6 }}>Active Strategies</div>
+            <div style={{ fontSize: 20, fontWeight: 700, color: '#c4a6ff', fontFamily: "'JetBrains Mono', monospace" }}>3</div>
+            <div style={{ fontSize: 11, color: '#555', marginTop: 4 }}>1 paused</div>
+          </GlassCard>
+
+          {/* VIX */}
+          <GlassCard style={{ flex: '1 1 150px', padding: '16px 18px' }}>
+            <div style={{ fontSize: 10, color: '#888', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 6 }}>VIX</div>
+            <div style={{ fontSize: 20, fontWeight: 700, color: vixColor, fontFamily: "'JetBrains Mono', monospace" }}>
+              {vix > 0 ? vix.toFixed(1) : '—'}
+            </div>
+            <div style={{ fontSize: 11, color: '#555', marginTop: 4 }}>{vix > 0 ? vixLabel : 'Loading...'}</div>
+          </GlassCard>
+        </div>
+
+        {/* ═══ ROW 2: Three-Column Main Content ═══ */}
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 260px', gap: 16, marginBottom: 20 }}>
+
+          {/* Column 1: Keisha AI Briefing */}
+          <GlassCard style={{ padding: '20px 22px', overflow: 'hidden' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                <div style={{
+                  width: 28, height: 28, borderRadius: '50%',
+                  background: 'linear-gradient(135deg, #f0c674, #c9a84c)',
+                  display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  fontSize: 13, fontWeight: 800, color: '#080b14',
+                }}>K</div>
+                <div>
+                  <div style={{ fontSize: 11, fontWeight: 600, color: '#f0c674', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Keisha — AI Briefing</div>
+                  <div style={{ fontSize: 10, color: '#555' }}>{briefingLoading ? 'Generating...' : '5 min ago'}</div>
+                </div>
+              </div>
+              <button
+                onClick={fetchBriefing}
+                style={{ background: 'none', border: 'none', color: '#666', cursor: 'pointer', padding: 4, fontSize: 14 }}
+                title="Refresh briefing"
+              >
+                ↻
+              </button>
+            </div>
+
+            {briefingLoading ? (
+              <div style={{ display: 'flex', gap: 6, padding: '20px 0' }}>
+                {[0, 1, 2].map(i => (
+                  <div key={i} style={{
+                    width: 8, height: 8, borderRadius: '50%',
+                    background: '#f0c674', opacity: 0.5,
+                    animation: `pulse 1.2s ease-in-out ${i * 0.2}s infinite`,
+                  }} />
+                ))}
+              </div>
+            ) : (
+              <div style={{ position: 'relative' }}>
+                <div style={{
+                  maxHeight: briefingExpanded ? 'none' : 180,
+                  overflow: 'hidden',
+                  transition: 'max-height 0.4s ease',
+                }}>
+                  <MarkdownRenderer content={briefing} compact />
+                </div>
+                {!briefingExpanded && briefing.length > 300 && (
+                  <div style={{
+                    position: 'absolute', bottom: 0, left: 0, right: 0, height: 60,
+                    background: 'linear-gradient(transparent, rgba(8, 11, 20, 0.95))',
+                    display: 'flex', alignItems: 'flex-end', justifyContent: 'center', paddingBottom: 4,
+                  }}>
+                    <button
+                      onClick={() => setBriefingExpanded(true)}
+                      style={{
+                        background: 'none', border: 'none', color: '#f0c674',
+                        fontSize: 12, cursor: 'pointer', fontWeight: 600,
+                      }}
+                    >
+                      Read full briefing →
+                    </button>
+                  </div>
+                )}
+                {briefingExpanded && (
+                  <button
+                    onClick={() => setBriefingExpanded(false)}
+                    style={{
+                      background: 'none', border: 'none', color: '#888',
+                      fontSize: 11, cursor: 'pointer', marginTop: 8,
+                    }}
+                  >
+                    Collapse ↑
+                  </button>
+                )}
+              </div>
+            )}
+          </GlassCard>
+
+          {/* Column 2: Top Positions + Mini Chart */}
+          <GlassCard style={{ padding: '20px 22px', display: 'flex', flexDirection: 'column' }}>
+            <div style={{ fontSize: 11, fontWeight: 600, color: '#888', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 14 }}>
+              Top Positions
+            </div>
+
+            {positions.length === 0 ? (
+              <div style={{ color: '#555', fontSize: 13, padding: '12px 0' }}>
+                No open positions — {fmtMoney(cash, true)} cash ready to deploy
+              </div>
+            ) : (
+              <div style={{ flex: 1 }}>
+                {positions.map(pos => (
+                  <div
+                    key={pos.symbol}
+                    onClick={() => router.push(`/stock/${pos.symbol}`)}
+                    style={{
+                      display: 'flex', alignItems: 'center', gap: 10, padding: '8px 0',
+                      borderBottom: '1px solid rgba(255,255,255,0.04)', cursor: 'pointer',
+                    }}
+                  >
+                    <span style={{ fontSize: 13, fontWeight: 700, color: '#fff', fontFamily: "'JetBrains Mono', monospace", width: 48 }}>
+                      {pos.symbol}
+                    </span>
+                    {/* Allocation bar */}
+                    <div style={{ flex: 1, height: 4, borderRadius: 2, background: 'rgba(255,255,255,0.06)', overflow: 'hidden' }}>
+                      <div style={{ width: `${pos.allocation}%`, height: '100%', borderRadius: 2, background: '#8a5cf6', transition: 'width 0.6s ease' }} />
+                    </div>
+                    <span style={{ fontSize: 11, color: '#888', fontFamily: "'JetBrains Mono', monospace", width: 36, textAlign: 'right' }}>
+                      {pos.allocation.toFixed(0)}%
+                    </span>
+                    <span style={{ fontSize: 12, color: '#d0d0e0', fontFamily: "'JetBrains Mono', monospace", width: 64, textAlign: 'right' }}>
+                      {fmtMoney(pos.marketValue, true)}
+                    </span>
+                    <span style={{
+                      fontSize: 12, fontWeight: 600, fontFamily: "'JetBrains Mono', monospace", width: 56, textAlign: 'right',
+                      color: pos.dailyChange >= 0 ? '#4ade80' : '#f87171',
+                    }}>
+                      {pos.dailyChange >= 0 ? '+' : ''}{pos.dailyChange.toFixed(2)}%
+                    </span>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 12 }}>
+              <button
+                onClick={() => router.push('/trading')}
+                style={{ background: 'none', border: 'none', color: '#8a5cf6', fontSize: 12, cursor: 'pointer', fontWeight: 600 }}
+              >
+                View all →
+              </button>
+            </div>
+
+            {/* Mini portfolio chart */}
+            {historyPoints.length > 2 && (
+              <div style={{ marginTop: 12, borderTop: '1px solid rgba(255,255,255,0.04)', paddingTop: 12 }}>
+                <div style={{ fontSize: 10, color: '#555', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 8 }}>Portfolio — 30 Days</div>
+                <Sparkline
+                  data={historyPoints}
+                  width={320}
+                  height={48}
+                  color={historyPoints[historyPoints.length - 1] >= historyPoints[0] ? '#4ade80' : '#f87171'}
+                />
+              </div>
+            )}
+          </GlassCard>
+
+          {/* Column 3: Market Movers + Connection Health */}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+            {/* Movers */}
+            <GlassCard style={{ padding: '16px 18px', flex: 1 }}>
+              <div style={{ fontSize: 11, fontWeight: 600, color: '#888', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 12 }}>
+                Market Movers
+              </div>
+
+              {/* Gainers */}
+              <div style={{ fontSize: 10, fontWeight: 700, color: '#4ade80', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 6 }}>Top Gainers</div>
+              {gainers.length > 0 ? gainers.map(g => (
+                <div key={g.symbol} onClick={() => router.push(`/stock/${g.symbol}`)} style={{ display: 'flex', justifyContent: 'space-between', padding: '4px 0', cursor: 'pointer' }}>
+                  <span style={{ fontSize: 12, color: '#d0d0e0', fontFamily: "'JetBrains Mono', monospace", fontWeight: 600 }}>{g.symbol}</span>
+                  <span style={{ fontSize: 12, color: '#4ade80', fontFamily: "'JetBrains Mono', monospace" }}>+{(g.changePercentage ?? 0).toFixed(1)}%</span>
+                </div>
+              )) : <div style={{ fontSize: 11, color: '#555', padding: '4px 0' }}>No data</div>}
+
+              {/* Losers */}
+              <div style={{ fontSize: 10, fontWeight: 700, color: '#f87171', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 6, marginTop: 12 }}>Top Losers</div>
+              {losers.length > 0 ? losers.map(l => (
+                <div key={l.symbol} onClick={() => router.push(`/stock/${l.symbol}`)} style={{ display: 'flex', justifyContent: 'space-between', padding: '4px 0', cursor: 'pointer' }}>
+                  <span style={{ fontSize: 12, color: '#d0d0e0', fontFamily: "'JetBrains Mono', monospace", fontWeight: 600 }}>{l.symbol}</span>
+                  <span style={{ fontSize: 12, color: '#f87171', fontFamily: "'JetBrains Mono', monospace" }}>{(l.changePercentage ?? 0).toFixed(1)}%</span>
+                </div>
+              )) : <div style={{ fontSize: 11, color: '#555', padding: '4px 0' }}>No data</div>}
+            </GlassCard>
+
+            {/* Connection Health */}
+            <GlassCard style={{ padding: '16px 18px' }}>
+              <div style={{ fontSize: 11, fontWeight: 600, color: '#888', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 10 }}>
+                Connections
+              </div>
+              {[
+                { name: 'Alpaca', status: 'Connected' },
+                { name: 'FMP', status: 'Connected' },
+                { name: 'Supabase', status: 'Connected' },
+                { name: 'Claude AI', status: 'Connected' },
+              ].map(c => (
+                <div key={c.name} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '3px 0' }}>
+                  <div style={{ width: 6, height: 6, borderRadius: '50%', background: '#4ade80' }} />
+                  <span style={{ fontSize: 12, color: '#888' }}>{c.name}</span>
+                  <span style={{ fontSize: 10, color: '#555', marginLeft: 'auto' }}>{c.status}</span>
+                </div>
+              ))}
+            </GlassCard>
+          </div>
+        </div>
+
+        {/* ═══ ROW 3: Wealth Breakdown / $50M Ring / Agent Activity ═══ */}
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 240px 1fr', gap: 16, marginBottom: 20 }}>
+
+          {/* Wealth Breakdown */}
+          <GlassCard style={{ padding: '20px 22px' }}>
+            <div style={{ fontSize: 11, fontWeight: 600, color: '#888', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 16 }}>
+              Wealth Breakdown
+            </div>
+
+            {/* Stacked bar */}
+            <div style={{ display: 'flex', height: 12, borderRadius: 6, overflow: 'hidden', marginBottom: 16 }}>
+              {WEALTH_SEGMENTS.map(seg => {
+                const val = seg.key === 'cr3Equity' ? cr3 : seg.key === 'miamiShoresProperty' ? miami : seg.key === 'alpacaEquity' ? equity : rsus;
+                const pct = totalNetWorth > 0 ? (val / totalNetWorth) * 100 : 0;
+                return (
+                  <div key={seg.key} style={{
+                    width: `${pct}%`, background: seg.color, transition: 'width 0.8s ease',
+                    borderRight: '1px solid rgba(8, 11, 20, 0.5)',
+                  }} />
+                );
+              })}
+            </div>
+
+            {/* Legend */}
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+              {WEALTH_SEGMENTS.map(seg => {
+                const val = seg.key === 'cr3Equity' ? cr3 : seg.key === 'miamiShoresProperty' ? miami : seg.key === 'alpacaEquity' ? equity : rsus;
+                const pct = totalNetWorth > 0 ? (val / totalNetWorth) * 100 : 0;
+                return (
+                  <div key={seg.key} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <div style={{ width: 8, height: 8, borderRadius: 2, background: seg.color, flexShrink: 0 }} />
+                    <div>
+                      <div style={{ fontSize: 12, color: '#d0d0e0', fontWeight: 500 }}>{seg.label}</div>
+                      <div style={{ fontSize: 11, color: '#555', fontFamily: "'JetBrains Mono', monospace" }}>
+                        {fmtMoney(val, true)} · {pct.toFixed(1)}%
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </GlassCard>
+
+          {/* $50M Progress Ring */}
+          <GlassCard style={{ padding: '20px', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center' }}>
+            <div style={{ position: 'relative', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+              <ProgressRing percent={fiftyMPct} size={120} stroke={7} />
+              <div style={{ position: 'absolute', textAlign: 'center' }}>
+                <div style={{ fontSize: 20, fontWeight: 700, color: '#f0c674', fontFamily: "'JetBrains Mono', monospace" }}>
+                  {fiftyMPct.toFixed(1)}%
+                </div>
+              </div>
+            </div>
+            <div style={{ textAlign: 'center', marginTop: 12 }}>
+              <div style={{ fontSize: 14, fontWeight: 600, color: '#d0d0e0', fontFamily: "'JetBrains Mono', monospace" }}>
+                {fmtMoney(totalNetWorth, true)}
+              </div>
+              <div style={{ fontSize: 11, color: '#555', marginTop: 2 }}>of $50M target</div>
+              <div style={{
+                display: 'inline-block', marginTop: 8,
+                padding: '3px 10px', borderRadius: 12,
+                background: 'rgba(74, 222, 128, 0.1)',
+                border: '1px solid rgba(74, 222, 128, 0.2)',
+                fontSize: 10, color: '#4ade80', fontWeight: 600,
+              }}>
+                Foundation Year
+              </div>
+            </div>
+          </GlassCard>
+
+          {/* Agent Activity */}
+          <GlassCard style={{ padding: '20px 22px' }}>
+            <div style={{ fontSize: 11, fontWeight: 600, color: '#888', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 14 }}>
+              Agent Activity
+            </div>
+            {auditLog.slice(0, 5).map(entry => (
+              <div key={entry.id} style={{ display: 'flex', alignItems: 'flex-start', gap: 10, padding: '6px 0', borderBottom: '1px solid rgba(255,255,255,0.03)' }}>
+                <div style={{
+                  width: 8, height: 8, borderRadius: '50%', marginTop: 4, flexShrink: 0,
+                  background: AGENT_COLORS[entry.agent] || '#888',
+                }} />
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <span style={{ fontSize: 12, color: '#d0d0e0', fontWeight: 600 }}>{entry.agent}</span>
+                    <span style={{ fontSize: 10, color: '#555' }}>{timeAgo(entry.timestamp)}</span>
+                  </div>
+                  <div style={{ fontSize: 11, color: '#888', marginTop: 1 }}>{entry.action}</div>
+                  <div style={{ fontSize: 10, color: '#555', marginTop: 1, overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>
+                    {entry.details}
+                  </div>
+                </div>
+              </div>
+            ))}
+            <button
+              onClick={() => router.push('/strategies')}
+              style={{ background: 'none', border: 'none', color: '#8a5cf6', fontSize: 12, cursor: 'pointer', fontWeight: 600, marginTop: 10, padding: 0 }}
+            >
+              View full audit log →
+            </button>
+          </GlassCard>
+        </div>
+
+        {/* ═══ ROW 4: Quick Action Buttons ═══ */}
+        <div style={{ display: 'flex', gap: 10, marginBottom: 20, flexWrap: 'wrap' }}>
+          {QUICK_ACTIONS.map(action => (
+            <GlassCard
+              key={action.label}
+              onClick={action.href ? () => router.push(action.href) : undefined}
+              style={{
+                flex: '1 1 120px',
+                padding: '14px 16px',
+                textAlign: 'center',
+                background: action.tint,
+                border: `1px solid ${action.border}`,
+              }}
+            >
+              <div style={{ fontSize: 20, marginBottom: 4 }}>{action.icon}</div>
+              <div style={{ fontSize: 12, fontWeight: 600, color: '#d0d0e0' }}>{action.label}</div>
+            </GlassCard>
+          ))}
+        </div>
+
+        {/* ═══ ROW 5: AI Insight Chips ═══ */}
+        <div style={{
+          display: 'flex', gap: 10, overflowX: 'auto', paddingBottom: 8,
+          scrollbarWidth: 'none', marginBottom: 20,
+        }}>
+          {INSIGHT_CHIPS.map((chip, i) => (
+            <div key={i} style={{
+              flexShrink: 0,
+              padding: '8px 16px',
+              borderRadius: 20,
+              background: 'rgba(255, 255, 255, 0.03)',
+              border: '1px solid rgba(138, 92, 246, 0.15)',
+              fontSize: 12,
+              color: '#d0d0e0',
+              whiteSpace: 'nowrap',
+              display: 'flex',
+              alignItems: 'center',
+              gap: 6,
+            }}>
+              <span>{chip.icon}</span>
+              <span>{chip.text}</span>
+            </div>
+          ))}
+        </div>
+
       </div>
-      {/* Top row: Net Worth, Briefing, Audit Feed */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 20, marginBottom: 20 }}>
-        <NetWorthCard portfolio={portfolio} />
-        <BriefingCard />
-        <AuditFeed entries={auditLog.slice(0, 5)} />
-      </div>
-      {/* Second row: Income Chart */}
-      <div style={{ marginBottom: 20 }}>
-        <IncomeChart />
-      </div>
-      {/* Full-width Roadmap */}
-      <RoadmapProgress />
     </AppShell>
   );
 }
