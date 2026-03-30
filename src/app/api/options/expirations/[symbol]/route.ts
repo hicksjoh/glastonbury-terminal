@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 
-const ALPACA_DATA_URL = 'https://data.alpaca.markets';
+const ALPACA_TRADING_URL = process.env.ALPACA_BASE_URL || 'https://paper-api.alpaca.markets';
 
 const alpacaHeaders = {
   'APCA-API-KEY-ID': process.env.ALPACA_API_KEY!,
@@ -17,7 +17,7 @@ export async function GET(
   try {
     // Fetch active option contracts from Alpaca
     const contractsRes = await fetch(
-      `${ALPACA_DATA_URL}/v1beta1/options/contracts?underlying_symbols=${upper}&status=active&limit=1000`,
+      `${ALPACA_TRADING_URL}/v2/options/contracts?underlying_symbols=${upper}&status=active&limit=1000`,
       { headers: alpacaHeaders }
     );
 

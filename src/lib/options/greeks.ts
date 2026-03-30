@@ -28,8 +28,11 @@ function normPDF(x: number): number {
  * Calculate d1 and d2 for Black-Scholes
  */
 function calcD1D2(S: number, K: number, T: number, r: number, sigma: number): [number, number] {
-  const d1 = (Math.log(S / K) + (r + 0.5 * sigma * sigma) * T) / (sigma * Math.sqrt(T));
-  const d2 = d1 - sigma * Math.sqrt(T);
+  // Guard against zero volatility or zero time (division by zero)
+  const s = Math.max(sigma, 0.001);
+  const t = Math.max(T, 0.0001);
+  const d1 = (Math.log(S / K) + (r + 0.5 * s * s) * t) / (s * Math.sqrt(t));
+  const d2 = d1 - s * Math.sqrt(t);
   return [d1, d2];
 }
 

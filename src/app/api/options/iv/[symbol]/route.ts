@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import type { IVData } from '@/lib/options/types';
 
 const ALPACA_DATA_URL = 'https://data.alpaca.markets';
+const ALPACA_TRADING_URL = process.env.ALPACA_BASE_URL || 'https://paper-api.alpaca.markets';
 const FMP_BASE_URL = 'https://financialmodelingprep.com/stable';
 
 const alpacaHeaders = {
@@ -60,7 +61,7 @@ async function fetchCurrentIV(symbol: string): Promise<number> {
   try {
     // Get ATM options to find current IV
     const res = await fetch(
-      `${ALPACA_DATA_URL}/v1beta1/options/contracts?underlying_symbols=${symbol}&status=active&limit=50`,
+      `${ALPACA_TRADING_URL}/v2/options/contracts?underlying_symbols=${symbol}&status=active&limit=50`,
       { headers: alpacaHeaders }
     );
 

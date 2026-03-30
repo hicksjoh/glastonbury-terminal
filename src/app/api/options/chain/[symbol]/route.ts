@@ -4,6 +4,7 @@ import { buildOCCSymbol } from '@/lib/options/symbols';
 import type { OptionChainEntry } from '@/lib/options/types';
 
 const ALPACA_DATA_URL = 'https://data.alpaca.markets';
+const ALPACA_TRADING_URL = process.env.ALPACA_BASE_URL || 'https://paper-api.alpaca.markets';
 const FMP_BASE_URL = 'https://financialmodelingprep.com/stable';
 
 const alpacaHeaders = {
@@ -82,7 +83,7 @@ async function fetchAlpacaChain(symbol: string, expiration?: string): Promise<Op
     }
 
     const contractsRes = await fetch(
-      `${ALPACA_DATA_URL}/v1beta1/options/contracts?${params}`,
+      `${ALPACA_TRADING_URL}/v2/options/contracts?${params}`,
       { headers: alpacaHeaders }
     );
 
