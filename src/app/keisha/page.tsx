@@ -3,6 +3,7 @@ import { useState, useRef, useEffect } from 'react';
 import { AppShell } from '@/components/layout/AppShell';
 import { ChatMessage } from '@/types';
 import { Send } from 'lucide-react';
+import MarkdownRenderer from '@/components/MarkdownRenderer';
 
 const SUGGESTED = [
   'What covered call should I write this week?',
@@ -121,9 +122,13 @@ export default function KeishaPage() {
                 fontSize: 14,
                 lineHeight: 1.6,
                 border: msg.role === 'user' ? 'none' : '1px solid #2a2a3a',
-                whiteSpace: 'pre-wrap',
+                ...(msg.role === 'user' ? { whiteSpace: 'pre-wrap' as const } : {}),
               }}>
-                {msg.content}
+                {msg.role === 'assistant' ? (
+                  <MarkdownRenderer content={msg.content} />
+                ) : (
+                  msg.content
+                )}
               </div>
             </div>
           ))}

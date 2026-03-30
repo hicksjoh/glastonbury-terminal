@@ -1,6 +1,7 @@
 'use client';
 import { useState, useEffect } from 'react';
 import { RefreshCw } from 'lucide-react';
+import MarkdownRenderer from '@/components/MarkdownRenderer';
 
 export function BriefingCard() {
   const [briefing, setBriefing] = useState('');
@@ -44,7 +45,7 @@ export function BriefingCard() {
           ))}
         </div>
       ) : (
-        <p style={{ color: '#b0b0c0', fontSize: 14, lineHeight: 1.6, margin: 0 }}>{briefing}</p>
+        <MarkdownRenderer content={briefing} compact={true} />
       )}
     </div>
   );
