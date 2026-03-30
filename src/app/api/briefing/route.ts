@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { generateBriefing } from '@/lib/claude';
 import { createServiceClient } from '@/lib/supabase';
+import { buildMarketContext } from '@/lib/market-intel';
 
 async function getBriefingContext(): Promise<string> {
   const parts: string[] = [];
@@ -71,6 +72,16 @@ async function getBriefingContext(): Promise<string> {
 
   // Static holdings always included
   parts.push(`Static Holdings: CR3 equity ~$720K (23 territories), Anthropic RSUs 5,749 shares, Miami Shores ~$580K`);
+
+  // Fetch market intelligence (news, movers, earnings)
+  try {
+    const marketIntel = await buildMarketContext([]);
+    if (marketIntel && !marketIntel.startsWith('Market data: No live')) {
+      parts.push(`\nMARKET INTELLIGENCE:\n${marketIntel}`);
+    }
+  } catch {
+    parts.push('Market intelligence: Unavailable');
+  }
 
   return parts.join('\n');
 }

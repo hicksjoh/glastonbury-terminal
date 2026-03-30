@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { generateAnalysis } from '@/lib/claude';
 import { createServiceClient } from '@/lib/supabase';
+import { buildMarketContext } from '@/lib/market-intel';
 
 async function getAlpacaContext(): Promise<string> {
   const baseUrl = process.env.ALPACA_BASE_URL || 'https://paper-api.alpaca.markets';
@@ -95,9 +96,18 @@ async function getSupabaseContext(): Promise<string> {
 export async function POST(req: NextRequest) {
   try {
     const { messages } = await req.json();
-    const [alpacaContext, supabaseContext] = await Promise.all([getAlpacaContext(), getSupabaseContext()]);
 
-    const portfolioContext = `\nALPACA BROKERAGE (LIVE):\n${alpacaContext}\n\nGLASTONBURY TERMINAL DATABASE:\n${supabaseContext}\n\nSTATIC HOLDINGS (not in brokerage):\n  - CR3 American Exteriors equity: ~$720,000 (23 territories)\n  - Anthropic RSUs: 5,749 shares @ $259.14 grant (quarterly vesting, 4 years)\n  - Miami Shores property: ~$580,000\n`;
+    // Fetch brokerage + database context in parallel
+    const alpacaContext = await getAlpacaContext();
+    const supabaseContext = await getSupabaseContext();
+
+    // Parse portfolio symbols from alpaca context for targeted market intel
+    const symbolMatches = alpacaContext.match(/- (\w+): \d+ shares/g) || [];
+    const portfolioSymbols = symbolMatches.map(m => m.split(':')[0].replace('- ', '').trim());
+
+    const marketContext = await buildMarketContext(portfolioSymbols);
+
+    const portfolioContext = `\nALPACA BROKERAGE (LIVE):\n${alpacaContext}\n\nMARKET INTELLIGENCE (LIVE):\n${marketContext}\n\nGLASTONBURY TERMINAL DATABASE:\n${supabaseContext}\n\nSTATIC HOLDINGS (not in brokerage):\n  - CR3 American Exteriors equity: ~$720,000 (23 territories)\n  - Anthropic RSUs: 5,749 shares @ $259.14 grant (quarterly vesting, 4 years)\n  - Miami Shores property: ~$580,000\n`;
 
     const content = await generateAnalysis(
       messages[messages.length - 1]?.content || '',
