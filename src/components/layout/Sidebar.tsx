@@ -1,7 +1,7 @@
 'use client';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { LayoutDashboard, TrendingUp, BarChart3, MessageSquare, Zap } from 'lucide-react';
+import { LayoutDashboard, TrendingUp, BarChart3, MessageSquare, Zap, Newspaper, Star } from 'lucide-react';
 
 const NAV_ITEMS = [
   { href: '/', label: 'Dashboard', icon: LayoutDashboard },
@@ -9,6 +9,8 @@ const NAV_ITEMS = [
   { href: '/monte-carlo', label: 'Monte Carlo', icon: BarChart3 },
   { href: '/keisha', label: 'Keisha AI', icon: MessageSquare },
   { href: '/trading', label: 'Trading', icon: Zap },
+  { href: '/news', label: 'News', icon: Newspaper },
+  { href: '/watchlist', label: 'Watchlist', icon: Star },
 ];
 
 export function Sidebar() {
