@@ -1,8 +1,8 @@
 'use client';
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer } from 'recharts';
 import { AppShell } from '@/components/layout/AppShell';
-import { AlertTriangle, TrendingUp, TrendingDown } from 'lucide-react';
+import { AlertTriangle, TrendingUp, TrendingDown, Search, X } from 'lucide-react';
 
 interface MockPosition {
   symbol: string;
@@ -12,6 +12,15 @@ interface MockPosition {
   unrealizedPL: number;
   unrealizedPLPercent: number;
   currentPrice: number;
+}
+
+interface SearchResult {
+  symbol: string;
+  name: string;
+  exchange: string;
+  price?: number;
+  prevClose?: number;
+  change?: string;
 }
 
 const MOCK_POSITIONS: MockPosition[] = [
@@ -37,12 +46,31 @@ interface OrderForm {
   limitPrice: string;
 }
 
+function useDebounce<T>(value: T, delay: number): T {
+  const [debounced, setDebounced] = useState(value);
+  useEffect(() => {
+    const t = setTimeout(() => setDebounced(value), delay);
+    return () => clearTimeout(t);
+  }, [value, delay]);
+  return debounced;
+}
+
 export default function TradingPage() {
   const [positions, setPositions] = useState<MockPosition[]>(MOCK_POSITIONS);
   const [account, setAccount] = useState<AccountData>({ equity: '82000', cash: '18000', buying_power: '36000' });
   const [form, setForm] = useState<OrderForm>({ symbol: '', side: 'buy', qty: '', type: 'market', limitPrice: '' });
   const [step, setStep] = useState<'form' | 'confirm' | 'submitted'>('form');
   const [apiConnected, setApiConnected] = useState(false);
+
+  // Ticker search state
+  const [searchQuery, setSearchQuery] = useState('');
+  const [searchResults, setSearchResults] = useState<SearchResult[]>([]);
+  const [showDropdown, setShowDropdown] = useState(false);
+  const [searching, setSearching] = useState(false);
+  const [selectedPrice, setSelectedPrice] = useState<number | null>(null);
+  const [priceLoading, setPriceLoading] = useState(false);
+  const searchRef = useRef<HTMLDivElement>(null);
+  const debouncedQuery = useDebounce(searchQuery, 300);
 
   useEffect(() => {
     fetch('/api/alpaca/account')
@@ -59,7 +87,6 @@ export default function TradingPage() {
       .then(r => r.json())
       .then(data => {
         if (Array.isArray(data) && data.length > 0) {
-          // Map Alpaca API format to our interface
           const mapped = data.map((p: Record<string, string>) => ({
             symbol: p.symbol,
             qty: parseFloat(p.qty),
@@ -74,6 +101,68 @@ export default function TradingPage() {
       })
       .catch(() => {});
   }, []);
+
+  // Search for tickers as user types
+  useEffect(() => {
+    if (!debouncedQuery || debouncedQuery.length < 1) {
+      setSearchResults([]);
+      setShowDropdown(false);
+      return;
+    }
+    setSearching(true);
+    fetch(`/api/alpaca/search?q=${encodeURIComponent(debouncedQuery)}&limit=8`)
+      .then(r => r.json())
+      .then(data => {
+        setSearchResults(data.results || []);
+        setShowDropdown(true);
+        setSearching(false);
+      })
+      .catch(() => {
+        setSearching(false);
+        setShowDropdown(false);
+      });
+  }, [debouncedQuery]);
+
+  // Close dropdown on outside click
+  useEffect(() => {
+    function handleClick(e: MouseEvent) {
+      if (searchRef.current && !searchRef.current.contains(e.target as Node)) {
+        setShowDropdown(false);
+      }
+    }
+    document.addEventListener('mousedown', handleClick);
+    return () => document.removeEventListener('mousedown', handleClick);
+  }, []);
+
+  // Fetch price when symbol is selected
+  const fetchPrice = useCallback(async (symbol: string) => {
+    setPriceLoading(true);
+    setSelectedPrice(null);
+    try {
+      const res = await fetch(`/api/alpaca/market-data?symbol=${symbol}`);
+      const data = await res.json();
+      if (data.quote) {
+        // Use ask price for buys, bid for sells, midpoint as default
+        const ask = data.quote.ap || 0;
+        const bid = data.quote.bp || 0;
+        setSelectedPrice(ask > 0 ? (ask + bid) / 2 : null);
+      }
+    } catch {
+      // Price not available
+    }
+    setPriceLoading(false);
+  }, []);
+
+  function selectTicker(result: SearchResult) {
+    setForm(p => ({ ...p, symbol: result.symbol }));
+    setSearchQuery(result.symbol);
+    setShowDropdown(false);
+    if (result.price) {
+      setSelectedPrice(result.price);
+    } else {
+      fetchPrice(result.symbol);
+    }
+  }
 
   async function submitOrder() {
     const order = {
@@ -95,6 +184,8 @@ export default function TradingPage() {
     }
     setStep('submitted');
     setForm({ symbol: '', side: 'buy', qty: '', type: 'market', limitPrice: '' });
+    setSearchQuery('');
+    setSelectedPrice(null);
   }
 
   const totalMarketValue = positions.reduce((s, p) => s + p.marketValue, 0);
@@ -104,6 +195,8 @@ export default function TradingPage() {
     const n = parseFloat(val);
     return isNaN(n) ? 0 : n;
   };
+
+  const estimatedTotal = selectedPrice && form.qty ? (selectedPrice * parseInt(form.qty || '0')).toFixed(2) : null;
 
   return (
     <AppShell>
@@ -152,12 +245,175 @@ export default function TradingPage() {
 
           {step === 'form' && (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-              <input
-                value={form.symbol}
-                onChange={e => setForm(p => ({ ...p, symbol: e.target.value.toUpperCase() }))}
-                placeholder="Symbol (e.g. AAPL)"
-                style={{ padding: '10px 12px', backgroundColor: '#08080d', border: '1px solid #2a2a3a', borderRadius: 8, color: '#e8e8e8', fontSize: 14, outline: 'none' }}
-              />
+              {/* Symbol Search with Autocomplete */}
+              <div ref={searchRef} style={{ position: 'relative' }}>
+                <div style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  backgroundColor: '#08080d',
+                  border: showDropdown ? '1px solid #c9a84c' : '1px solid #2a2a3a',
+                  borderRadius: 8,
+                  padding: '0 12px',
+                  transition: 'border-color 0.2s',
+                }}>
+                  <Search size={14} color={showDropdown ? '#c9a84c' : '#6b6b80'} />
+                  <input
+                    value={searchQuery}
+                    onChange={e => {
+                      const val = e.target.value.toUpperCase();
+                      setSearchQuery(val);
+                      setForm(p => ({ ...p, symbol: val }));
+                      if (!val) {
+                        setSelectedPrice(null);
+                        setShowDropdown(false);
+                      }
+                    }}
+                    onFocus={() => {
+                      if (searchResults.length > 0) setShowDropdown(true);
+                    }}
+                    placeholder="Search ticker or company name..."
+                    style={{
+                      flex: 1,
+                      padding: '10px 8px',
+                      backgroundColor: 'transparent',
+                      border: 'none',
+                      color: '#e8e8e8',
+                      fontSize: 14,
+                      outline: 'none',
+                      fontFamily: 'inherit',
+                    }}
+                  />
+                  {searching && (
+                    <div style={{ color: '#6b6b80', fontSize: 11 }}>searching...</div>
+                  )}
+                  {searchQuery && !searching && (
+                    <X
+                      size={14}
+                      color="#6b6b80"
+                      style={{ cursor: 'pointer' }}
+                      onClick={() => {
+                        setSearchQuery('');
+                        setForm(p => ({ ...p, symbol: '' }));
+                        setSelectedPrice(null);
+                        setSearchResults([]);
+                        setShowDropdown(false);
+                      }}
+                    />
+                  )}
+                </div>
+
+                {/* Search Dropdown */}
+                {showDropdown && searchResults.length > 0 && (
+                  <div style={{
+                    position: 'absolute',
+                    top: '100%',
+                    left: 0,
+                    right: 0,
+                    marginTop: 4,
+                    backgroundColor: '#12121a',
+                    border: '1px solid #2a2a3a',
+                    borderRadius: 8,
+                    maxHeight: 320,
+                    overflowY: 'auto',
+                    zIndex: 50,
+                    boxShadow: '0 12px 40px rgba(0,0,0,0.5)',
+                  }}>
+                    {searchResults.map((r, i) => (
+                      <div
+                        key={r.symbol}
+                        onClick={() => selectTicker(r)}
+                        style={{
+                          padding: '10px 14px',
+                          cursor: 'pointer',
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'space-between',
+                          borderBottom: i < searchResults.length - 1 ? '1px solid #1a1a24' : 'none',
+                          transition: 'background-color 0.15s',
+                        }}
+                        onMouseEnter={e => (e.currentTarget.style.backgroundColor = '#1a1a2e')}
+                        onMouseLeave={e => (e.currentTarget.style.backgroundColor = 'transparent')}
+                      >
+                        <div>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                            <span style={{ fontWeight: 700, color: '#c9a84c', fontSize: 14 }}>{r.symbol}</span>
+                            <span style={{
+                              fontSize: 10,
+                              color: '#6b6b80',
+                              backgroundColor: '#2a2a3a',
+                              padding: '1px 6px',
+                              borderRadius: 4,
+                            }}>{r.exchange}</span>
+                          </div>
+                          <div style={{ fontSize: 12, color: '#6b6b80', marginTop: 2, maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                            {r.name}
+                          </div>
+                        </div>
+                        {r.price && (
+                          <div style={{ textAlign: 'right' }}>
+                            <div style={{ fontSize: 14, fontWeight: 600, color: '#e8e8e8' }}>
+                              ${r.price.toFixed(2)}
+                            </div>
+                            {r.change && (
+                              <div style={{
+                                fontSize: 11,
+                                color: parseFloat(r.change) >= 0 ? '#22c55e' : '#ef4444',
+                              }}>
+                                {parseFloat(r.change) >= 0 ? '+' : ''}{r.change}%
+                              </div>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {showDropdown && searchResults.length === 0 && !searching && debouncedQuery.length >= 1 && (
+                  <div style={{
+                    position: 'absolute',
+                    top: '100%',
+                    left: 0,
+                    right: 0,
+                    marginTop: 4,
+                    backgroundColor: '#12121a',
+                    border: '1px solid #2a2a3a',
+                    borderRadius: 8,
+                    padding: '16px',
+                    textAlign: 'center',
+                    color: '#6b6b80',
+                    fontSize: 13,
+                    zIndex: 50,
+                  }}>
+                    No matches found for &ldquo;{debouncedQuery}&rdquo;
+                  </div>
+                )}
+              </div>
+
+              {/* Price Preview */}
+              {form.symbol && (selectedPrice || priceLoading) && (
+                <div style={{
+                  display: 'flex',
+                  justifyContent: 'space-between',
+                  alignItems: 'center',
+                  backgroundColor: '#c9a84c08',
+                  border: '1px solid #c9a84c20',
+                  borderRadius: 8,
+                  padding: '8px 12px',
+                }}>
+                  <span style={{ fontSize: 12, color: '#6b6b80' }}>
+                    {form.symbol} current price
+                  </span>
+                  {priceLoading ? (
+                    <span style={{ fontSize: 12, color: '#6b6b80' }}>Loading...</span>
+                  ) : (
+                    <span style={{ fontSize: 16, fontWeight: 700, color: '#c9a84c' }}>
+                      ${selectedPrice?.toFixed(2)}
+                    </span>
+                  )}
+                </div>
+              )}
+
               {/* Buy / Sell toggle */}
               <div style={{ display: 'flex', gap: 8 }}>
                 {['buy', 'sell'].map(side => (
@@ -188,6 +444,21 @@ export default function TradingPage() {
                 type="number"
                 style={{ padding: '10px 12px', backgroundColor: '#08080d', border: '1px solid #2a2a3a', borderRadius: 8, color: '#e8e8e8', fontSize: 14, outline: 'none' }}
               />
+
+              {/* Estimated Total */}
+              {estimatedTotal && parseInt(form.qty) > 0 && (
+                <div style={{
+                  display: 'flex',
+                  justifyContent: 'space-between',
+                  padding: '6px 12px',
+                  fontSize: 12,
+                  color: '#6b6b80',
+                }}>
+                  <span>Estimated total</span>
+                  <span style={{ color: '#e8e8e8', fontWeight: 600 }}>${parseFloat(estimatedTotal).toLocaleString()}</span>
+                </div>
+              )}
+
               {/* Order type toggle */}
               <div style={{ display: 'flex', gap: 8 }}>
                 {['market', 'limit'].map(t => (
@@ -242,10 +513,11 @@ export default function TradingPage() {
             <div>
               <div style={{ backgroundColor: '#08080d', borderRadius: 8, padding: 16, marginBottom: 16 }}>
                 {[
-                  { label: 'Symbol', value: form.symbol, color: '#e8e8e8' },
+                  { label: 'Symbol', value: form.symbol, color: '#c9a84c' },
                   { label: 'Side', value: form.side.toUpperCase(), color: form.side === 'buy' ? '#22c55e' : '#ef4444' },
                   { label: 'Quantity', value: `${form.qty} shares`, color: '#e8e8e8' },
                   { label: 'Type', value: `${form.type}${form.limitPrice ? ` @ $${form.limitPrice}` : ''}`, color: '#e8e8e8' },
+                  ...(estimatedTotal ? [{ label: 'Est. Total', value: `$${parseFloat(estimatedTotal).toLocaleString()}`, color: '#c9a84c' }] : []),
                 ].map(({ label, value, color }) => (
                   <div key={label} style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 8 }}>
                     <span style={{ color: '#6b6b80' }}>{label}</span>

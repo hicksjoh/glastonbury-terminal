@@ -62,3 +62,47 @@ export async function getLatestQuote(symbol: string) {
   if (!res.ok) throw new Error(`Quote fetch failed for ${symbol}`);
   return res.json();
 }
+
+export async function searchAssets(query: string, limit = 10) {
+  // Alpaca v2 assets endpoint — filter for active US equities
+  const assets = await alpacaFetch('/v2/assets?status=active&asset_class=us_equity');
+  const q = query.toUpperCase();
+  // Filter by symbol prefix or name match, prioritize exact symbol matches
+  const matches = assets
+    .filter((a: { symbol: string; name: string; tradable: boolean }) =>
+      a.tradable && (a.symbol.startsWith(q) || a.name.toUpperCase().includes(q))
+    )
+    .sort((a: { symbol: string }, b: { symbol: string }) => {
+      // Exact match first, then symbol prefix, then name match
+      if (a.symbol === q) return -1;
+      if (b.symbol === q) return 1;
+      if (a.symbol.startsWith(q) && !b.symbol.startsWith(q)) return -1;
+      if (!a.symbol.startsWith(q) && b.symbol.startsWith(q)) return 1;
+      return a.symbol.localeCompare(b.symbol);
+    })
+    .slice(0, limit)
+    .map((a: { symbol: string; name: string; exchange: string }) => ({
+      symbol: a.symbol,
+      name: a.name,
+      exchange: a.exchange,
+    }));
+  return matches;
+}
+
+export async function getLatestTrade(symbol: string) {
+  const dataUrl = 'https://data.alpaca.markets';
+  const res = await fetch(`${dataUrl}/v2/stocks/${symbol}/trades/latest`, {
+    headers: alpacaHeaders,
+  });
+  if (!res.ok) throw new Error(`Trade fetch failed for ${symbol}`);
+  return res.json();
+}
+
+export async function getSnapshot(symbol: string) {
+  const dataUrl = 'https://data.alpaca.markets';
+  const res = await fetch(`${dataUrl}/v2/stocks/${symbol}/snapshot`, {
+    headers: alpacaHeaders,
+  });
+  if (!res.ok) throw new Error(`Snapshot fetch failed for ${symbol}`);
+  return res.json();
+}
