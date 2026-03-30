@@ -3,6 +3,7 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer } from 'recharts';
 import { AppShell } from '@/components/layout/AppShell';
 import { AlertTriangle, TrendingUp, TrendingDown, Search, X } from 'lucide-react';
+import PortfolioChart from '@/components/PortfolioChart';
 
 interface MockPosition {
   symbol: string;
@@ -235,6 +236,9 @@ export default function TradingPage() {
           </div>
         ))}
       </div>
+
+      {/* Portfolio Performance Chart */}
+      <PortfolioChart />
 
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 24, marginBottom: 24 }}>
         {/* Order Form */}
