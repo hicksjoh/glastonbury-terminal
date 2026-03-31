@@ -2,6 +2,7 @@ import type { Metadata } from 'next';
 import { Inter } from 'next/font/google';
 import './globals.css';
 import CommandBar from '@/components/CommandBar';
+import { Providers } from './providers';
 
 const inter = Inter({ subsets: ['latin'] });
 
@@ -17,8 +18,10 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
   return (
     <html lang="en" className="dark">
       <body className={inter.className} style={{ backgroundColor: '#08080d', color: '#e8e8e8', minHeight: '100vh' }}>
-        <CommandBar />
-        {children}
+        <Providers>
+          <CommandBar />
+          {children}
+        </Providers>
       </body>
     </html>
   );
