@@ -80,13 +80,21 @@ function StrategyCard({ strategy, onToggle }: { strategy: Strategy; onToggle: (i
 function AuditRow({ entry }: { entry: AuditLogEntry }) {
   const statusColors: Record<string, string> = { success: '#22c55e', failed: '#ef4444', pending: '#c9a84c' };
   const statusBg: Record<string, string> = { success: '#22c55e20', failed: '#ef444420', pending: '#c9a84c20' };
+  const reason = entry.reason || (entry.metadata as Record<string, unknown>)?.reason as string | undefined;
   return (
     <tr style={{ borderBottom: '1px solid #1a1a24' }}>
       <td style={{ padding: '10px 12px', fontSize: 12, color: '#6b6b80' }}>
         {formatDistanceToNow(new Date(entry.timestamp), { addSuffix: true })}
       </td>
       <td style={{ padding: '10px 12px', fontSize: 13, color: '#c9a84c', fontWeight: 600 }}>{entry.agent}</td>
-      <td style={{ padding: '10px 12px', fontSize: 13 }}>{entry.action}</td>
+      <td style={{ padding: '10px 12px' }}>
+        <div style={{ fontSize: 13 }}>{entry.action}</div>
+        {reason && (
+          <div style={{ fontSize: 11, color: '#6b6b80', marginTop: 3, fontStyle: 'italic', lineHeight: 1.4 }}>
+            {reason}
+          </div>
+        )}
+      </td>
       <td style={{ padding: '10px 12px', fontSize: 12, color: '#6b6b80' }}>{entry.details}</td>
       <td style={{ padding: '10px 12px' }}>
         <span style={{

@@ -1,7 +1,9 @@
 'use client';
 
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useRef } from 'react';
 import { AppShell } from '@/components/layout/AppShell';
+import { SparklineChart } from '@/components/SparklineChart';
+import { cacheSet, cacheGet, formatStaleAge } from '@/lib/cache';
 
 interface WatchlistItem {
   symbol: string;
@@ -23,6 +25,8 @@ const DEFAULT_WATCHLIST = [
   'JPM', 'V', 'UNH', 'XOM', 'COIN', 'NFLX', 'BA', 'DIS',
 ];
 
+const SPARKLINE_REFRESH_INTERVAL = 300000; // 5 minutes
+
 export default function WatchlistPage() {
   const [items, setItems] = useState<WatchlistItem[]>([]);
   const [loading, setLoading] = useState(true);
@@ -30,6 +34,29 @@ export default function WatchlistPage() {
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc');
   const [addSymbol, setAddSymbol] = useState('');
   const [watchlistSymbols, setWatchlistSymbols] = useState<string[]>(DEFAULT_WATCHLIST);
+  const [sparklines, setSparklines] = useState<Record<string, number[]>>({});
+  const lastSparklineRefresh = useRef<number>(0);
+  const [isStale, setIsStale] = useState(false);
+  const [staleAge, setStaleAge] = useState(0);
+
+  const fetchSparklines = useCallback(async (symbols: string[]) => {
+    const now = Date.now();
+    if (now - lastSparklineRefresh.current < SPARKLINE_REFRESH_INTERVAL && Object.keys(sparklines).length > 0) return;
+
+    try {
+      const res = await fetch(`/api/watchlist/sparklines?symbols=${symbols.join(',')}`);
+      if (res.ok) {
+        const data = await res.json();
+        setSparklines(data.sparklines || {});
+        lastSparklineRefresh.current = now;
+        cacheSet('watchlist_sparklines', data.sparklines || {}, SPARKLINE_REFRESH_INTERVAL);
+      }
+    } catch {
+      // Try cache
+      const cached = cacheGet<Record<string, number[]>>('watchlist_sparklines');
+      if (cached) setSparklines(cached.data);
+    }
+  }, [sparklines]);
 
   const fetchQuotes = useCallback(async () => {
     try {
@@ -37,9 +64,19 @@ export default function WatchlistPage() {
       if (res.ok) {
         const data = await res.json();
         setItems(data.quotes || []);
+        setIsStale(false);
+        cacheSet('watchlist_quotes', data.quotes || []);
+      } else {
+        throw new Error('Fetch failed');
       }
-    } catch (err) {
-      console.error('Watchlist fetch error:', err);
+    } catch {
+      // Fall back to cache
+      const cached = cacheGet<WatchlistItem[]>('watchlist_quotes');
+      if (cached) {
+        setItems(cached.data);
+        setIsStale(true);
+        setStaleAge(cached.ageMs);
+      }
     } finally {
       setLoading(false);
     }
@@ -47,9 +84,10 @@ export default function WatchlistPage() {
 
   useEffect(() => {
     fetchQuotes();
+    fetchSparklines(watchlistSymbols);
     const interval = setInterval(fetchQuotes, 30000);
     return () => clearInterval(interval);
-  }, [fetchQuotes]);
+  }, [fetchQuotes, fetchSparklines, watchlistSymbols]);
 
   const handleSort = (col: string) => {
     if (sortBy === col) {
@@ -112,6 +150,23 @@ export default function WatchlistPage() {
   return (
     <AppShell>
       <div>
+        {isStale && (
+          <div style={{
+            background: 'rgba(245, 158, 11, 0.1)',
+            border: '1px solid rgba(245, 158, 11, 0.3)',
+            borderRadius: 8,
+            padding: '8px 16px',
+            marginBottom: 16,
+            color: '#f59e0b',
+            fontSize: 12,
+            display: 'flex',
+            alignItems: 'center',
+            gap: 8,
+          }}>
+            <span style={{ fontSize: 14 }}>&#9888;</span>
+            Showing cached data from {formatStaleAge(staleAge)} ago — live feed reconnecting...
+          </div>
+        )}
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 24 }}>
           <div>
             <h1 style={{ fontSize: 28, fontWeight: 700, color: '#fff', margin: 0 }}>Watchlist</h1>
@@ -169,6 +224,7 @@ export default function WatchlistPage() {
               <thead>
                 <tr style={{ borderBottom: '1px solid rgba(255,255,255,0.08)' }}>
                   <SortHeader col="symbol" label="Symbol" align="left" />
+                  <th style={{ padding: '10px 8px', color: '#888', fontSize: 11, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em', textAlign: 'center' }}>7D</th>
                   <SortHeader col="price" label="Price" />
                   <SortHeader col="changePercent" label="Change" />
                   <SortHeader col="volume" label="Volume" />
@@ -196,6 +252,9 @@ export default function WatchlistPage() {
                         {item.symbol}
                       </div>
                       <div style={{ color: '#666', fontSize: 11, marginTop: 2 }}>{item.name?.slice(0, 25)}</div>
+                    </td>
+                    <td style={{ padding: '8px', textAlign: 'center' }}>
+                      <SparklineChart data={sparklines[item.symbol] || []} width={100} height={36} />
                     </td>
                     <td style={{ padding: '12px', textAlign: 'right', color: '#fff', fontWeight: 600, fontFamily: "'JetBrains Mono', monospace", fontSize: 14 }}>
                       ${item.price?.toFixed(2)}

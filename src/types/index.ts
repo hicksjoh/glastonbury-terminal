@@ -56,6 +56,8 @@ export interface AuditLogEntry {
   action: string;
   details: string;
   status: 'success' | 'failed' | 'pending';
+  reason?: string;
+  metadata?: Record<string, unknown>;
 }
 
 export interface WatchlistItem {

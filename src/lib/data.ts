@@ -54,11 +54,11 @@ export const MOCK_STRATEGIES: Strategy[] = [
 ];
 
 export const MOCK_AUDIT_LOG: AuditLogEntry[] = [
-  { id: '1', timestamp: new Date(Date.now() - 1000 * 60 * 5).toISOString(), agent: 'Keisha', action: 'Portfolio Analysis', details: 'Analyzed 8 positions, identified 2 covered call opportunities', status: 'success' },
-  { id: '2', timestamp: new Date(Date.now() - 1000 * 60 * 32).toISOString(), agent: 'Tax-Loss Harvester', action: 'Scan Complete', details: 'Scanned 8 positions, no harvest opportunities above threshold', status: 'success' },
-  { id: '3', timestamp: new Date(Date.now() - 1000 * 60 * 60 * 2).toISOString(), agent: 'Rebalancer', action: 'Drift Check', details: 'Portfolio drift within 3.2% of target — no rebalance needed', status: 'success' },
-  { id: '4', timestamp: new Date(Date.now() - 1000 * 60 * 60 * 6).toISOString(), agent: 'Morning Brief', action: 'Briefing Generated', details: 'Daily briefing generated and delivered', status: 'success' },
-  { id: '5', timestamp: new Date(Date.now() - 1000 * 60 * 60 * 24).toISOString(), agent: 'Covered Call Wheel', action: 'Opportunity Detected', details: 'AAPL 185C 30 DTE — estimated premium $2.40/contract', status: 'pending' },
+  { id: '1', timestamp: new Date(Date.now() - 1000 * 60 * 5).toISOString(), agent: 'Keisha', action: 'Portfolio Analysis', details: 'Analyzed 8 positions, identified 2 covered call opportunities', status: 'success', reason: 'Scheduled daily scan — AAPL and MSFT both showing elevated IV rank above 40%, optimal for premium selling' },
+  { id: '2', timestamp: new Date(Date.now() - 1000 * 60 * 32).toISOString(), agent: 'Tax-Loss Harvester', action: 'Scan Complete', details: 'Scanned 8 positions, no harvest opportunities above threshold', status: 'success', reason: 'All positions within -5% threshold — closest was TSLA at -3.8%, holding for now' },
+  { id: '3', timestamp: new Date(Date.now() - 1000 * 60 * 60 * 2).toISOString(), agent: 'Rebalancer', action: 'Drift Check', details: 'Portfolio drift within 3.2% of target — no rebalance needed', status: 'success', reason: 'Equities at 62% (target 60%), options at 24% (target 25%) — within 5% tolerance band' },
+  { id: '4', timestamp: new Date(Date.now() - 1000 * 60 * 60 * 6).toISOString(), agent: 'Morning Brief', action: 'Briefing Generated', details: 'Daily briefing generated and delivered', status: 'success', reason: 'Market opened green, Fed minutes due today — flagged potential volatility impact on options positions' },
+  { id: '5', timestamp: new Date(Date.now() - 1000 * 60 * 60 * 24).toISOString(), agent: 'Covered Call Wheel', action: 'Opportunity Detected', details: 'AAPL 185C 30 DTE — estimated premium $2.40/contract', status: 'pending', reason: 'Sold AAPL 185C: 30 DTE reached, IV rank 42%, theta decay optimal at -0.04/day' },
 ];
 
 export const INCOME_STREAM_DATA = [
