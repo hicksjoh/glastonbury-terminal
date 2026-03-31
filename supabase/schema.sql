@@ -89,6 +89,26 @@ INSERT INTO roadmap_entries (year, engine, projected, actual) VALUES
 (2031, 'Portfolio Compounding', 28000000, NULL),
 (2032, '$50M Target', 50000000, NULL);
 
+-- Alerts: custom alert rules engine
+CREATE TABLE alerts (
+  id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+  name TEXT NOT NULL,
+  conditions JSONB NOT NULL,
+  logic TEXT DEFAULT 'AND',
+  action TEXT DEFAULT 'notify',
+  is_active BOOLEAN DEFAULT true,
+  last_triggered TIMESTAMPTZ,
+  created_at TIMESTAMPTZ DEFAULT now()
+);
+
+-- Screener Presets: saved screen configurations
+CREATE TABLE screener_presets (
+  id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+  name TEXT NOT NULL,
+  filters JSONB NOT NULL,
+  created_at TIMESTAMPTZ DEFAULT now()
+);
+
 -- Row Level Security (enable for production)
 ALTER TABLE portfolio_snapshots ENABLE ROW LEVEL SECURITY;
 ALTER TABLE watchlist ENABLE ROW LEVEL SECURITY;
@@ -96,3 +116,5 @@ ALTER TABLE trades ENABLE ROW LEVEL SECURITY;
 ALTER TABLE strategies ENABLE ROW LEVEL SECURITY;
 ALTER TABLE audit_log ENABLE ROW LEVEL SECURITY;
 ALTER TABLE roadmap_entries ENABLE ROW LEVEL SECURITY;
+ALTER TABLE alerts ENABLE ROW LEVEL SECURITY;
+ALTER TABLE screener_presets ENABLE ROW LEVEL SECURITY;
