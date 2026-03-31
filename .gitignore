@@ -37,3 +37,10 @@ yarn-error.log*
 next-env.d.ts
 .env.local
 .vercel
+
+# playwright
+/test-results/
+/playwright-report/
+/blob-report/
+/playwright/.cache/
+e2e/.auth-state.json
