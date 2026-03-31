@@ -7,6 +7,7 @@ import { formatDistanceToNow } from 'date-fns';
 import { AlertTriangle, Settings } from 'lucide-react';
 import WheelTracker from '@/components/options/WheelTracker';
 import WheelSettings from '@/components/options/WheelSettings';
+import { StrategyBenchmarkChart } from '@/components/StrategyBenchmarkChart';
 
 const STATUS_COLORS: Record<string, string> = {
   active: '#22c55e',
@@ -73,6 +74,7 @@ function StrategyCard({ strategy, onToggle }: { strategy: Strategy; onToggle: (i
       >
         {strategy.status === 'paused' ? 'Resume Strategy' : 'Pause Strategy'}
       </button>
+      <StrategyBenchmarkChart strategyName={strategy.name} strategyType={strategy.type} />
     </div>
   );
 }

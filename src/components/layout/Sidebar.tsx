@@ -1,7 +1,7 @@
 'use client';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { LayoutDashboard, TrendingUp, BarChart3, MessageSquare, Zap, Newspaper, Star, Grid3X3, CalendarDays, ScanSearch } from 'lucide-react';
+import { LayoutDashboard, TrendingUp, BarChart3, MessageSquare, Zap, Newspaper, Star, Grid3X3, CalendarDays, ScanSearch, Filter } from 'lucide-react';
 
 const NAV_SECTIONS = [
   {
@@ -22,7 +22,8 @@ const NAV_SECTIONS = [
     label: 'TOOLS',
     items: [
       { href: '/trading', label: 'Trading', icon: Zap },
-      { href: '/trading/options/screener', label: 'Screener', icon: ScanSearch },
+      { href: '/trading/options/screener', label: 'Opt. Screener', icon: ScanSearch },
+      { href: '/screener', label: 'Stock Screener', icon: Filter },
       { href: '/strategies', label: 'Strategies', icon: TrendingUp },
       { href: '/monte-carlo', label: 'Monte Carlo', icon: BarChart3 },
       { href: '/keisha', label: 'Keisha AI', icon: MessageSquare },
