@@ -367,13 +367,13 @@ function TradingPage() {
           <div className="terminal-card">
             <div style={{ fontSize: 12, color: '#6b6b80', marginBottom: 4 }}>Net Theta</div>
             <div style={{ fontSize: 24, fontWeight: 700, color: netTheta >= 0 ? '#22c55e' : '#ef4444' }}>
-              {netTheta !== 0 ? `$${netTheta.toFixed(0)}/day` : '—'}
+              {netTheta !== 0 ? `$${Number(netTheta).toFixed(0)}/day` : '—'}
             </div>
           </div>
           <div className="terminal-card">
             <div style={{ fontSize: 12, color: '#6b6b80', marginBottom: 4 }}>Monthly Theta</div>
             <div style={{ fontSize: 24, fontWeight: 700, color: '#c9a84c' }}>
-              {netTheta !== 0 ? `$${(netTheta * 30).toFixed(0)}` : '—'}
+              {netTheta !== 0 ? `$${(Number(netTheta) * 30).toFixed(0)}` : '—'}
             </div>
           </div>
           <div className="terminal-card" style={{ cursor: 'pointer' }} onClick={() => window.location.href = '/trading/options/screener'}>

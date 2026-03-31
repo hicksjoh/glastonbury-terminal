@@ -114,13 +114,13 @@ export default function OrderConfirmation({ order, onConfirm, onCancel }: OrderC
         <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
           {[
             { label: 'Order Type', value: order.orderType.toUpperCase() },
-            ...(order.limitPrice ? [{ label: 'Limit Price', value: `$${order.limitPrice.toFixed(2)}` }] : []),
-            ...(order.stopPrice ? [{ label: 'Stop Price', value: `$${order.stopPrice.toFixed(2)}` }] : []),
-            { label: 'Total Premium', value: `$${order.totalCost.toLocaleString()}` },
-            { label: 'Max Loss', value: order.maxLoss === -1 ? 'Unlimited' : `$${order.maxLoss.toLocaleString()}` },
-            { label: 'Break Even', value: `$${order.breakEven.toFixed(2)}` },
+            ...(order.limitPrice ? [{ label: 'Limit Price', value: `$${Number(order.limitPrice).toFixed(2)}` }] : []),
+            ...(order.stopPrice ? [{ label: 'Stop Price', value: `$${Number(order.stopPrice).toFixed(2)}` }] : []),
+            { label: 'Total Premium', value: `$${Number(order.totalCost).toLocaleString()}` },
+            { label: 'Max Loss', value: order.maxLoss === -1 ? 'Unlimited' : `$${Number(order.maxLoss).toLocaleString()}` },
+            { label: 'Break Even', value: `$${Number(order.breakEven).toFixed(2)}` },
             { label: 'DTE', value: `${dte} days` },
-            { label: 'P(Profit)', value: `~${order.probOfProfit.toFixed(0)}%` },
+            { label: 'P(Profit)', value: `~${Number(order.probOfProfit).toFixed(0)}%` },
           ].map(({ label, value }) => (
             <div key={label} style={{
               display: 'flex',

@@ -106,7 +106,7 @@ export default function PayoffDiagram({ legs, currentPrice, templateName }: Payo
           fontSize: 13, fontWeight: 700, fontFamily: "'JetBrains Mono', monospace",
           color: stats.netPremium >= 0 ? '#4ade80' : '#ef4444',
         }}>
-          Net {stats.netPremium >= 0 ? 'Credit' : 'Debit'}: ${Math.abs(stats.netPremium).toFixed(0)}
+          Net {stats.netPremium >= 0 ? 'Credit' : 'Debit'}: ${Math.abs(Number(stats.netPremium)).toFixed(0)}
         </div>
       </div>
 
@@ -145,13 +145,13 @@ export default function PayoffDiagram({ legs, currentPrice, templateName }: Payo
                     background: '#1a1a2e', border: '1px solid #2a2a3e', borderRadius: 8,
                     padding: '8px 12px', fontSize: 11, fontFamily: "'JetBrains Mono', monospace",
                   }}>
-                    <div style={{ color: '#c9a84c', marginBottom: 4 }}>@ ${d.price.toFixed(2)}</div>
+                    <div style={{ color: '#c9a84c', marginBottom: 4 }}>@ ${Number(d.price).toFixed(2)}</div>
                     <div style={{ color: d.expiration >= 0 ? '#4ade80' : '#ef4444' }}>
-                      Exp P&L: ${d.expiration.toFixed(0)}
+                      Exp P&L: ${Number(d.expiration).toFixed(0)}
                     </div>
                     {timeSlider < 100 && (
                       <div style={{ color: d.current >= 0 ? '#4ade80' : '#ef4444' }}>
-                        Current P&L: ${d.current.toFixed(0)}
+                        Current P&L: ${Number(d.current).toFixed(0)}
                       </div>
                     )}
                   </div>
@@ -162,11 +162,11 @@ export default function PayoffDiagram({ legs, currentPrice, templateName }: Payo
             <ReferenceLine y={0} stroke="#6b6b80" strokeDasharray="4 4" />
             {/* Current price */}
             <ReferenceLine x={currentPrice} stroke="#c9a84c" strokeDasharray="4 4"
-              label={{ value: `$${currentPrice.toFixed(0)}`, position: 'top', fill: '#c9a84c', fontSize: 10 }} />
+              label={{ value: `$${Number(currentPrice).toFixed(0)}`, position: 'top', fill: '#c9a84c', fontSize: 10 }} />
             {/* Break-even lines */}
             {stats.breakEvens.map((be, i) => (
               <ReferenceLine key={i} x={be} stroke="#f0c674" strokeDasharray="6 3"
-                label={{ value: `BE $${be.toFixed(0)}`, position: 'insideTopRight', fill: '#f0c674', fontSize: 9 }} />
+                label={{ value: `BE $${Number(be).toFixed(0)}`, position: 'insideTopRight', fill: '#f0c674', fontSize: 9 }} />
             ))}
             {/* At-expiration line */}
             <Area
@@ -229,17 +229,17 @@ export default function PayoffDiagram({ legs, currentPrice, templateName }: Payo
         background: '#08080d',
         borderRadius: 8,
       }}>
-        <StatCell label="Max Profit" value={`$${stats.maxProfit.toFixed(0)}`} color="#4ade80" />
-        <StatCell label="Max Loss" value={isFinite(stats.maxLoss) ? `$${stats.maxLoss.toFixed(0)}` : 'Unlimited'} color="#ef4444" />
+        <StatCell label="Max Profit" value={`$${Number(stats.maxProfit).toFixed(0)}`} color="#4ade80" />
+        <StatCell label="Max Loss" value={isFinite(stats.maxLoss) ? `$${Number(stats.maxLoss).toFixed(0)}` : 'Unlimited'} color="#ef4444" />
         <StatCell
           label="Break Even"
-          value={stats.breakEvens.length > 0 ? stats.breakEvens.map(b => `$${b.toFixed(0)}`).join(' / ') : '—'}
+          value={stats.breakEvens.length > 0 ? stats.breakEvens.map(b => `$${Number(b).toFixed(0)}`).join(' / ') : '—'}
           color="#f0c674"
         />
-        <StatCell label="P(Profit)" value={`${stats.probOfProfit.toFixed(0)}%`} color={stats.probOfProfit > 50 ? '#4ade80' : '#ef4444'} />
-        <StatCell label="Risk/Reward" value={isFinite(stats.riskReward) ? `1:${stats.riskReward.toFixed(2)}` : '—'} color="#c8c8d0" />
-        <StatCell label="Capital Req." value={`$${stats.capitalRequired.toFixed(0)}`} color="#c8c8d0" />
-        <StatCell label="ROI at Max" value={`${stats.roi.toFixed(0)}%`} color="#8a5cf6" />
+        <StatCell label="P(Profit)" value={`${Number(stats.probOfProfit).toFixed(0)}%`} color={stats.probOfProfit > 50 ? '#4ade80' : '#ef4444'} />
+        <StatCell label="Risk/Reward" value={isFinite(stats.riskReward) ? `1:${Number(stats.riskReward).toFixed(2)}` : '—'} color="#c8c8d0" />
+        <StatCell label="Capital Req." value={`$${Number(stats.capitalRequired).toFixed(0)}`} color="#c8c8d0" />
+        <StatCell label="ROI at Max" value={`${Number(stats.roi).toFixed(0)}%`} color="#8a5cf6" />
         <StatCell label="DTE" value={`${stats.dte} days`} color={stats.dte < 7 ? '#f59e0b' : '#c8c8d0'} />
       </div>
     </div>

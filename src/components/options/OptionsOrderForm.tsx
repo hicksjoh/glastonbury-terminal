@@ -54,10 +54,10 @@ export default function OptionsOrderForm({
     if (selectedOption) {
       setAction('buy_to_open');
       // Set limit to ask for buys
-      if (selectedOption.ask > 0) {
-        setLimitPrice(selectedOption.ask.toFixed(2));
-      } else if (selectedOption.last > 0) {
-        setLimitPrice(selectedOption.last.toFixed(2));
+      if (Number(selectedOption.ask) > 0) {
+        setLimitPrice(Number(selectedOption.ask).toFixed(2));
+      } else if (Number(selectedOption.last) > 0) {
+        setLimitPrice(Number(selectedOption.last).toFixed(2));
       }
     }
   }, [selectedOption]);
@@ -153,8 +153,8 @@ export default function OptionsOrderForm({
               {formatOptionParts(selectedOption.underlying, selectedOption.expiration, strike, type)}
             </div>
             <div style={{ fontSize: 11, color: '#6b6b80', marginTop: 4, fontFamily: "'JetBrains Mono', monospace" }}>
-              Bid: ${selectedOption.bid.toFixed(2)} &bull; Ask: ${selectedOption.ask.toFixed(2)} &bull; Last: ${selectedOption.last.toFixed(2)}
-              {' '}&bull; IV: {selectedOption.impliedVolatility.toFixed(0)}%
+              Bid: ${Number(selectedOption.bid).toFixed(2)} &bull; Ask: ${Number(selectedOption.ask).toFixed(2)} &bull; Last: ${Number(selectedOption.last).toFixed(2)}
+              {' '}&bull; IV: {Number(selectedOption.impliedVolatility).toFixed(0)}%
             </div>
           </div>
 
@@ -267,21 +267,21 @@ export default function OptionsOrderForm({
               <div style={{ display: 'flex', flexDirection: 'column', gap: 4, fontSize: 11, fontFamily: "'JetBrains Mono', monospace" }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between' }}>
                   <span style={{ color: '#6b6b80' }}>Premium</span>
-                  <span style={{ color: '#e8e8e8' }}>${premium.toFixed(2)} × {qty} × 100 = ${totalCost.toLocaleString()}</span>
+                  <span style={{ color: '#e8e8e8' }}>${Number(premium).toFixed(2)} × {qty} × 100 = ${Number(totalCost).toLocaleString()}</span>
                 </div>
                 <div style={{ display: 'flex', justifyContent: 'space-between' }}>
                   <span style={{ color: '#6b6b80' }}>Max Loss</span>
                   <span style={{ color: '#ef4444' }}>
-                    {isFinite(maxLoss) ? `$${maxLoss.toLocaleString()}` : 'Unlimited'}
+                    {isFinite(maxLoss) ? `$${Number(maxLoss).toLocaleString()}` : 'Unlimited'}
                   </span>
                 </div>
                 <div style={{ display: 'flex', justifyContent: 'space-between' }}>
                   <span style={{ color: '#6b6b80' }}>Break Even</span>
-                  <span style={{ color: '#c9a84c' }}>${breakEven.toFixed(2)}</span>
+                  <span style={{ color: '#c9a84c' }}>${Number(breakEven).toFixed(2)}</span>
                 </div>
                 <div style={{ display: 'flex', justifyContent: 'space-between' }}>
                   <span style={{ color: '#6b6b80' }}>P(Profit)</span>
-                  <span style={{ color: probOfProfit > 50 ? '#4ade80' : '#ef4444' }}>~{probOfProfit.toFixed(0)}%</span>
+                  <span style={{ color: probOfProfit > 50 ? '#4ade80' : '#ef4444' }}>~{Number(probOfProfit).toFixed(0)}%</span>
                 </div>
               </div>
             </div>

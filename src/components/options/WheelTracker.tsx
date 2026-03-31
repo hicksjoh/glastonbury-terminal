@@ -153,13 +153,13 @@ export default function WheelTracker({ cycles }: WheelTrackerProps) {
                 <div>
                   <div style={{ fontSize: 10, color: '#555' }}>Cost Basis</div>
                   <div style={{ fontSize: 13, color: '#c8c8d0', fontFamily: "'JetBrains Mono', monospace" }}>
-                    ${cycle.costBasis > 0 ? cycle.costBasis.toFixed(2) : 'N/A'}
+                    ${Number(cycle.costBasis) > 0 ? Number(cycle.costBasis).toFixed(2) : 'N/A'}
                   </div>
                 </div>
                 <div>
                   <div style={{ fontSize: 10, color: '#555' }}>Effective Basis</div>
                   <div style={{ fontSize: 13, color: '#4ade80', fontFamily: "'JetBrains Mono', monospace" }}>
-                    ${cycle.costBasis > 0 ? (cycle.costBasis - cycle.totalPremium / 100).toFixed(2) : 'N/A'}
+                    ${Number(cycle.costBasis) > 0 ? (Number(cycle.costBasis) - Number(cycle.totalPremium) / 100).toFixed(2) : 'N/A'}
                   </div>
                 </div>
                 <div>

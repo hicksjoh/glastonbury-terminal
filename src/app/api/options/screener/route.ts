@@ -148,12 +148,12 @@ async function scanSymbol(symbol: string, filters: ScreenerFilter): Promise<Scre
       const snap = snapshots[contract.symbol];
       if (!snap) continue;
 
-      const bid = snap.latestQuote?.bp || 0;
-      const ask = snap.latestQuote?.ap || 0;
-      const midPrice = bid > 0 && ask > 0 ? (bid + ask) / 2 : snap.latestTrade?.p || 0;
-      const iv = (snap.impliedVolatility || 0) * 100;
-      const delta = snap.greeks?.delta || 0;
-      const volume = snap.latestTrade?.s || 0;
+      const bid = Number(snap.latestQuote?.bp) || 0;
+      const ask = Number(snap.latestQuote?.ap) || 0;
+      const midPrice = bid > 0 && ask > 0 ? (bid + ask) / 2 : Number(snap.latestTrade?.p) || 0;
+      const iv = (Number(snap.impliedVolatility) || 0) * 100;
+      const delta = Number(snap.greeks?.delta) || 0;
+      const volume = Number(snap.latestTrade?.s) || 0;
 
       // IV filter
       if (filters.minIV && iv < filters.minIV) continue;
@@ -176,7 +176,7 @@ async function scanSymbol(symbol: string, filters: ScreenerFilter): Promise<Scre
       results.push({
         symbol: contract.symbol,
         underlying: symbol,
-        strike: parseFloat(contract.strike_price) || 0,
+        strike: Number(contract.strike_price) || 0,
         expiration: contract.expiration_date,
         type: contract.type === 'call' ? 'call' : 'put',
         bid,
@@ -184,7 +184,7 @@ async function scanSymbol(symbol: string, filters: ScreenerFilter): Promise<Scre
         iv,
         dte,
         volume,
-        openInterest: contract.open_interest || 0,
+        openInterest: Number(contract.open_interest) || 0,
         delta: Math.abs(delta),
         premiumYield: Math.round(premiumYield * 100) / 100,
         stockPrice,

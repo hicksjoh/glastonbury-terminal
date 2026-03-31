@@ -42,32 +42,32 @@ export default function GreeksSummary({ greeks: propGreeks, loading: propLoading
 
   if (!greeks) return null;
 
-  const gammaLevel = Math.abs(greeks.netGamma) < 0.05 ? 'Low' : Math.abs(greeks.netGamma) < 0.15 ? 'Moderate' : 'High';
+  const gammaLevel = Math.abs(Number(greeks.netGamma)) < 0.05 ? 'Low' : Math.abs(Number(greeks.netGamma)) < 0.15 ? 'Moderate' : 'High';
   const gammaColor = gammaLevel === 'Low' ? '#4ade80' : gammaLevel === 'Moderate' ? '#f59e0b' : '#ef4444';
-  const vegaLabel = greeks.netVega >= 0 ? 'Long vol' : 'Short vol';
+  const vegaLabel = Number(greeks.netVega) >= 0 ? 'Long vol' : 'Short vol';
 
   const cards = [
     {
       label: 'Net Delta',
-      value: (greeks.netDelta >= 0 ? '+' : '') + greeks.netDelta.toFixed(2),
-      sub: `≈ ${Math.abs(greeks.sharesEquivalent)} shares`,
+      value: (greeks.netDelta >= 0 ? '+' : '') + Number(greeks.netDelta).toFixed(2),
+      sub: `≈ ${Math.abs(Number(greeks.sharesEquivalent))} shares`,
       color: greeks.netDelta >= 0 ? '#4ade80' : '#ef4444',
     },
     {
       label: 'Daily Theta',
-      value: (greeks.netTheta >= 0 ? '+' : '') + '$' + greeks.netTheta.toFixed(2),
-      sub: `$${Math.abs(greeks.monthlyTheta).toFixed(0)}/mo`,
+      value: (greeks.netTheta >= 0 ? '+' : '') + '$' + Number(greeks.netTheta).toFixed(2),
+      sub: `$${Math.abs(Number(greeks.monthlyTheta)).toFixed(0)}/mo`,
       color: greeks.netTheta >= 0 ? '#4ade80' : '#ef4444',
     },
     {
       label: 'Gamma Risk',
-      value: (greeks.netGamma >= 0 ? '+' : '') + greeks.netGamma.toFixed(3),
+      value: (greeks.netGamma >= 0 ? '+' : '') + Number(greeks.netGamma).toFixed(3),
       sub: gammaLevel,
       color: gammaColor,
     },
     {
       label: 'Vega Exp.',
-      value: (greeks.netVega >= 0 ? '+' : '') + greeks.netVega.toFixed(2),
+      value: (greeks.netVega >= 0 ? '+' : '') + Number(greeks.netVega).toFixed(2),
       sub: vegaLabel,
       color: greeks.netVega >= 0 ? '#8a5cf6' : '#f59e0b',
     },

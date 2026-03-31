@@ -93,10 +93,10 @@ export default function StrategyBuilder({ initialSymbol, onPlaceOrder }: Strateg
     setLegs([...legs, {
       action: 'buy',
       type: 'stock',
-      strike: stockPrice.toFixed(2),
+      strike: Number(stockPrice).toFixed(2),
       expiration: '',
       quantity: '100',
-      premium: stockPrice.toFixed(2),
+      premium: Number(stockPrice).toFixed(2),
     }]);
   }
 
@@ -196,7 +196,7 @@ export default function StrategyBuilder({ initialSymbol, onPlaceOrder }: Strateg
                 color: '#c9a84c',
                 fontFamily: "'JetBrains Mono', monospace",
               }}>
-                ${stockPrice.toFixed(2)}
+                ${Number(stockPrice).toFixed(2)}
               </div>
             )}
           </div>
@@ -289,7 +289,7 @@ export default function StrategyBuilder({ initialSymbol, onPlaceOrder }: Strateg
                     </select>
                   </>
                 ) : (
-                  <span style={{ fontSize: 11, color: '#6b6b80', flex: 1 }}>100 shares @ ${stockPrice.toFixed(2)}</span>
+                  <span style={{ fontSize: 11, color: '#6b6b80', flex: 1 }}>100 shares @ ${Number(stockPrice).toFixed(2)}</span>
                 )}
                 <input value={leg.quantity} onChange={e => updateLeg(i, 'quantity', e.target.value)}
                   placeholder="Qty" style={{ ...inputStyle, width: 36, textAlign: 'center' }} />

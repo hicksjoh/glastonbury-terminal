@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useCallback } from 'react';
 import type { OptionChainEntry } from '@/lib/options/types';
+import { formatNum as fmt, formatVol as fmtVol } from '@/lib/options/format';
 
 interface ExpirationInfo {
   date: string;
@@ -13,17 +14,6 @@ interface OptionsChainProps {
   symbol: string;
   onSelectOption?: (entry: OptionChainEntry, side: 'call' | 'put') => void;
   selectedSymbol?: string;
-}
-
-function fmt(n: number, decimals = 2): string {
-  if (n === 0) return '—';
-  return n.toFixed(decimals);
-}
-
-function fmtVol(n: number): string {
-  if (n === 0) return '—';
-  if (n >= 1000) return `${(n / 1000).toFixed(1)}K`;
-  return String(n);
 }
 
 export default function OptionsChain({ symbol, onSelectOption, selectedSymbol }: OptionsChainProps) {
@@ -171,7 +161,7 @@ export default function OptionsChain({ symbol, onSelectOption, selectedSymbol }:
       {/* Controls */}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
         <div style={{ fontSize: 12, color: '#6b6b80' }}>
-          {symbol} @ <span style={{ color: '#c9a84c', fontFamily: "'JetBrains Mono', monospace" }}>${stockPrice.toFixed(2)}</span>
+          {symbol} @ <span style={{ color: '#c9a84c', fontFamily: "'JetBrains Mono', monospace" }}>${Number(stockPrice).toFixed(2)}</span>
           {' '}&bull; {chain.length} contracts
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
@@ -273,7 +263,7 @@ export default function OptionsChain({ symbol, onSelectOption, selectedSymbol }:
                       borderLeft: '2px solid #2a2a3a',
                       borderRight: '2px solid #2a2a3a',
                     }}>
-                      ${strike.toFixed(strike % 1 === 0 ? 0 : 2)}
+                      ${Number(strike).toFixed(Number(strike) % 1 === 0 ? 0 : 2)}
                     </td>
 
                     {/* Put side */}
@@ -345,7 +335,7 @@ function CallPutCells({
         <td style={baseStyle} onClick={onClick}>{fmt(entry.last)}</td>
         <td style={baseStyle} onClick={onClick}>{fmtVol(entry.volume)}</td>
         <td style={baseStyle} onClick={onClick}>{fmtVol(entry.openInterest)}</td>
-        <td style={baseStyle} onClick={onClick}>{entry.impliedVolatility > 0 ? `${entry.impliedVolatility.toFixed(0)}%` : '—'}</td>
+        <td style={baseStyle} onClick={onClick}>{entry.impliedVolatility > 0 ? `${Number(entry.impliedVolatility).toFixed(0)}%` : '—'}</td>
         <td style={{ ...baseStyle, color: '#4ade80' }} onClick={onClick}>{fmt(Math.abs(entry.delta))}</td>
       </>
     );
@@ -354,7 +344,7 @@ function CallPutCells({
     return (
       <>
         <td style={{ ...baseStyle, textAlign: 'left', color: '#ef4444' }} onClick={onClick}>{fmt(Math.abs(entry.delta))}</td>
-        <td style={baseStyle} onClick={onClick}>{entry.impliedVolatility > 0 ? `${entry.impliedVolatility.toFixed(0)}%` : '—'}</td>
+        <td style={baseStyle} onClick={onClick}>{entry.impliedVolatility > 0 ? `${Number(entry.impliedVolatility).toFixed(0)}%` : '—'}</td>
         <td style={baseStyle} onClick={onClick}>{fmtVol(entry.openInterest)}</td>
         <td style={baseStyle} onClick={onClick}>{fmtVol(entry.volume)}</td>
         <td style={baseStyle} onClick={onClick}>{fmt(entry.last)}</td>

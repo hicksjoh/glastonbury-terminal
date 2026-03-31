@@ -118,10 +118,11 @@ async function fetchAlpacaChain(symbol: string, expiration?: string): Promise<Op
 
         for (const contract of contracts.slice(i, i + 100)) {
           const snap = snapshots[contract.symbol];
-          const bid = snap?.latestQuote?.bp ?? 0;
-          const ask = snap?.latestQuote?.ap ?? 0;
-          const last = snap?.latestTrade?.p ?? 0;
+          const bid = Number(snap?.latestQuote?.bp) || 0;
+          const ask = Number(snap?.latestQuote?.ap) || 0;
+          const last = Number(snap?.latestTrade?.p) || 0;
           const midPrice = bid > 0 && ask > 0 ? (bid + ask) / 2 : last;
+          const strikeNum = Number(contract.strike_price) || 0;
 
           // Calculate Greeks if not provided by API
           let greeks = snap?.greeks;
@@ -131,7 +132,7 @@ async function fetchAlpacaChain(symbol: string, expiration?: string): Promise<Op
               0.001
             );
             const type = contract.type === 'call' ? 'call' as const : 'put' as const;
-            const calcGreeks = calculateGreeks(stockPrice, contract.strike_price, T, 0.05, snap?.impliedVolatility || 0.3, type);
+            const calcGreeks = calculateGreeks(stockPrice, strikeNum, T, 0.05, Number(snap?.impliedVolatility) || 0.3, type);
             greeks = {
               delta: calcGreeks.delta,
               gamma: calcGreeks.gamma,
@@ -145,22 +146,22 @@ async function fetchAlpacaChain(symbol: string, expiration?: string): Promise<Op
             symbol: contract.symbol,
             underlying: symbol,
             expiration: contract.expiration_date,
-            strike: parseFloat(contract.strike_price) || 0,
+            strike: strikeNum,
             type: contract.type === 'call' ? 'call' : 'put',
             bid,
             ask,
             last,
-            volume: parseInt(snap?.latestTrade?.s) || 0,
-            openInterest: parseInt(snap?.openInterest ?? contract.open_interest) || 0,
-            impliedVolatility: (parseFloat(snap?.impliedVolatility) || 0) * 100, // Convert to percentage
-            delta: Math.max(-1, Math.min(1, greeks?.delta ?? 0)),
-            gamma: Math.min(greeks?.gamma ?? 0, 1), // Clamp extreme gamma near expiry
-            theta: greeks?.theta ?? 0,
-            vega: greeks?.vega ?? 0,
-            rho: greeks?.rho ?? 0,
+            volume: Number(snap?.latestTrade?.s) || 0,
+            openInterest: Number(snap?.openInterest ?? contract.open_interest) || 0,
+            impliedVolatility: (Number(snap?.impliedVolatility) || 0) * 100, // Convert to percentage
+            delta: Math.max(-1, Math.min(1, Number(greeks?.delta) || 0)),
+            gamma: Math.min(Number(greeks?.gamma) || 0, 1), // Clamp extreme gamma near expiry
+            theta: Number(greeks?.theta) || 0,
+            vega: Number(greeks?.vega) || 0,
+            rho: Number(greeks?.rho) || 0,
             inTheMoney: contract.type === 'call'
-              ? stockPrice > contract.strike_price
-              : stockPrice < contract.strike_price,
+              ? stockPrice > strikeNum
+              : stockPrice < strikeNum,
           });
         }
       }
@@ -202,19 +203,19 @@ async function fetchFMPChain(symbol: string, expiration?: string): Promise<Optio
         symbol: occ,
         underlying: symbol,
         expiration: d.expiration || '',
-        strike: d.strike || 0,
+        strike: Number(d.strike) || 0,
         type,
-        bid: d.bid || 0,
-        ask: d.ask || 0,
-        last: d.lastPrice || 0,
-        volume: d.volume || 0,
-        openInterest: d.openInterest || 0,
-        impliedVolatility: (d.impliedVolatility || 0) * 100,
-        delta: d.delta || 0,
-        gamma: d.gamma || 0,
-        theta: d.theta || 0,
-        vega: d.vega || 0,
-        rho: d.rho || 0,
+        bid: Number(d.bid) || 0,
+        ask: Number(d.ask) || 0,
+        last: Number(d.lastPrice) || 0,
+        volume: Number(d.volume) || 0,
+        openInterest: Number(d.openInterest) || 0,
+        impliedVolatility: (Number(d.impliedVolatility) || 0) * 100,
+        delta: Number(d.delta) || 0,
+        gamma: Number(d.gamma) || 0,
+        theta: Number(d.theta) || 0,
+        vega: Number(d.vega) || 0,
+        rho: Number(d.rho) || 0,
         inTheMoney: d.inTheMoney || false,
       };
     });

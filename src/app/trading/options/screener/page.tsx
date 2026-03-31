@@ -194,18 +194,18 @@ export default function ScreenerPage() {
                         textTransform: 'uppercase',
                       }}>{r.type}</span>
                     </td>
-                    <td style={{ padding: '10px', fontSize: 12, fontFamily: "'JetBrains Mono', monospace" }}>${r.bid.toFixed(2)}</td>
-                    <td style={{ padding: '10px', fontSize: 12, fontFamily: "'JetBrains Mono', monospace" }}>${r.ask.toFixed(2)}</td>
-                    <td style={{ padding: '10px', fontSize: 12, fontFamily: "'JetBrains Mono', monospace", color: r.iv > 40 ? '#f59e0b' : '#c8c8d0' }}>{r.iv.toFixed(0)}%</td>
+                    <td style={{ padding: '10px', fontSize: 12, fontFamily: "'JetBrains Mono', monospace" }}>${Number(r.bid).toFixed(2)}</td>
+                    <td style={{ padding: '10px', fontSize: 12, fontFamily: "'JetBrains Mono', monospace" }}>${Number(r.ask).toFixed(2)}</td>
+                    <td style={{ padding: '10px', fontSize: 12, fontFamily: "'JetBrains Mono', monospace", color: Number(r.iv) > 40 ? '#f59e0b' : '#c8c8d0' }}>{Number(r.iv).toFixed(0)}%</td>
                     <td style={{ padding: '10px', fontSize: 12, fontFamily: "'JetBrains Mono', monospace", color: r.dte <= 7 ? '#f59e0b' : '#c8c8d0' }}>{r.dte}</td>
-                    <td style={{ padding: '10px', fontSize: 12, fontFamily: "'JetBrains Mono', monospace" }}>{r.volume.toLocaleString()}</td>
-                    <td style={{ padding: '10px', fontSize: 12, fontFamily: "'JetBrains Mono', monospace" }}>{r.openInterest.toLocaleString()}</td>
-                    <td style={{ padding: '10px', fontSize: 12, fontFamily: "'JetBrains Mono', monospace" }}>{r.delta.toFixed(2)}</td>
+                    <td style={{ padding: '10px', fontSize: 12, fontFamily: "'JetBrains Mono', monospace" }}>{Number(r.volume).toLocaleString()}</td>
+                    <td style={{ padding: '10px', fontSize: 12, fontFamily: "'JetBrains Mono', monospace" }}>{Number(r.openInterest).toLocaleString()}</td>
+                    <td style={{ padding: '10px', fontSize: 12, fontFamily: "'JetBrains Mono', monospace" }}>{Number(r.delta).toFixed(2)}</td>
                     <td style={{
                       padding: '10px', fontSize: 12, fontWeight: 700,
                       fontFamily: "'JetBrains Mono', monospace",
-                      color: r.premiumYield > 20 ? '#4ade80' : '#c8c8d0',
-                    }}>{r.premiumYield.toFixed(1)}%</td>
+                      color: Number(r.premiumYield) > 20 ? '#4ade80' : '#c8c8d0',
+                    }}>{Number(r.premiumYield).toFixed(1)}%</td>
                   </tr>
                 ))}
               </tbody>

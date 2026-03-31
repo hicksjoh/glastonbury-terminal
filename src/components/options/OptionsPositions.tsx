@@ -105,19 +105,19 @@ export default function OptionsPositions({ onClose }: OptionsPositionsProps) {
                         </span>
                       </td>
                       <td style={{ padding: '10px 10px', fontSize: 13, fontFamily: "'JetBrains Mono', monospace" }}>{pos.quantity}</td>
-                      <td style={{ padding: '10px 10px', fontSize: 13, fontFamily: "'JetBrains Mono', monospace" }}>${pos.avgCost.toFixed(2)}</td>
-                      <td style={{ padding: '10px 10px', fontSize: 13, fontFamily: "'JetBrains Mono', monospace" }}>${pos.currentPrice.toFixed(2)}</td>
+                      <td style={{ padding: '10px 10px', fontSize: 13, fontFamily: "'JetBrains Mono', monospace" }}>${Number(pos.avgCost).toFixed(2)}</td>
+                      <td style={{ padding: '10px 10px', fontSize: 13, fontFamily: "'JetBrains Mono', monospace" }}>${Number(pos.currentPrice).toFixed(2)}</td>
                       <td style={{
                         padding: '10px 10px', fontSize: 13, fontFamily: "'JetBrains Mono', monospace",
                         color: pos.pnl >= 0 ? '#4ade80' : '#ef4444',
                       }}>
-                        {pos.pnl >= 0 ? '+' : ''}${pos.pnl.toFixed(0)}
+                        {pos.pnl >= 0 ? '+' : ''}${Number(pos.pnl).toFixed(0)}
                       </td>
                       <td style={{
                         padding: '10px 10px', fontSize: 13, fontFamily: "'JetBrains Mono', monospace",
                         color: pos.pnlPercent >= 0 ? '#4ade80' : '#ef4444',
                       }}>
-                        {pos.pnlPercent >= 0 ? '+' : ''}{pos.pnlPercent.toFixed(1)}%
+                        {pos.pnlPercent >= 0 ? '+' : ''}{Number(pos.pnlPercent).toFixed(1)}%
                       </td>
                       <td style={{
                         padding: '10px 10px', fontSize: 13, fontFamily: "'JetBrains Mono', monospace",
@@ -130,13 +130,13 @@ export default function OptionsPositions({ onClose }: OptionsPositionsProps) {
                         padding: '10px 10px', fontSize: 12, fontFamily: "'JetBrains Mono', monospace",
                         color: pos.delta >= 0 ? '#4ade80' : '#ef4444',
                       }}>
-                        {pos.delta >= 0 ? '+' : ''}{pos.delta.toFixed(2)}
+                        {pos.delta >= 0 ? '+' : ''}{Number(pos.delta).toFixed(2)}
                       </td>
                       <td style={{
                         padding: '10px 10px', fontSize: 12, fontFamily: "'JetBrains Mono', monospace",
                         color: pos.theta >= 0 ? '#4ade80' : '#ef4444',
                       }}>
-                        ${pos.theta.toFixed(2)}
+                        ${Number(pos.theta).toFixed(2)}
                       </td>
                       <td style={{ padding: '10px 6px' }}>
                         <div style={{ display: 'flex', gap: 4 }}>
@@ -159,10 +159,10 @@ export default function OptionsPositions({ onClose }: OptionsPositionsProps) {
                             display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: 12,
                             background: '#08080d', borderRadius: 8, padding: 12,
                           }}>
-                            <MiniStat label="Delta" value={pos.delta.toFixed(3)} />
-                            <MiniStat label="Gamma" value={pos.gamma.toFixed(4)} />
-                            <MiniStat label="Theta" value={`$${pos.theta.toFixed(2)}/day`} />
-                            <MiniStat label="Vega" value={pos.vega.toFixed(3)} />
+                            <MiniStat label="Delta" value={Number(pos.delta).toFixed(3)} />
+                            <MiniStat label="Gamma" value={Number(pos.gamma).toFixed(4)} />
+                            <MiniStat label="Theta" value={`$${Number(pos.theta).toFixed(2)}/day`} />
+                            <MiniStat label="Vega" value={Number(pos.vega).toFixed(3)} />
                             <MiniStat label="OCC Symbol" value={pos.optionSymbol} small />
                           </div>
                         </td>
