@@ -12,6 +12,7 @@ export const metadata: Metadata = {
   icons: {
     icon: '/glastonbury-logo.png',
   },
+  manifest: '/manifest.json',
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
