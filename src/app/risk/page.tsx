@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import { AppShell } from '@/components/layout/AppShell';
-import { Shield, TrendingDown, Activity, AlertTriangle } from 'lucide-react';
+import { Shield, TrendingDown, Activity, AlertTriangle, DollarSign } from 'lucide-react';
 
 interface RiskData {
   var95: number;
@@ -24,29 +24,63 @@ const DEFAULT_SYMBOLS = ['AAPL', 'NVDA', 'MSFT', 'GOOGL', 'AMZN', 'META', 'TSLA'
 export default function RiskPage() {
   const [riskData, setRiskData] = useState<RiskData | null>(null);
   const [loading, setLoading] = useState(true);
-  const [symbols] = useState<string[]>(DEFAULT_SYMBOLS);
+  const [hasPositions, setHasPositions] = useState<boolean | null>(null);
+  const [symbols, setSymbols] = useState<string[]>([]);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     const fetchRisk = async () => {
       setLoading(true);
+      setError(null);
       try {
-        const weights = symbols.map(() => 1 / symbols.length);
+        // First check if user has open positions via Alpaca
+        let positionSymbols: string[] = [];
+        try {
+          const posRes = await fetch('/api/trading?type=positions');
+          if (posRes.ok) {
+            const posData = await posRes.json();
+            const positions = posData.positions || [];
+            positionSymbols = positions.map((p: { symbol: string }) => p.symbol);
+          }
+        } catch {
+          // Alpaca unavailable — fall back to defaults
+        }
+
+        // If no positions, show empty state
+        if (positionSymbols.length === 0) {
+          setHasPositions(false);
+          setLoading(false);
+          return;
+        }
+
+        setHasPositions(true);
+        setSymbols(positionSymbols);
+
+        const weights = positionSymbols.map(() => 1 / positionSymbols.length);
         const res = await fetch('/api/risk', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ symbols, weights }),
+          body: JSON.stringify({ symbols: positionSymbols, weights }),
         });
         if (res.ok) {
-          setRiskData(await res.json());
+          const data = await res.json();
+          if (data.error) {
+            setError(data.error);
+          } else {
+            setRiskData(data);
+          }
+        } else {
+          setError('Failed to calculate risk metrics');
         }
       } catch (err) {
         console.error('Risk fetch error:', err);
+        setError('Unable to connect to risk service');
       } finally {
         setLoading(false);
       }
     };
     fetchRisk();
-  }, [symbols]);
+  }, []);
 
   const getCorrColor = (val: number) => {
     if (val >= 0.8) return '#ef4444';
@@ -77,6 +111,54 @@ export default function RiskPage() {
 
         {loading ? (
           <div style={{ textAlign: 'center', padding: 80, color: '#666' }}>Calculating risk metrics...</div>
+        ) : hasPositions === false ? (
+          /* Empty state — no open positions */
+          <>
+            <div style={{
+              background: 'rgba(201, 168, 76, 0.06)',
+              border: '1px solid rgba(201, 168, 76, 0.15)',
+              borderRadius: 12, padding: '24px 28px', marginBottom: 32,
+              display: 'flex', alignItems: 'center', gap: 16,
+            }}>
+              <DollarSign size={28} color="#c9a84c" />
+              <div>
+                <div style={{ color: '#e8e8e8', fontSize: 16, fontWeight: 600, marginBottom: 4 }}>
+                  No open positions — your portfolio is 100% cash
+                </div>
+                <div style={{ color: '#888', fontSize: 13 }}>
+                  Risk metrics will populate when you hold positions. Head to <a href="/trading" style={{ color: '#c9a84c', textDecoration: 'none' }}>Trading</a> to open a position.
+                </div>
+              </div>
+            </div>
+
+            {/* Placeholder risk cards */}
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 16, marginBottom: 32 }}>
+              <RiskCard icon={<AlertTriangle size={18} color="#555" />} label="1-Day VaR (95%)" value="$0" color="#555" bg="rgba(255,255,255,0.02)" subtitle="No positions to evaluate" />
+              <RiskCard icon={<TrendingDown size={18} color="#555" />} label="Max Drawdown" value="0.00%" color="#555" bg="rgba(255,255,255,0.02)" subtitle="No drawdown risk" />
+              <RiskCard icon={<Activity size={18} color="#555" />} label="Portfolio Beta" value="0.000" color="#555" bg="rgba(255,255,255,0.02)" subtitle="Cash has zero beta" />
+              <RiskCard icon={<Activity size={18} color="#555" />} label="Sharpe Ratio" value="N/A" color="#555" bg="rgba(255,255,255,0.02)" subtitle="Requires position data" />
+            </div>
+
+            {/* Placeholder stress tests */}
+            <div style={{
+              background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.06)',
+              borderRadius: 12, padding: 20, marginBottom: 32,
+            }}>
+              <h2 style={{ fontSize: 16, fontWeight: 700, color: '#e8e8e8', margin: '0 0 8px' }}>Stress Test Scenarios</h2>
+              <p style={{ color: '#555', fontSize: 13, margin: 0 }}>Add positions to run stress tests against historical scenarios</p>
+            </div>
+
+            {/* Placeholder correlation */}
+            <div style={{
+              background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.06)',
+              borderRadius: 12, padding: 20,
+            }}>
+              <h2 style={{ fontSize: 16, fontWeight: 700, color: '#e8e8e8', margin: '0 0 8px' }}>Correlation Matrix</h2>
+              <p style={{ color: '#555', fontSize: 13, margin: 0 }}>Diversification analysis will appear when you hold 2+ positions</p>
+            </div>
+          </>
+        ) : error ? (
+          <div style={{ textAlign: 'center', padding: 80, color: '#f87171' }}>{error}</div>
         ) : !riskData ? (
           <div style={{ textAlign: 'center', padding: 80, color: '#666' }}>Unable to calculate risk metrics</div>
         ) : (

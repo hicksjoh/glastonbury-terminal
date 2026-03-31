@@ -20,7 +20,10 @@ export async function POST(req: NextRequest) {
     };
 
     if (!symbols || symbols.length === 0) {
-      return NextResponse.json({ error: 'No symbols provided' }, { status: 400 });
+      return NextResponse.json({
+        var95: 0, maxDrawdown: 0, beta: 0, sharpe: 0,
+        correlationMatrix: {}, stressTests: [], symbols: [],
+      });
     }
 
     const toDate = new Date().toISOString().split('T')[0];
@@ -64,7 +67,8 @@ export async function POST(req: NextRequest) {
       ? weights
       : symbols.map(() => 1 / symbols.length);
 
-    const minLen = Math.min(...symbols.map(s => (returns[s] || []).length).filter(l => l > 0));
+    const returnLengths = symbols.map(s => (returns[s] || []).length).filter(l => l > 0);
+    const minLen = returnLengths.length > 0 ? Math.min(...returnLengths) : 0;
     const portfolioReturns: number[] = [];
 
     for (let i = 0; i < minLen; i++) {

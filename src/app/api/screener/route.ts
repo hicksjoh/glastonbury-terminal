@@ -23,6 +23,10 @@ export async function POST(req: NextRequest) {
       volume: { more: 'volumeMoreThan', less: 'volumeLowerThan' },
       dividendYield: { more: 'dividendMoreThan', less: 'dividendLowerThan' },
       price: { more: 'priceMoreThan', less: 'priceLowerThan' },
+      roe: { more: 'returnOnEquityMoreThan', less: 'returnOnEquityLowerThan' },
+      roa: { more: 'returnOnAssetsMoreThan', less: 'returnOnAssetsLowerThan' },
+      netMargin: { more: 'netIncomeRatioMoreThan', less: 'netIncomeRatioLowerThan' },
+      revenueGrowth: { more: 'revenueGrowthMoreThan', less: 'revenueGrowthLowerThan' },
     };
 
     for (const f of filters) {
@@ -50,8 +54,11 @@ export async function POST(req: NextRequest) {
     }
 
     const res = await fetch(`${FMP_BASE}/stock-screener?${params}`);
+    if (res.status === 429) {
+      return NextResponse.json({ results: [], error: 'FMP rate limit exceeded — try again in a moment' });
+    }
     if (!res.ok) {
-      return NextResponse.json({ results: [] });
+      return NextResponse.json({ results: [], error: 'Screener query failed' });
     }
 
     const data = await res.json();

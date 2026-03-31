@@ -25,12 +25,17 @@ export default function SectorsPage() {
   const [loading, setLoading] = useState(true);
   const [selectedSector, setSelectedSector] = useState<string | null>(null);
   const [loadingStocks, setLoadingStocks] = useState(false);
+  const [noApiKey, setNoApiKey] = useState(false);
 
   useEffect(() => {
     const fetchData = async () => {
       try {
         const sectorRes = await fetch('/api/sectors');
-        if (sectorRes.ok) setSectors(await sectorRes.json().then(d => d.sectors || []));
+        if (sectorRes.ok) {
+          const d = await sectorRes.json();
+          setSectors(d.sectors || []);
+          if (d.noKey) setNoApiKey(true);
+        }
       } catch (err) {
         console.error('Sectors fetch error:', err);
       } finally {
@@ -90,6 +95,14 @@ export default function SectorsPage() {
           <div style={{ textAlign: 'center', padding: 60, color: '#666' }}>Loading sectors...</div>
         ) : (
           <>
+            {noApiKey && (
+              <div style={{
+                background: 'rgba(245, 158, 11, 0.08)', border: '1px solid rgba(245, 158, 11, 0.2)',
+                borderRadius: 8, padding: '10px 16px', marginBottom: 16, fontSize: 12, color: '#f59e0b',
+              }}>
+                FMP API key not configured — sector data requires a valid API key to display real-time performance
+              </div>
+            )}
             {/* Sector Grid */}
             <div style={{
               display: 'grid',

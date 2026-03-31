@@ -32,6 +32,10 @@ const FILTER_FIELDS = [
   { value: 'beta', label: 'Beta', type: 'number' },
   { value: 'volume', label: 'Volume', type: 'number' },
   { value: 'dividendYield', label: 'Dividend Yield', type: 'number' },
+  { value: 'roe', label: 'ROE (%)', type: 'number' },
+  { value: 'roa', label: 'ROA (%)', type: 'number' },
+  { value: 'netMargin', label: 'Net Margin (%)', type: 'number' },
+  { value: 'revenueGrowth', label: 'Revenue Growth (%)', type: 'number' },
   { value: 'sector', label: 'Sector', type: 'select' },
   { value: 'industry', label: 'Industry', type: 'text' },
 ];
@@ -78,6 +82,7 @@ export default function ScreenerPage() {
   ]);
   const [results, setResults] = useState<ScreenerResult[]>([]);
   const [loading, setLoading] = useState(false);
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [sortBy, setSortBy] = useState<string>('marketCap');
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
 
@@ -100,6 +105,7 @@ export default function ScreenerPage() {
 
   const runScreen = async () => {
     setLoading(true);
+    setErrorMsg(null);
     try {
       const res = await fetch('/api/screener', {
         method: 'POST',
@@ -108,16 +114,18 @@ export default function ScreenerPage() {
           filters: filters.filter(f => f.value).map(f => ({
             field: f.field,
             operator: f.operator,
-            value: f.field === 'sector' ? f.value : Number(f.value),
+            value: f.field === 'sector' || f.field === 'industry' ? f.value : Number(f.value),
           })),
         }),
       });
       if (res.ok) {
         const data = await res.json();
         setResults(data.results || []);
+        if (data.error) setErrorMsg(data.error);
       }
     } catch (err) {
       console.error('Screen error:', err);
+      setErrorMsg('Failed to run screen — check your connection');
     } finally {
       setLoading(false);
     }
@@ -219,6 +227,16 @@ export default function ScreenerPage() {
             </button>
           </div>
         </div>
+
+        {/* Error message */}
+        {errorMsg && (
+          <div style={{
+            background: 'rgba(245, 158, 11, 0.08)', border: '1px solid rgba(245, 158, 11, 0.2)',
+            borderRadius: 8, padding: '10px 16px', marginBottom: 16, fontSize: 12, color: '#f59e0b',
+          }}>
+            {errorMsg}
+          </div>
+        )}
 
         {/* Results */}
         {results.length > 0 && (

@@ -83,6 +83,74 @@ async function getBriefingContext(): Promise<string> {
     parts.push('Market intelligence: Unavailable');
   }
 
+  // Aggregate news sentiment (last 12 hours)
+  try {
+    const newsRes = await fetch(`${process.env.NEXT_PUBLIC_BASE_URL || 'http://localhost:3000'}/api/news?limit=30`);
+    if (newsRes.ok) {
+      const newsData = await newsRes.json();
+      const articles = newsData.articles || [];
+      if (articles.length > 0) {
+        // Score headlines via sentiment API
+        const sentRes = await fetch(`${process.env.NEXT_PUBLIC_BASE_URL || 'http://localhost:3000'}/api/sentiment`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ headlines: articles.slice(0, 20).map((a: { headline: string }) => a.headline) }),
+        });
+        if (sentRes.ok) {
+          const sentData = await sentRes.json();
+          const results = sentData.results || [];
+          const bullish = results.filter((r: { sentiment: string }) => r.sentiment === 'BULLISH').length;
+          const bearish = results.filter((r: { sentiment: string }) => r.sentiment === 'BEARISH').length;
+          const neutral = results.filter((r: { sentiment: string }) => r.sentiment === 'NEUTRAL').length;
+          const total = results.length;
+          if (total > 0) {
+            parts.push(`\nNEWS SENTIMENT (${total} headlines): ${Math.round((bullish/total)*100)}% Bullish, ${Math.round((neutral/total)*100)}% Neutral, ${Math.round((bearish/total)*100)}% Bearish`);
+          }
+        }
+      }
+    }
+  } catch {
+    // Sentiment data unavailable for briefing — not critical
+  }
+
+  // Fetch active alerts
+  try {
+    const alertsRes = await fetch(`${process.env.NEXT_PUBLIC_BASE_URL || 'http://localhost:3000'}/api/alerts`);
+    if (alertsRes.ok) {
+      const alertsData = await alertsRes.json();
+      const activeAlerts = (alertsData.alerts || []).filter((a: { is_active: boolean }) => a.is_active);
+      if (activeAlerts.length > 0) {
+        parts.push(`\nACTIVE ALERTS: ${activeAlerts.length} alert rules active`);
+        const triggered = activeAlerts.filter((a: { last_triggered: string | null }) => a.last_triggered);
+        if (triggered.length > 0) {
+          parts.push(`  ${triggered.length} triggered recently`);
+        }
+      }
+    }
+  } catch {
+    // Alerts data unavailable — not critical
+  }
+
+  // Fetch top sector movers
+  try {
+    const sectorsRes = await fetch(`${process.env.NEXT_PUBLIC_BASE_URL || 'http://localhost:3000'}/api/sectors`);
+    if (sectorsRes.ok) {
+      const sectorsData = await sectorsRes.json();
+      const sectors = sectorsData.sectors || [];
+      if (sectors.length > 0) {
+        const sorted = [...sectors].sort((a: { changesPercentage: string }, b: { changesPercentage: string }) =>
+          Math.abs(parseFloat(b.changesPercentage)) - Math.abs(parseFloat(a.changesPercentage))
+        );
+        const top3 = sorted.slice(0, 3);
+        parts.push(`\nTOP SECTOR MOVERS: ${top3.map((s: { sector: string; changesPercentage: string }) =>
+          `${s.sector} ${parseFloat(s.changesPercentage) >= 0 ? '+' : ''}${s.changesPercentage}%`
+        ).join(', ')}`);
+      }
+    }
+  } catch {
+    // Sector data unavailable — not critical
+  }
+
   return parts.join('\n');
 }
 
