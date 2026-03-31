@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
 
-const FMP_BASE = 'https://financialmodelingprep.com/stable';
 const FMP_V3 = 'https://financialmodelingprep.com/api/v3';
 const FMP_KEY = process.env.FMP_API_KEY || '';
 
@@ -43,7 +42,10 @@ interface QuoteData {
 
 async function fetchQuote(symbol: string): Promise<QuoteData | null> {
   try {
-    const res = await fetch(`${FMP_BASE}/quote?symbol=${encodeURIComponent(symbol)}&apikey=${FMP_KEY}`);
+    const res = await fetch(
+      `${FMP_V3}/quote/${encodeURIComponent(symbol)}?apikey=${FMP_KEY}`,
+      { next: { revalidate: 300 } }
+    );
     if (!res.ok) return null;
     const data = await res.json();
     if (!Array.isArray(data) || data.length === 0) return null;
@@ -51,6 +53,29 @@ async function fetchQuote(symbol: string): Promise<QuoteData | null> {
     return { ...q, changePercentage: q.changePercentage ?? q.changesPercentage ?? 0 } as QuoteData;
   } catch {
     return null;
+  }
+}
+
+async function fetchSectorStocksViaScreener(sector: string): Promise<QuoteData[]> {
+  try {
+    const res = await fetch(
+      `${FMP_V3}/stock-screener?sector=${encodeURIComponent(sector)}&limit=5&sort=changesPercentage&order=desc&apikey=${FMP_KEY}`,
+      { next: { revalidate: 300 } }
+    );
+    if (!res.ok) return [];
+    const data = await res.json();
+    if (!Array.isArray(data)) return [];
+    return data.map((d: Record<string, unknown>) => ({
+      symbol: d.symbol as string,
+      name: (d.companyName || d.name || '') as string,
+      price: (d.price || 0) as number,
+      changePercentage: ((d.changePercentage ?? d.changesPercentage ?? 0) as number),
+      changesPercentage: ((d.changesPercentage ?? d.changePercentage ?? 0) as number),
+      change: (d.change || 0) as number,
+      marketCap: (d.marketCap || 0) as number,
+    }));
+  } catch {
+    return [];
   }
 }
 
@@ -86,6 +111,23 @@ export async function GET(req: NextRequest) {
     const sector = req.nextUrl.searchParams.get('sector');
 
     if (type === 'stocks' && sector) {
+      // Try stock-screener first (single API call for top 5 movers)
+      let screenerResults = await fetchSectorStocksViaScreener(sector);
+
+      if (screenerResults.length > 0) {
+        return NextResponse.json({
+          stocks: screenerResults.map(q => ({
+            symbol: q.symbol,
+            name: q.name,
+            price: q.price,
+            changesPercentage: q.changePercentage || 0,
+            marketCap: q.marketCap,
+            sector: sector,
+          })),
+        });
+      }
+
+      // Fallback: fetch individual quotes for representative stocks
       const sectorStocks = SECTOR_REPS[sector] || [];
       const quotes = await Promise.all(sectorStocks.map(fetchQuote));
       return NextResponse.json({

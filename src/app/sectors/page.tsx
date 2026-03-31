@@ -213,7 +213,7 @@ export default function SectorsPage() {
                   </table>
                 ) : (
                   <div style={{ padding: 32, textAlign: 'center', color: '#666', fontSize: 13 }}>
-                    Connect FMP API for drill-down data
+                    Market data unavailable — try during trading hours
                   </div>
                 )}
               </div>

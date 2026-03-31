@@ -8,6 +8,9 @@ const inter = Inter({ subsets: ['latin'] });
 export const metadata: Metadata = {
   title: 'Glastonbury Terminal',
   description: 'Personal wealth command center — The Glastonbury Group',
+  icons: {
+    icon: '/glastonbury-logo.png',
+  },
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

@@ -1,6 +1,7 @@
 'use client';
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
+import Image from 'next/image';
 
 export default function LoginPage() {
   const [password, setPassword] = useState('');
@@ -28,7 +29,16 @@ export default function LoginPage() {
   return (
     <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', backgroundColor: '#08080d' }}>
       <div style={{ width: 360, border: '1px solid #2a2a3a', borderRadius: 16, padding: '48px 40px', backgroundColor: '#1a1a24', textAlign: 'center' }}>
-        <div style={{ color: '#c9a84c', fontSize: 48, fontWeight: 800, letterSpacing: '-0.03em', marginBottom: 8 }}>G</div>
+        <div style={{ marginBottom: 8, display: 'flex', justifyContent: 'center' }}>
+          <Image
+            src="/glastonbury-logo.png"
+            alt="Glastonbury Group"
+            width={120}
+            height={120}
+            className="filter invert brightness-[1.8]"
+            priority
+          />
+        </div>
         <div style={{ color: '#e8e8e8', fontSize: 20, fontWeight: 600, marginBottom: 4 }}>Glastonbury Terminal</div>
         <div style={{ color: '#6b6b80', fontSize: 13, marginBottom: 36 }}>Enter your access code to continue</div>
         <form onSubmit={handleSubmit}>

@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import { AppShell } from '@/components/layout/AppShell';
+import Image from 'next/image';
 import MarkdownRenderer from '@/components/MarkdownRenderer';
 import { MOCK_AUDIT_LOG, PORTFOLIO_SUMMARY } from '@/lib/data';
 import { AuditLogEntry } from '@/types';
@@ -290,7 +291,7 @@ export default function DashboardPage() {
 
   useEffect(() => {
     // Check if hero image exists
-    const img = new Image();
+    const img = new globalThis.Image();
     img.onload = () => setHeroHasImage(true);
     img.onerror = () => setHeroHasImage(false);
     img.src = '/dashboard-hero-bg.jpg';
@@ -809,6 +810,9 @@ export default function DashboardPage() {
           ))}
         </div>
 
+      </div>
+      <div className="fixed bottom-4 right-4 opacity-[0.03] pointer-events-none">
+        <Image src="/glastonbury-logo.png" alt="" width={200} height={200} className="filter invert brightness-[1.8]" />
       </div>
     </AppShell>
   );

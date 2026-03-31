@@ -1,5 +1,6 @@
 'use client';
 import Link from 'next/link';
+import Image from 'next/image';
 import { usePathname } from 'next/navigation';
 import { LayoutDashboard, TrendingUp, BarChart3, MessageSquare, Zap, Newspaper, Star, Grid3X3, CalendarDays, ScanSearch, Filter, Shield, Bell } from 'lucide-react';
 
@@ -50,8 +51,15 @@ export function Sidebar() {
     }}>
       {/* Logo */}
       <div style={{ marginBottom: 32, paddingLeft: 8 }}>
-        <div style={{ color: '#c9a84c', fontSize: 28, fontWeight: 800, letterSpacing: '-0.03em' }}>G</div>
-        <div style={{ color: '#e8e8e8', fontSize: 13, fontWeight: 600 }}>Glastonbury Terminal</div>
+        <Image
+          src="/glastonbury-logo.png"
+          alt="Glastonbury Group"
+          width={40}
+          height={40}
+          className="filter invert brightness-[1.8]"
+          priority
+        />
+        <div style={{ color: '#e8e8e8', fontSize: 13, fontWeight: 600, marginTop: 6 }}>Glastonbury Terminal</div>
         <div style={{ color: '#6b6b80', fontSize: 11, marginTop: 2 }}>THE GLASTONBURY GROUP</div>
       </div>
       {/* Nav */}
