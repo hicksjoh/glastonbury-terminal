@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useCallback, useMemo } from 'react';
 import { AppShell } from '@/components/layout/AppShell';
-import { TrendingUp, ExternalLink } from 'lucide-react';
+import { TrendingUp } from 'lucide-react';
 
 interface NewsArticle {
   headline: string;
@@ -313,25 +313,35 @@ export default function NewsPage() {
               <div style={{ display: 'flex', gap: 12, marginBottom: 24, overflowX: 'auto' }}>
                 {[1, 2, 3, 4].map(i => (
                   <div key={i} style={{
-                    minWidth: 240, height: 140, borderRadius: 10,
+                    minWidth: 280, borderRadius: 10, overflow: 'hidden',
                     background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.06)',
-                    animation: 'pulse 1.5s ease-in-out infinite',
-                  }} />
+                  }}>
+                    <div style={{ height: 150, background: 'rgba(255,255,255,0.04)', animation: 'pulse 1.5s ease-in-out infinite' }} />
+                    <div style={{ padding: 14 }}>
+                      <div style={{ height: 12, width: '80%', borderRadius: 4, background: 'rgba(255,255,255,0.06)', marginBottom: 8, animation: 'pulse 1.5s ease-in-out infinite' }} />
+                      <div style={{ height: 10, width: '60%', borderRadius: 4, background: 'rgba(255,255,255,0.04)', animation: 'pulse 1.5s ease-in-out infinite' }} />
+                    </div>
+                  </div>
                 ))}
               </div>
               {[1, 2, 3, 4, 5].map(i => (
                 <div key={i} style={{
-                  height: 72, borderRadius: 6, marginBottom: 4,
-                  background: 'rgba(255,255,255,0.02)',
-                  animation: 'pulse 1.5s ease-in-out infinite',
-                }} />
+                  display: 'flex', gap: 12, padding: '12px 16px',
+                  borderBottom: '1px solid rgba(255,255,255,0.04)',
+                }}>
+                  <div style={{ width: 80, height: 56, borderRadius: 6, background: 'rgba(255,255,255,0.04)', flexShrink: 0, animation: 'pulse 1.5s ease-in-out infinite' }} />
+                  <div style={{ flex: 1 }}>
+                    <div style={{ height: 12, width: '70%', borderRadius: 4, background: 'rgba(255,255,255,0.06)', marginBottom: 8, animation: 'pulse 1.5s ease-in-out infinite' }} />
+                    <div style={{ height: 10, width: '40%', borderRadius: 4, background: 'rgba(255,255,255,0.04)', animation: 'pulse 1.5s ease-in-out infinite' }} />
+                  </div>
+                </div>
               ))}
             </div>
           ) : filteredArticles.length === 0 ? (
             <div style={{ textAlign: 'center', padding: 60, color: '#666' }}>No news articles found</div>
           ) : (
             <>
-              {/* Section 2: Featured Story Cards */}
+              {/* Section 2: Featured Story Cards with Images */}
               <div style={{
                 display: 'flex', gap: 12, marginBottom: 24,
                 overflowX: 'auto', paddingBottom: 4,
@@ -339,6 +349,9 @@ export default function NewsPage() {
                 {featuredArticles.map((article, i) => {
                   const si = article.sentiment ? SENTIMENT_COLORS[article.sentiment] : null;
                   const sb = article.newsSource ? SOURCE_BADGE[article.newsSource] : null;
+                  const fallbackGradient = si
+                    ? `linear-gradient(135deg, ${si.color}22, ${si.color}08)`
+                    : 'linear-gradient(135deg, rgba(40,40,60,1), rgba(26,26,46,1))';
                   return (
                     <a
                       key={i}
@@ -346,11 +359,12 @@ export default function NewsPage() {
                       target="_blank"
                       rel="noopener noreferrer"
                       style={{
-                        minWidth: 250, maxWidth: 280, flex: '0 0 auto',
+                        minWidth: 280, maxWidth: 300, flex: '0 0 auto',
                         background: 'rgba(26, 26, 46, 0.8)',
                         border: '1px solid rgba(255,255,255,0.06)',
-                        borderRadius: 10, padding: 16, textDecoration: 'none',
-                        display: 'flex', flexDirection: 'column', gap: 10,
+                        borderRadius: 10, textDecoration: 'none',
+                        display: 'flex', flexDirection: 'column',
+                        overflow: 'hidden',
                         transition: 'all 0.2s',
                         animation: `fadeSlideIn 0.3s ease ${i * 0.08}s both`,
                       }}
@@ -363,7 +377,51 @@ export default function NewsPage() {
                         e.currentTarget.style.background = 'rgba(26, 26, 46, 0.8)';
                       }}
                     >
-                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                      {/* Card Image */}
+                      <div style={{
+                        width: '100%', height: 150, position: 'relative',
+                        background: fallbackGradient,
+                        display: 'flex', alignItems: 'center', justifyContent: 'center',
+                        overflow: 'hidden',
+                      }}>
+                        {article.image ? (
+                          <img
+                            src={article.image}
+                            alt=""
+                            loading="lazy"
+                            style={{
+                              width: '100%', height: '100%',
+                              objectFit: 'cover', display: 'block',
+                            }}
+                            onError={e => {
+                              const target = e.currentTarget;
+                              target.style.display = 'none';
+                              const parent = target.parentElement;
+                              if (parent) {
+                                parent.style.background = fallbackGradient;
+                              }
+                            }}
+                          />
+                        ) : (
+                          <span style={{
+                            fontSize: 32, fontWeight: 800, color: 'rgba(255,255,255,0.08)',
+                            fontFamily: "'JetBrains Mono', monospace",
+                          }}>
+                            {article.symbols[0] || article.source?.charAt(0) || ''}
+                          </span>
+                        )}
+                        {/* Sentiment dot overlay */}
+                        {si && (
+                          <div style={{
+                            position: 'absolute', top: 8, right: 8,
+                            width: 12, height: 12, borderRadius: '50%',
+                            background: si.color, border: '2px solid rgba(0,0,0,0.4)',
+                          }} />
+                        )}
+                      </div>
+
+                      {/* Card Content */}
+                      <div style={{ padding: '12px 14px', display: 'flex', flexDirection: 'column', gap: 8, flex: 1 }}>
                         <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
                           {sb && (
                             <span style={{
@@ -375,53 +433,47 @@ export default function NewsPage() {
                           )}
                           <span style={{ fontSize: 10, color: '#666' }}>{timeAgo(article.created_at)}</span>
                         </div>
-                        {si && (
-                          <div style={{
-                            width: 10, height: 10, borderRadius: '50%',
-                            background: si.color, flexShrink: 0,
-                          }} />
-                        )}
-                      </div>
 
-                      <h3 style={{
-                        fontSize: 14, fontWeight: 600, color: '#e0e0e0',
-                        margin: 0, lineHeight: 1.4,
-                        display: '-webkit-box', WebkitLineClamp: 2,
-                        WebkitBoxOrient: 'vertical', overflow: 'hidden',
-                      }}>
-                        {article.headline}
-                      </h3>
-
-                      {article.summary && (
-                        <p style={{
-                          fontSize: 11, color: '#555', margin: 0, lineHeight: 1.4,
-                          display: '-webkit-box', WebkitLineClamp: 1,
+                        <h3 style={{
+                          fontSize: 14, fontWeight: 600, color: '#e0e0e0',
+                          margin: 0, lineHeight: 1.4,
+                          display: '-webkit-box', WebkitLineClamp: 2,
                           WebkitBoxOrient: 'vertical', overflow: 'hidden',
                         }}>
-                          {article.summary}
-                        </p>
-                      )}
+                          {article.headline}
+                        </h3>
 
-                      {article.symbols.length > 0 && (
-                        <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', marginTop: 'auto' }}>
-                          {article.symbols.slice(0, 3).map(s => (
-                            <span key={s} style={{
-                              background: 'rgba(240, 198, 116, 0.1)', color: '#f0c674',
-                              padding: '1px 6px', borderRadius: 3, fontSize: 9,
-                              fontFamily: "'JetBrains Mono', monospace", fontWeight: 600,
-                            }}>{s}</span>
-                          ))}
-                          {article.symbols.length > 3 && (
-                            <span style={{ color: '#555', fontSize: 9 }}>+{article.symbols.length - 3}</span>
-                          )}
-                        </div>
-                      )}
+                        {article.summary && (
+                          <p style={{
+                            fontSize: 11, color: '#555', margin: 0, lineHeight: 1.4,
+                            display: '-webkit-box', WebkitLineClamp: 1,
+                            WebkitBoxOrient: 'vertical', overflow: 'hidden',
+                          }}>
+                            {article.summary}
+                          </p>
+                        )}
+
+                        {article.symbols.length > 0 && (
+                          <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', marginTop: 'auto' }}>
+                            {article.symbols.slice(0, 3).map(s => (
+                              <span key={s} style={{
+                                background: 'rgba(240, 198, 116, 0.1)', color: '#f0c674',
+                                padding: '1px 6px', borderRadius: 3, fontSize: 9,
+                                fontFamily: "'JetBrains Mono', monospace", fontWeight: 600,
+                              }}>{s}</span>
+                            ))}
+                            {article.symbols.length > 3 && (
+                              <span style={{ color: '#555', fontSize: 9 }}>+{article.symbols.length - 3}</span>
+                            )}
+                          </div>
+                        )}
+                      </div>
                     </a>
                   );
                 })}
               </div>
 
-              {/* Section 3: Full Feed */}
+              {/* Section 3: Full Feed with Thumbnails */}
               <div style={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
                 {feedArticles.map((article, i) => {
                   const si = article.sentiment ? SENTIMENT_COLORS[article.sentiment] : null;
@@ -434,8 +486,8 @@ export default function NewsPage() {
                       target="_blank"
                       rel="noopener noreferrer"
                       style={{
-                        display: 'block',
-                        padding: '14px 16px 14px 20px',
+                        display: 'flex', alignItems: 'flex-start', gap: 12,
+                        padding: '12px 16px 12px 20px',
                         background: 'rgba(255,255,255,0.02)',
                         borderBottom: '1px solid rgba(255,255,255,0.04)',
                         borderLeft: `3px solid ${borderColor}`,
@@ -451,19 +503,49 @@ export default function NewsPage() {
                         e.currentTarget.style.borderLeftWidth = '3px';
                       }}
                     >
-                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12 }}>
+                      {/* Row Thumbnail */}
+                      <div style={{
+                        width: 80, height: 56, borderRadius: 6, flexShrink: 0,
+                        overflow: 'hidden',
+                        background: si
+                          ? `linear-gradient(135deg, ${si.color}22, ${si.color}08)`
+                          : 'rgba(255,255,255,0.04)',
+                        display: 'flex', alignItems: 'center', justifyContent: 'center',
+                      }}>
+                        {article.image ? (
+                          <img
+                            src={article.image}
+                            alt=""
+                            loading="lazy"
+                            style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }}
+                            onError={e => {
+                              e.currentTarget.style.display = 'none';
+                            }}
+                          />
+                        ) : (
+                          <span style={{
+                            fontSize: 18, fontWeight: 800, color: 'rgba(255,255,255,0.08)',
+                            fontFamily: "'JetBrains Mono', monospace",
+                          }}>
+                            {article.symbols[0]?.charAt(0) || ''}
+                          </span>
+                        )}
+                      </div>
+
+                      {/* Row Content */}
+                      <div style={{ flex: 1, minWidth: 0, display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12 }}>
                         <div style={{ flex: 1, minWidth: 0 }}>
-                          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
-                            <h3 style={{
-                              fontSize: 14, fontWeight: 600, color: '#e0e0e0',
-                              margin: 0, lineHeight: 1.4, flex: 1,
-                            }}>
-                              {article.headline}
-                            </h3>
-                          </div>
+                          <h3 style={{
+                            fontSize: 14, fontWeight: 600, color: '#e0e0e0',
+                            margin: '0 0 3px', lineHeight: 1.4,
+                            display: '-webkit-box', WebkitLineClamp: 1,
+                            WebkitBoxOrient: 'vertical', overflow: 'hidden',
+                          }}>
+                            {article.headline}
+                          </h3>
                           {article.summary && (
                             <p style={{
-                              fontSize: 12, color: '#555', margin: '0 0 6px',
+                              fontSize: 12, color: '#555', margin: '0 0 5px',
                               lineHeight: 1.4, whiteSpace: 'nowrap',
                               overflow: 'hidden', textOverflow: 'ellipsis',
                               maxWidth: '100%',
