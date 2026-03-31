@@ -145,16 +145,16 @@ async function fetchAlpacaChain(symbol: string, expiration?: string): Promise<Op
             symbol: contract.symbol,
             underlying: symbol,
             expiration: contract.expiration_date,
-            strike: contract.strike_price,
+            strike: parseFloat(contract.strike_price) || 0,
             type: contract.type === 'call' ? 'call' : 'put',
             bid,
             ask,
             last,
-            volume: snap?.latestTrade?.s ?? 0,
-            openInterest: snap?.openInterest ?? contract.open_interest ?? 0,
-            impliedVolatility: (snap?.impliedVolatility ?? 0) * 100, // Convert to percentage
-            delta: greeks?.delta ?? 0,
-            gamma: greeks?.gamma ?? 0,
+            volume: parseInt(snap?.latestTrade?.s) || 0,
+            openInterest: parseInt(snap?.openInterest ?? contract.open_interest) || 0,
+            impliedVolatility: (parseFloat(snap?.impliedVolatility) || 0) * 100, // Convert to percentage
+            delta: Math.max(-1, Math.min(1, greeks?.delta ?? 0)),
+            gamma: Math.min(greeks?.gamma ?? 0, 1), // Clamp extreme gamma near expiry
             theta: greeks?.theta ?? 0,
             vega: greeks?.vega ?? 0,
             rho: greeks?.rho ?? 0,

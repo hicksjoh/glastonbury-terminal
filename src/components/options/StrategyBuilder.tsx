@@ -21,7 +21,7 @@ interface LegEditorState {
 }
 
 export default function StrategyBuilder({ initialSymbol, onPlaceOrder }: StrategyBuilderProps) {
-  const [symbol, setSymbol] = useState(initialSymbol || '');
+  const [symbol, setSymbol] = useState(initialSymbol || 'AAPL');
   const [stockPrice, setStockPrice] = useState(0);
   const [selectedTemplate, setSelectedTemplate] = useState<StrategyTemplate | null>(null);
   const [legs, setLegs] = useState<LegEditorState[]>([]);

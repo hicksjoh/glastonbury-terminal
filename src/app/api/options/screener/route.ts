@@ -176,7 +176,7 @@ async function scanSymbol(symbol: string, filters: ScreenerFilter): Promise<Scre
       results.push({
         symbol: contract.symbol,
         underlying: symbol,
-        strike: contract.strike_price,
+        strike: parseFloat(contract.strike_price) || 0,
         expiration: contract.expiration_date,
         type: contract.type === 'call' ? 'call' : 'put',
         bid,
