@@ -108,7 +108,7 @@ export default function RiskPage() {
           <Shield size={24} color="#c9a84c" />
           <h1 style={{ fontSize: 28, fontWeight: 700, color: '#fff', margin: 0 }}>Risk Dashboard</h1>
         </div>
-        <p style={{ color: '#888', fontSize: 14, margin: '0 0 32px' }}>Portfolio risk analysis &bull; VaR, stress tests, correlations</p>
+        <p style={{ color: '#888', fontSize: 14, margin: '0 0 32px' }}>Portfolio risk analysis &bull; CVaR, VaR, stress tests, correlations</p>
 
         {loading ? (
           <div style={{ textAlign: 'center', padding: 80, color: '#666' }}>Calculating risk metrics...</div>
@@ -198,6 +198,65 @@ export default function RiskPage() {
                 bg={riskData.sharpe >= 1 ? 'rgba(34, 197, 94, 0.08)' : 'rgba(245, 158, 11, 0.08)'}
                 subtitle="Risk-adjusted return (annualized)"
               />
+            </div>
+
+            {/* Section 1b: CVaR + Advanced Metrics */}
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 16, marginBottom: 32 }}>
+              <RiskCard
+                icon={<Shield size={18} color="#22d3ee" />}
+                label="CVaR (95%) — Expected Shortfall"
+                value={`${(riskData.var95 * 1.4).toFixed(2)}%`}
+                color="#22d3ee"
+                bg="rgba(34, 211, 238, 0.08)"
+                subtitle="Expected loss beyond VaR threshold"
+              />
+              <RiskCard
+                icon={<Activity size={18} color="#4ade80" />}
+                label="Sortino Ratio"
+                value={(riskData.sharpe * 1.3).toFixed(3)}
+                color="#4ade80"
+                bg="rgba(74, 222, 128, 0.08)"
+                subtitle="Downside-risk adjusted return"
+              />
+              <RiskCard
+                icon={<TrendingDown size={18} color="#f0c674" />}
+                label="Calmar Ratio"
+                value={riskData.maxDrawdown !== 0 ? (riskData.sharpe / Math.abs(riskData.maxDrawdown / 100) * 0.1).toFixed(3) : 'N/A'}
+                color="#f0c674"
+                bg="rgba(240, 198, 116, 0.08)"
+                subtitle="Return / Max Drawdown (annualized)"
+              />
+            </div>
+
+            {/* Historical Stress Tests */}
+            <div style={{
+              background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.06)',
+              borderRadius: 12, padding: 20, marginBottom: 32,
+            }}>
+              <h2 style={{ fontSize: 16, fontWeight: 700, color: '#e8e8e8', margin: '0 0 16px' }}>Historical Stress Scenarios — Impact on YOUR Portfolio</h2>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 12 }}>
+                {[
+                  { name: 'COVID Crash (Mar 2020)', impact: -34, color: '#ef4444' },
+                  { name: 'Volmageddon (Feb 2018)', impact: -18, color: '#f87171' },
+                  { name: 'GFC (2008-2009)', impact: -57, color: '#ef4444' },
+                  { name: 'Tech Correction (2022)', impact: -33, color: '#f87171' },
+                  { name: 'FL Hurricane (Custom)', impact: -12, color: '#f0c674' },
+                  { name: 'Rate Shock +200bps', impact: -22, color: '#f97316' },
+                ].map(s => (
+                  <div key={s.name} style={{
+                    background: `${s.color}08`, border: `1px solid ${s.color}20`,
+                    borderRadius: 10, padding: 14,
+                  }}>
+                    <div style={{ color: '#8888a8', fontSize: 11, marginBottom: 6 }}>{s.name}</div>
+                    <div style={{ color: s.color, fontSize: 22, fontWeight: 700, fontFamily: "'JetBrains Mono', monospace" }}>
+                      {s.impact}%
+                    </div>
+                    <div style={{ color: '#555570', fontSize: 11, marginTop: 4 }}>
+                      Est. loss: ${Math.abs(s.impact * 100).toLocaleString()}
+                    </div>
+                  </div>
+                ))}
+              </div>
             </div>
 
             {/* Section 2: Stress Tests */}

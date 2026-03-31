@@ -2,8 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { AppShell } from '@/components/layout/AppShell';
-import { SparklineChart } from '@/components/SparklineChart';
-import { ChevronDown, ChevronUp, X } from 'lucide-react';
+import { ChevronDown, ChevronUp, X, LayoutGrid, BarChart3 } from 'lucide-react';
 
 interface SectorData {
   sector: string;
@@ -26,6 +25,7 @@ export default function SectorsPage() {
   const [selectedSector, setSelectedSector] = useState<string | null>(null);
   const [loadingStocks, setLoadingStocks] = useState(false);
   const [noApiKey, setNoApiKey] = useState(false);
+  const [viewMode, setViewMode] = useState<'grid' | 'treemap'>('grid');
 
   useEffect(() => {
     const fetchData = async () => {
@@ -89,7 +89,19 @@ export default function SectorsPage() {
     <AppShell>
       <div>
         <h1 style={{ fontSize: 28, fontWeight: 700, color: '#fff', margin: '0 0 4px' }}>Sector Performance</h1>
-        <p style={{ color: '#888', fontSize: 14, margin: '0 0 24px' }}>Market heatmap by sector &bull; Click to drill down</p>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', margin: '0 0 24px' }}>
+          <p style={{ color: '#888', fontSize: 14, margin: 0 }}>Market heatmap by sector &bull; Click to drill down</p>
+          <div style={{ display: 'flex', gap: 4 }}>
+            <button onClick={() => setViewMode('grid')} style={{
+              padding: '6px 10px', borderRadius: 6, cursor: 'pointer', border: `1px solid ${viewMode === 'grid' ? '#8a5cf6' : '#1e1e35'}`,
+              background: viewMode === 'grid' ? 'rgba(138,92,246,0.15)' : 'transparent', color: viewMode === 'grid' ? '#8a5cf6' : '#555570',
+            }}><LayoutGrid size={14} /></button>
+            <button onClick={() => setViewMode('treemap')} style={{
+              padding: '6px 10px', borderRadius: 6, cursor: 'pointer', border: `1px solid ${viewMode === 'treemap' ? '#8a5cf6' : '#1e1e35'}`,
+              background: viewMode === 'treemap' ? 'rgba(138,92,246,0.15)' : 'transparent', color: viewMode === 'treemap' ? '#8a5cf6' : '#555570',
+            }}><BarChart3 size={14} /></button>
+          </div>
+        </div>
 
         {loading ? (
           <div style={{ textAlign: 'center', padding: 60, color: '#666' }}>Loading sectors...</div>
@@ -103,25 +115,37 @@ export default function SectorsPage() {
                 FMP API key not configured — sector data requires a valid API key to display real-time performance
               </div>
             )}
-            {/* Sector Grid */}
-            <div style={{
+            {/* Sector Grid / Treemap */}
+            <div style={viewMode === 'treemap' ? {
+              display: 'flex', flexWrap: 'wrap', gap: 2, marginBottom: 32,
+            } : {
               display: 'grid',
               gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))',
               gap: 8,
               marginBottom: 32,
             }}>
-              {sectors.map(s => {
+              {sectors.map((s, idx) => {
                 const pct = parseFloat(s.changesPercentage);
                 const isSelected = selectedSector === s.sector;
+                // Treemap sizing: larger for sectors with bigger absolute change
+                const treemapFlex = viewMode === 'treemap' ? Math.max(1, Math.abs(pct) * 2 + 1) : undefined;
                 return (
                   <div
                     key={s.sector}
                     onClick={() => setSelectedSector(isSelected ? null : s.sector)}
-                    style={{
+                    style={viewMode === 'treemap' ? {
+                      flex: treemapFlex,
+                      minWidth: 120,
                       background: getBgColor(pct),
-                      border: isSelected
-                        ? '2px solid #f0c674'
-                        : '1px solid rgba(255,255,255,0.06)',
+                      border: isSelected ? '2px solid #f0c674' : '1px solid rgba(255,255,255,0.06)',
+                      borderRadius: 6,
+                      padding: '14px 12px',
+                      cursor: 'pointer',
+                      transition: 'all 0.2s ease',
+                      minHeight: Math.max(60, Math.abs(pct) * 30 + 60),
+                    } : {
+                      background: getBgColor(pct),
+                      border: isSelected ? '2px solid #f0c674' : '1px solid rgba(255,255,255,0.06)',
                       borderRadius: 10,
                       padding: '16px 14px',
                       cursor: 'pointer',
