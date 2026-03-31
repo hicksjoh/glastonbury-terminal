@@ -36,10 +36,11 @@ export default function RiskPage() {
         // First check if user has open positions via Alpaca
         let positionSymbols: string[] = [];
         try {
-          const posRes = await fetch('/api/trading?type=positions');
+          const posRes = await fetch('/api/alpaca/positions');
           if (posRes.ok) {
             const posData = await posRes.json();
-            const positions = posData.positions || [];
+            // Alpaca returns array directly, or may have error field
+            const positions = Array.isArray(posData) ? posData : [];
             positionSymbols = positions.map((p: { symbol: string }) => p.symbol);
           }
         } catch {
