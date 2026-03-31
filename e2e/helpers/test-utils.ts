@@ -77,10 +77,11 @@ export async function expectSidebarComplete(page: Page) {
 
   const expectedLinks = [
     'Dashboard', 'News', 'Watchlist', 'Sectors', 'Calendar',
-    'Trading', 'Screener', 'Strategies', 'Monte Carlo', 'Keisha AI'
+    'Trading', 'Opt. Screener', 'Stock Screener', 'Risk', 'Strategies',
+    'Alerts', 'Monte Carlo', 'Keisha AI'
   ];
 
   for (const link of expectedLinks) {
-    await expect(sidebar.locator(`text=${link}`)).toBeVisible();
+    await expect(sidebar.locator(`text=${link}`).first()).toBeVisible();
   }
 }
