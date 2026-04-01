@@ -201,6 +201,11 @@ export default function DashboardPage() {
   const [optionsPnl, setOptionsPnl] = useState(0);
   const [netTheta, setNetTheta] = useState(0);
 
+  // Keisha Alerts
+  const [keishaAlerts, setKeishaAlerts] = useState<Array<{
+    type: string; priority: string; title: string; message: string; symbol?: string; link?: string;
+  }>>([]);
+
   // Audit
   const [auditLog, setAuditLog] = useState<AuditLogEntry[]>(MOCK_AUDIT_LOG);
 
@@ -273,6 +278,14 @@ export default function DashboardPage() {
         if (optRes.greeks?.netTheta) setNetTheta(optRes.greeks.netTheta);
       }
     } catch { /* options data optional */ }
+
+    // Fetch Keisha proactive alerts
+    try {
+      const alertsRes = await fetch('/api/keisha/alerts').then(r => r.ok ? r.json() : null).catch(() => null);
+      if (alertsRes?.alerts?.length > 0) {
+        setKeishaAlerts(alertsRes.alerts);
+      }
+    } catch { /* alerts optional */ }
 
     setLoading(false);
   }, []);
@@ -395,6 +408,48 @@ export default function DashboardPage() {
             </div>
           </div>
         </div>
+
+        {/* ═══ Keisha Alerts Ticker ═══ */}
+        {keishaAlerts.length > 0 && (
+          <div style={{
+            display: 'flex', gap: 10, marginBottom: 16, overflowX: 'auto',
+            padding: '0 2px', scrollbarWidth: 'none',
+          }}>
+            {keishaAlerts.map((alert, i) => (
+              <div
+                key={i}
+                onClick={() => alert.link && router.push(alert.link)}
+                style={{
+                  flex: '0 0 auto', padding: '10px 16px', borderRadius: 10,
+                  background: alert.priority === 'high'
+                    ? 'rgba(240, 198, 116, 0.06)'
+                    : 'rgba(255, 255, 255, 0.03)',
+                  border: `1px solid ${
+                    alert.priority === 'high'
+                      ? 'rgba(240, 198, 116, 0.3)'
+                      : alert.type === 'warning'
+                        ? 'rgba(248, 113, 113, 0.2)'
+                        : 'rgba(74, 222, 128, 0.2)'
+                  }`,
+                  cursor: alert.link ? 'pointer' : 'default',
+                  maxWidth: 320, minWidth: 240,
+                  animation: alert.priority === 'high' ? 'pulse 2s ease-in-out infinite' : 'none',
+                }}
+              >
+                <div style={{
+                  fontSize: 11, fontWeight: 700,
+                  color: alert.type === 'warning' ? '#f87171' : '#4ade80',
+                  marginBottom: 4, textTransform: 'uppercase', letterSpacing: '0.05em',
+                }}>
+                  {alert.type === 'warning' ? '⚠' : '⚡'} {alert.title}
+                </div>
+                <div style={{ fontSize: 11, color: '#aaa', lineHeight: 1.4 }}>
+                  {alert.message.slice(0, 120)}{alert.message.length > 120 ? '...' : ''}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
 
         {/* ═══ ROW 1: KPI Metric Strip ═══ */}
         <div style={{ display: 'flex', gap: 12, marginBottom: 20, flexWrap: 'wrap' }}>

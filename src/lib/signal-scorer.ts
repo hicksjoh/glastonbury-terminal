@@ -4,6 +4,29 @@
  */
 
 import { calculateKelly } from './kelly-sizer';
+import { createServiceClient } from './supabase';
+
+/**
+ * Fetch calibrated signal weights from Supabase (self-improving weights)
+ * Returns null if insufficient data — caller should fall back to defaults
+ */
+export async function getCalibratedWeights(): Promise<Record<string, number> | null> {
+  try {
+    const supabase = createServiceClient();
+    const { data } = await (supabase as any).from('signal_calibration')
+      .select('source, recommended_weight')
+      .gte('sample_size', 5);
+
+    if (data && data.length > 0) {
+      return Object.fromEntries(
+        data.map((d: { source: string; recommended_weight: number }) => [d.source, d.recommended_weight])
+      );
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
 
 export interface SignalInput {
   insiderClusterBuy?: boolean;
