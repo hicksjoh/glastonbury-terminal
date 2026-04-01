@@ -56,8 +56,7 @@ export async function GET(req: NextRequest) {
     // Check Supabase cache first
     try {
       const supabase = getSupabase();
-      const { data: cached } = await supabase
-        .from('earnings_tone')
+      const { data: cached } = await (supabase.from as any)('earnings_tone')
         .select('*')
         .eq('symbol', symbol)
         .eq('quarter', quarter)
@@ -65,13 +64,21 @@ export async function GET(req: NextRequest) {
         .single();
 
       if (cached) {
+        const c = cached as any;
         return NextResponse.json({
           symbol,
           quarter,
           year,
           hasTranscript: true,
-          toneAnalysis: cached.tone_analysis,
-          lastUpdated: cached.updated_at,
+          toneAnalysis: c.tone_analysis || {
+            overallTone: c.overall_tone, confidence: c.confidence,
+            guidanceTone: c.guidance_tone, defensiveness: c.defensiveness,
+            languageShift: c.language_shift, redFlags: c.red_flags,
+            bullishSignals: c.bullish_signals, keyQuotes: c.key_quotes,
+            summary: c.summary, tradingImplication: c.trading_implication,
+            conviction: c.conviction,
+          },
+          lastUpdated: c.created_at,
           cached: true,
         });
       }
@@ -153,13 +160,22 @@ ${transcript.slice(0, 80000)}`,
     // Try to cache in Supabase
     try {
       const supabase = getSupabase();
-      await supabase.from('earnings_tone').upsert(
+      await (supabase.from as any)('earnings_tone').upsert(
         {
           symbol,
           quarter,
           year,
-          tone_analysis: toneAnalysis,
-          updated_at: lastUpdated,
+          overall_tone: toneAnalysis.overallTone,
+          confidence: toneAnalysis.confidence,
+          guidance_tone: toneAnalysis.guidanceTone,
+          defensiveness: toneAnalysis.defensiveness,
+          language_shift: toneAnalysis.languageShift,
+          red_flags: toneAnalysis.redFlags,
+          bullish_signals: toneAnalysis.bullishSignals,
+          key_quotes: toneAnalysis.keyQuotes,
+          trading_implication: toneAnalysis.tradingImplication,
+          conviction: toneAnalysis.conviction,
+          summary: toneAnalysis.summary,
         },
         { onConflict: 'symbol,quarter,year' }
       );

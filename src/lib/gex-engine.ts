@@ -37,9 +37,7 @@ export function calculateGEX(chain: OptionsChainItem[], spotPrice: number): GEXR
 
   const levels = findGEXLevels(byStrike, chain);
   let totalGEX = 0;
-  for (const val of byStrike.values()) {
-    totalGEX += val;
-  }
+  byStrike.forEach(val => { totalGEX += val; });
 
   return { byStrike, levels, totalGEX };
 }
@@ -50,7 +48,7 @@ export function findGEXLevels(gexByStrike: Map<number, number>, chain: OptionsCh
   let callWall = 0;
   let callWallValue = 0;
 
-  for (const [strike, gex] of gexByStrike) {
+  gexByStrike.forEach((gex, strike) => {
     if (gex < 0 && (putWallValue === 0 || gex < putWallValue)) {
       putWall = strike;
       putWallValue = gex;
@@ -59,7 +57,7 @@ export function findGEXLevels(gexByStrike: Map<number, number>, chain: OptionsCh
       callWall = strike;
       callWallValue = gex;
     }
-  }
+  });
 
   const oiByStrike = new Map<number, number>();
   for (const item of chain) {
@@ -69,12 +67,12 @@ export function findGEXLevels(gexByStrike: Map<number, number>, chain: OptionsCh
 
   let hvl = 0;
   let maxOI = 0;
-  for (const [strike, oi] of oiByStrike) {
+  oiByStrike.forEach((oi, strike) => {
     if (oi > maxOI) {
       maxOI = oi;
       hvl = strike;
     }
-  }
+  });
 
   const sortedStrikes = Array.from(gexByStrike.keys()).sort((a, b) => a - b);
   let gammaFlip = 0;
@@ -88,9 +86,7 @@ export function findGEXLevels(gexByStrike: Map<number, number>, chain: OptionsCh
   }
 
   let netGEX = 0;
-  for (const val of gexByStrike.values()) {
-    netGEX += val;
-  }
+  gexByStrike.forEach(val => { netGEX += val; });
 
   const regime: 'positive' | 'negative' = netGEX > 0 ? 'positive' : 'negative';
 

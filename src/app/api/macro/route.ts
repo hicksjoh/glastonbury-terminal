@@ -139,7 +139,7 @@ export async function GET(_req: NextRequest) {
     // Try to store in Supabase (non-blocking)
     try {
       const supabase = getSupabase();
-      await supabase.from('macro_regime_history').insert({
+      await (supabase as any).from('macro_regime_history').insert({
         regime: regime.regime,
         confidence: regime.confidence,
         score: regime.score,

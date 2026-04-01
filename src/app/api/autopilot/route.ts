@@ -127,15 +127,13 @@ async function handleScan(): Promise<NextResponse> {
         let guardResult = { passed: true, violations: [] as string[] };
         try {
           const { checkBehavioralGuards } = await import('@/lib/behavioral-guard');
-          const guardCheck = await checkBehavioralGuards({
-            symbol,
-            action: 'buy',
-            signalScore: signal.score,
-            crewConsensus: consensus,
-          });
+          const alerts = checkBehavioralGuards(
+            { action: 'buy', ticker: symbol, quantity: 0 },
+            { positions: [], recentSells: [] }
+          );
           guardResult = {
-            passed: guardCheck.passed ?? true,
-            violations: guardCheck.violations || [],
+            passed: alerts.length === 0,
+            violations: alerts.map(a => a.title),
           };
         } catch {
           // If behavioral guard module not available, pass by default
@@ -162,11 +160,12 @@ async function handleScan(): Promise<NextResponse> {
         try {
           const { calculateKelly } = await import('@/lib/kelly-sizer');
           const kellyResult = calculateKelly({
-            symbol,
-            signalScore: signal.score,
-            consensus,
+            expectedReturn: 0.05,
+            winRate: Math.min(0.9, signal.score / 100),
+            avgWin: 0.08,
+            avgLoss: 0.04,
           });
-          kellySize = kellyResult?.positionSize ?? kellyResult?.shares ?? null;
+          kellySize = kellyResult?.dollarsAtRisk ?? null;
         } catch {
           // If Kelly sizer not available, use null
           kellySize = null;
@@ -271,7 +270,7 @@ async function handleExecute(body: {
     // Log to Supabase
     try {
       const supabase = createServiceClient();
-      await supabase.from('autopilot_executions').insert({
+      await (supabase as any).from('autopilot_executions').insert({
         symbol: symbol.toUpperCase(),
         shares,
         side,

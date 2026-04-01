@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { anthropic } from '@/lib/claude';
-import { getSupabase } from '@/lib/supabase';
+import { createServiceClient } from '@/lib/supabase';
 
 const ALPACA_BASE_URL = process.env.ALPACA_BASE_URL || 'https://paper-api.alpaca.markets';
 const ALPACA_HEADERS = {
@@ -77,7 +77,7 @@ export async function POST(req: NextRequest) {
     });
 
     const executor = safeParseJSON(executorRaw, {
-      recommendation: 'reject' as const,
+      recommendation: 'reject' as string,
       executionPlan: {
         orderType: 'limit',
         entryPrice: 0,
@@ -121,8 +121,8 @@ export async function POST(req: NextRequest) {
 
     // ── Store in Supabase ────────────────────────────────────────────────
     try {
-      const supabase = getSupabase();
-      await supabase.from('crew_sessions').insert({
+      const supabase = createServiceClient();
+      await (supabase as any).from('crew_sessions').insert({
         symbol: upperSymbol,
         proposed_action: action,
         analyst_response: analyst,

@@ -182,9 +182,9 @@ async function fetchAlpacaChain(
       }
     }
 
-    for (const item of grouped.values()) {
+    grouped.forEach(item => {
       chain.push(item);
-    }
+    });
 
     return chain.length > 0 ? chain : null;
   } catch {

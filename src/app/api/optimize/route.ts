@@ -110,7 +110,7 @@ async function generateAIViews(
   symbols: string[],
   eqReturns: number[],
   covMatrix: number[][]
-): Promise<{ views: View[]; aiViewDetails: Array<{ symbol: string; view: string; confidence: number; reasoning: string }> }> {
+): Promise<{ views: View[]; viewConfidences: number[]; aiViewDetails: Array<{ symbol: string; view: string; confidence: number; reasoning: string }> }> {
   try {
     const prompt = `You are a quantitative finance analyst. Given the following portfolio assets and their equilibrium expected annual returns derived from market cap weights via the Black-Litterman model, provide your views on expected returns.
 
@@ -140,6 +140,7 @@ Respond ONLY with a JSON array, no other text.`;
 
     const parsed = JSON.parse(content.text);
     const views: View[] = [];
+    const viewConfidences: number[] = [];
     const aiViewDetails: Array<{ symbol: string; view: string; confidence: number; reasoning: string }> = [];
 
     for (const item of parsed) {
@@ -151,10 +152,10 @@ Respond ONLY with a JSON array, no other text.`;
       P[idx] = 1;
 
       views.push({
-        P,
-        Q: item.expectedReturn,
-        confidence: item.confidence,
+        assets: P,
+        expectedReturn: item.expectedReturn,
       });
+      viewConfidences.push(item.confidence || 0.5);
 
       const direction = item.expectedReturn > eqReturns[idx] ? 'bullish' : 'bearish';
       aiViewDetails.push({
@@ -165,11 +166,12 @@ Respond ONLY with a JSON array, no other text.`;
       });
     }
 
-    return { views, aiViewDetails };
+    return { views, viewConfidences, aiViewDetails };
   } catch (error) {
     // Fallback: use equilibrium returns with small perturbations as views
     console.warn('AI views generation failed, using perturbation fallback:', error);
     const views: View[] = [];
+    const viewConfidences: number[] = [];
     const aiViewDetails: Array<{ symbol: string; view: string; confidence: number; reasoning: string }> = [];
 
     for (let i = 0; i < symbols.length; i++) {
@@ -178,10 +180,10 @@ Respond ONLY with a JSON array, no other text.`;
       P[i] = 1;
 
       views.push({
-        P,
-        Q: eqReturns[i] + perturbation,
-        confidence: 0.3,
+        assets: P,
+        expectedReturn: eqReturns[i] + perturbation,
       });
+      viewConfidences.push(0.3);
 
       aiViewDetails.push({
         symbol: symbols[i],
@@ -191,7 +193,7 @@ Respond ONLY with a JSON array, no other text.`;
       });
     }
 
-    return { views, aiViewDetails };
+    return { views, viewConfidences, aiViewDetails };
   }
 }
 
@@ -226,35 +228,38 @@ export async function POST(request: NextRequest) {
     // 3-5. Calculate covariance matrix and equilibrium returns
     const dailyCov = calculateCovarianceMatrix(alignedReturns);
     const covMatrix = annualizeCovarianceMatrix(dailyCov);
-    const eqReturns = equilibriumReturns(covMatrix, marketWeights, riskAversion);
+    const eqReturns = equilibriumReturns(marketWeights, covMatrix, riskAversion);
 
     // 6. Correlation matrix for display
     const corrMatrix = correlationMatrix(alignedReturns);
 
     // 7. Generate views (AI or equilibrium-based)
     let views: View[] = [];
+    let viewConfidences: number[] = [];
     let aiViewDetails: Array<{ symbol: string; view: string; confidence: number; reasoning: string }> = [];
 
     if (useAIViews) {
       const result = await generateAIViews(symbols, eqReturns, covMatrix);
       views = result.views;
+      viewConfidences = result.viewConfidences;
       aiViewDetails = result.aiViewDetails;
     } else {
       // Use equilibrium returns as views with moderate confidence
       for (let i = 0; i < symbols.length; i++) {
         const P = Array(symbols.length).fill(0);
         P[i] = 1;
-        views.push({ P, Q: eqReturns[i], confidence: 0.5 });
+        views.push({ assets: P, expectedReturn: eqReturns[i] * (1 + (Math.random() - 0.5) * 0.1) });
+        viewConfidences.push(0.5);
       }
     }
 
     // 8. Run Black-Litterman
-    const blResult = blackLitterman(covMatrix, eqReturns, views, riskAversion);
-    const optimalWeights = blResult.weights;
-    const posteriorReturns = blResult.expectedReturns;
+    const blResult = blackLitterman(eqReturns, covMatrix, views, viewConfidences);
+    const optimalWeights = blResult.optimalWeights;
+    const posteriorReturns = blResult.posteriorReturns;
 
     // 9. Generate efficient frontier (20 points)
-    const frontier = efficientFrontier(covMatrix, posteriorReturns, 20);
+    const frontier = efficientFrontier(posteriorReturns, covMatrix, 20);
 
     // 10. Calculate portfolio metrics
     let expectedReturn = 0;

@@ -183,7 +183,7 @@ export async function POST(req: NextRequest) {
         process.env.SUPABASE_SERVICE_ROLE_KEY
       ) {
         const supabase = createServiceClient();
-        await supabase.from('monte_carlo_results').insert({
+        await (supabase as any).from('monte_carlo_results').insert({
           portfolio_snapshot: validSymbols.map((s, i) => ({
             symbol: s,
             weight: normalizedWeights[i],
