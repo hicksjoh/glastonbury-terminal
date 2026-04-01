@@ -6,6 +6,7 @@ import {
   LayoutDashboard, TrendingUp, BarChart3, MessageSquare, Zap, Newspaper,
   Star, Grid3X3, CalendarDays, ScanSearch, Filter, Shield, ShieldCheck, Bell, Settings,
   Wallet, MapPin, DollarSign, Receipt, BookOpen, FlaskConical, Radar, Activity, Users,
+  Layers, GitCompare, Globe, Target, Bot,
 } from 'lucide-react';
 
 const NAV_SECTIONS = [
@@ -51,6 +52,19 @@ const NAV_SECTIONS = [
       { href: '/insider', label: 'Insider Tracker', icon: Users },
       { href: '/earnings', label: 'Earnings Intel', icon: CalendarDays },
       { href: '/simulator', label: 'P&L Simulator', icon: FlaskConical },
+    ],
+  },
+  {
+    label: 'QUANT LAB',
+    items: [
+      { href: '/gex', label: 'GEX Levels', icon: Zap },
+      { href: '/vol-surface', label: 'Vol Surface', icon: Layers },
+      { href: '/pairs', label: 'Pairs Trading', icon: GitCompare },
+      { href: '/drift', label: 'Drift Regime', icon: TrendingUp },
+      { href: '/macro', label: 'Macro Regime', icon: Globe },
+      { href: '/optimizer', label: 'Optimizer', icon: Target },
+      { href: '/crew', label: 'Trading Crew', icon: Users },
+      { href: '/autopilot', label: 'Auto-Pilot', icon: Bot },
     ],
   },
   {
@@ -167,7 +181,7 @@ export function Sidebar() {
           Cmd+K Search
         </div>
         <div>Paper Trading Active</div>
-        <div style={{ color: '#2a2a3a', fontSize: 10, marginTop: 4 }}>v2.0 &bull; 2026</div>
+        <div style={{ color: '#2a2a3a', fontSize: 10, marginTop: 4 }}>v3.0 &bull; 2026</div>
       </div>
     </aside>
   );
