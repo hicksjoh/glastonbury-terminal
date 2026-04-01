@@ -3,7 +3,7 @@ import { useState, useEffect, useRef, useCallback, Suspense } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer } from 'recharts';
 import { AppShell } from '@/components/layout/AppShell';
-import { AlertTriangle, TrendingUp, TrendingDown, Search, X } from 'lucide-react';
+import { AlertTriangle, TrendingUp, TrendingDown, Search, X, Users } from 'lucide-react';
 import TradeGuard from '@/components/TradeGuard';
 import PortfolioChart from '@/components/PortfolioChart';
 import OptionsChain from '@/components/options/OptionsChain';
@@ -93,6 +93,12 @@ function TradingPage() {
   const [priceLoading, setPriceLoading] = useState(false);
   const searchRef = useRef<HTMLDivElement>(null);
   const debouncedQuery = useDebounce(searchQuery, 300);
+
+  // Crew state
+  const [crewLoading, setCrewLoading] = useState(false);
+  const [crewResult, setCrewResult] = useState<any>(null);
+  const [showCrew, setShowCrew] = useState(false);
+  const [crewOverride, setCrewOverride] = useState(false);
 
   // Options state
   const [optionsSymbol, setOptionsSymbol] = useState('');
@@ -239,6 +245,10 @@ function TradingPage() {
     setForm(p => ({ ...p, symbol: result.symbol }));
     setSearchQuery(result.symbol);
     setShowDropdown(false);
+    // Reset crew state when ticker changes
+    setCrewResult(null);
+    setShowCrew(false);
+    setCrewOverride(false);
     if (result.price) {
       setSelectedPrice(result.price);
     } else {
@@ -251,6 +261,26 @@ function TradingPage() {
     setOptionsSearchQuery(result.symbol);
     setOptionsShowDropdown(false);
     setSelectedOption(null);
+  }
+
+  async function askTheCrew() {
+    if (!form.symbol) return;
+    setCrewLoading(true);
+    setCrewResult(null);
+    setShowCrew(true);
+    setCrewOverride(false);
+    try {
+      const res = await fetch('/api/agent-crew', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ symbol: form.symbol, action: form.side }),
+      });
+      const data = await res.json();
+      setCrewResult(data);
+    } catch {
+      setCrewResult({ error: 'Failed to reach the crew' });
+    }
+    setCrewLoading(false);
   }
 
   async function submitOrder() {
@@ -275,6 +305,9 @@ function TradingPage() {
     setForm({ symbol: '', side: 'buy', qty: '', type: 'market', limitPrice: '' });
     setSearchQuery('');
     setSelectedPrice(null);
+    setCrewResult(null);
+    setShowCrew(false);
+    setCrewOverride(false);
   }
 
   function handleSelectOption(entry: OptionChainEntry, side: 'call' | 'put') {
@@ -291,6 +324,16 @@ function TradingPage() {
   };
 
   const estimatedTotal = selectedPrice && form.qty ? (selectedPrice * parseInt(form.qty || '0')).toFixed(2) : null;
+
+  // Determine if submit should be blocked by crew
+  const crewBlocksSubmit = showCrew && crewResult && !crewResult.error && crewResult.consensus === 'unanimous_stop' && !crewOverride;
+
+  const consensusColors: Record<string, { bg: string; border: string; text: string; label: string }> = {
+    unanimous_go: { bg: '#22c55e15', border: '#22c55e40', text: '#22c55e', label: 'UNANIMOUS GO' },
+    majority_go: { bg: '#f59e0b15', border: '#f59e0b40', text: '#f59e0b', label: 'MAJORITY GO' },
+    split: { bg: '#f9731615', border: '#f9731640', text: '#f97316', label: 'SPLIT DECISION' },
+    unanimous_stop: { bg: '#ef444415', border: '#ef444440', text: '#ef4444', label: 'UNANIMOUS STOP' },
+  };
 
   return (
     <AppShell>
@@ -425,6 +468,10 @@ function TradingPage() {
                             setSelectedPrice(null);
                             setShowDropdown(false);
                           }
+                          // Reset crew when symbol changes
+                          setCrewResult(null);
+                          setShowCrew(false);
+                          setCrewOverride(false);
                         }}
                         onFocus={() => {
                           if (searchResults.length > 0) setShowDropdown(true);
@@ -455,6 +502,9 @@ function TradingPage() {
                             setSelectedPrice(null);
                             setSearchResults([]);
                             setShowDropdown(false);
+                            setCrewResult(null);
+                            setShowCrew(false);
+                            setCrewOverride(false);
                           }}
                         />
                       )}
@@ -647,23 +697,181 @@ function TradingPage() {
                       style={{ padding: '10px 12px', backgroundColor: '#08080d', border: '1px solid #2a2a3a', borderRadius: 8, color: '#e8e8e8', fontSize: 14, outline: 'none' }}
                     />
                   )}
-                  <button
-                    onClick={() => setStep('guard')}
-                    disabled={!form.symbol || !form.qty}
-                    style={{
-                      padding: '12px 0',
-                      backgroundColor: form.side === 'buy' ? '#22c55e' : '#ef4444',
-                      border: 'none',
+
+                  {/* Button row: Review Order + Ask the Crew */}
+                  <div style={{ display: 'flex', gap: 8 }}>
+                    <button
+                      onClick={() => setStep('guard')}
+                      disabled={!form.symbol || !form.qty || crewBlocksSubmit}
+                      style={{
+                        flex: 2,
+                        padding: '12px 0',
+                        backgroundColor: (!form.symbol || !form.qty || crewBlocksSubmit) ? '#2a2a3a' : (form.side === 'buy' ? '#22c55e' : '#ef4444'),
+                        border: 'none',
+                        borderRadius: 8,
+                        color: (!form.symbol || !form.qty || crewBlocksSubmit) ? '#6b6b80' : '#fff',
+                        fontWeight: 700,
+                        cursor: (!form.symbol || !form.qty || crewBlocksSubmit) ? 'not-allowed' : 'pointer',
+                        fontSize: 15,
+                        opacity: (!form.symbol || !form.qty || crewBlocksSubmit) ? 0.5 : 1,
+                      }}
+                    >
+                      Review Order
+                    </button>
+                    <button
+                      onClick={askTheCrew}
+                      disabled={!form.symbol || crewLoading}
+                      style={{
+                        flex: 1,
+                        padding: '12px 0',
+                        background: (!form.symbol || crewLoading) ? '#2a2a3a' : 'linear-gradient(135deg, #c9a84c, #7c3aed)',
+                        border: 'none',
+                        borderRadius: 8,
+                        color: (!form.symbol || crewLoading) ? '#6b6b80' : '#fff',
+                        fontWeight: 700,
+                        cursor: (!form.symbol || crewLoading) ? 'not-allowed' : 'pointer',
+                        fontSize: 13,
+                        opacity: (!form.symbol || crewLoading) ? 0.5 : 1,
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        gap: 6,
+                      }}
+                    >
+                      <Users size={14} />
+                      {crewLoading ? 'Asking...' : 'Ask the Crew'}
+                    </button>
+                  </div>
+
+                  {/* Crew Verdict Panel */}
+                  {showCrew && (
+                    <div style={{
+                      backgroundColor: '#0d0d14',
+                      border: '1px solid #2a2a3a',
                       borderRadius: 8,
-                      color: '#fff',
-                      fontWeight: 700,
-                      cursor: !form.symbol || !form.qty ? 'not-allowed' : 'pointer',
-                      fontSize: 15,
-                      opacity: !form.symbol || !form.qty ? 0.5 : 1,
-                    }}
-                  >
-                    Review Order
-                  </button>
+                      padding: 14,
+                      marginTop: 4,
+                    }}>
+                      {crewLoading ? (
+                        <div style={{ textAlign: 'center', padding: '12px 0' }}>
+                          <div style={{ fontSize: 13, color: '#c9a84c', marginBottom: 4 }}>Consulting the crew...</div>
+                          <div style={{ fontSize: 11, color: '#6b6b80' }}>Analyst, Risk, and Executor are reviewing {form.symbol} {form.side}</div>
+                        </div>
+                      ) : crewResult?.error ? (
+                        <div style={{ textAlign: 'center', color: '#ef4444', fontSize: 13 }}>
+                          {crewResult.error}
+                        </div>
+                      ) : crewResult ? (
+                        <div>
+                          {/* Consensus Badge */}
+                          {(() => {
+                            const c = consensusColors[crewResult.consensus] || consensusColors.split;
+                            return (
+                              <div style={{
+                                display: 'inline-block',
+                                backgroundColor: c.bg,
+                                border: `1px solid ${c.border}`,
+                                borderRadius: 6,
+                                padding: '3px 10px',
+                                fontSize: 11,
+                                fontWeight: 700,
+                                color: c.text,
+                                letterSpacing: '0.05em',
+                                marginBottom: 10,
+                              }}>
+                                {c.label}
+                              </div>
+                            );
+                          })()}
+
+                          {/* Agent lines */}
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: 4, marginBottom: 8 }}>
+                            {crewResult.analyst && (
+                              <div style={{ fontSize: 12, color: '#9ca3af' }}>
+                                <span style={{ color: '#c9a84c', fontWeight: 600 }}>Analyst:</span>{' '}
+                                Conviction {crewResult.analyst.conviction ?? '?'}/10
+                              </div>
+                            )}
+                            {crewResult.risk && (
+                              <div style={{ fontSize: 12, color: '#9ca3af' }}>
+                                <span style={{ color: '#c9a84c', fontWeight: 600 }}>Risk:</span>{' '}
+                                {crewResult.risk.approved ? (
+                                  <span style={{ color: '#22c55e' }}>Approved</span>
+                                ) : (
+                                  <span style={{ color: '#ef4444' }}>Denied</span>
+                                )}
+                              </div>
+                            )}
+                            {crewResult.executor && (
+                              <div style={{ fontSize: 12, color: '#9ca3af' }}>
+                                <span style={{ color: '#c9a84c', fontWeight: 600 }}>Executor:</span>{' '}
+                                <span style={{
+                                  color: crewResult.executor.action === 'proceed' ? '#22c55e'
+                                    : crewResult.executor.action === 'modify' ? '#f59e0b'
+                                    : '#ef4444',
+                                }}>
+                                  {crewResult.executor.action ?? 'unknown'}
+                                </span>
+                              </div>
+                            )}
+                          </div>
+
+                          {/* Final verdict */}
+                          {crewResult.verdict && (
+                            <div style={{
+                              fontSize: 12,
+                              color: '#d1d5db',
+                              lineHeight: 1.4,
+                              display: '-webkit-box',
+                              WebkitLineClamp: 2,
+                              WebkitBoxOrient: 'vertical' as const,
+                              overflow: 'hidden',
+                              fontStyle: 'italic',
+                            }}>
+                              {crewResult.verdict}
+                            </div>
+                          )}
+
+                          {/* Unanimous Stop Warning */}
+                          {crewResult.consensus === 'unanimous_stop' && (
+                            <div style={{ marginTop: 10 }}>
+                              <div style={{
+                                backgroundColor: '#ef444415',
+                                border: '1px solid #ef444440',
+                                borderRadius: 6,
+                                padding: '8px 12px',
+                                display: 'flex',
+                                alignItems: 'center',
+                                gap: 8,
+                                marginBottom: 8,
+                              }}>
+                                <AlertTriangle size={14} color="#ef4444" />
+                                <span style={{ fontSize: 12, color: '#ef4444', fontWeight: 600 }}>
+                                  The Crew recommends AGAINST this trade
+                                </span>
+                              </div>
+                              <label style={{
+                                display: 'flex',
+                                alignItems: 'center',
+                                gap: 8,
+                                cursor: 'pointer',
+                                fontSize: 12,
+                                color: '#9ca3af',
+                              }}>
+                                <input
+                                  type="checkbox"
+                                  checked={crewOverride}
+                                  onChange={e => setCrewOverride(e.target.checked)}
+                                  style={{ accentColor: '#ef4444' }}
+                                />
+                                Override crew recommendation
+                              </label>
+                            </div>
+                          )}
+                        </div>
+                      ) : null}
+                    </div>
+                  )}
                 </div>
               )}
 

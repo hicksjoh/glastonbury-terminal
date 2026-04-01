@@ -138,7 +138,40 @@ export async function POST(req: NextRequest) {
 
     const marketContext = await buildMarketContext(portfolioSymbols);
 
-    const portfolioContext = `\nALPACA BROKERAGE (LIVE):\n${alpacaContext}\n\nMARKET INTELLIGENCE (LIVE):\n${marketContext}\n\nGLASTONBURY TERMINAL DATABASE:\n${supabaseContext}\n\nSTATIC HOLDINGS (not in brokerage):\n  - CR3 American Exteriors equity: ~$720,000 (23 territories)\n  - Anthropic RSUs: 5,749 shares @ $259.14 grant (quarterly vesting, 4 years)\n  - Miami Shores property: ~$580,000\n`;
+    // Fetch v3 intelligence signals in parallel
+    let gexContext = '';
+    let macroContext = '';
+    let driftContext = '';
+
+    try {
+      const baseUrl = process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : 'http://localhost:3000';
+
+      const [gexRes, macroRes, driftRes] = await Promise.all([
+        fetch(`${baseUrl}/api/gex?symbol=SPY`).catch(() => null),
+        fetch(`${baseUrl}/api/macro`).catch(() => null),
+        fetch(`${baseUrl}/api/drift`).catch(() => null),
+      ]);
+
+      if (gexRes?.ok) {
+        const gex = await gexRes.json();
+        gexContext = `\nGEX INTELLIGENCE:\n  - SPY GEX Regime: ${gex.regime}\n  - Net GEX: ${gex.netGEX}\n  - Put Wall: ${gex.levels?.putWall} | Call Wall: ${gex.levels?.callWall}\n  - Gamma Flip: ${gex.levels?.gammaFlip}\n  - Impact: ${gex.impact}\n`;
+      }
+
+      if (macroRes?.ok) {
+        const macro = await macroRes.json();
+        macroContext = `\nMACRO REGIME:\n  - Current Regime: ${macro.regime?.regime} (${(macro.regime?.confidence * 100).toFixed(0)}% confidence)\n  - Fed Prediction: ${macro.fedPrediction?.prediction} (confidence: ${(macro.fedPrediction?.confidence * 100).toFixed(0)}%)\n  - Allocation: Equities ${macro.allocation?.equities}%, Bonds ${macro.allocation?.bonds}%, Cash ${macro.allocation?.cash}%\n  - Interpretation: ${macro.interpretation}\n`;
+      }
+
+      if (driftRes?.ok) {
+        const drift = await driftRes.json();
+        const topDrifts = (drift.scans || []).slice(0, 5);
+        driftContext = `\nDRIFT REGIMES:\n${topDrifts.map((d: any) => `  - ${d.symbol}: ${d.regime} (Hurst: ${d.hurstExponent?.toFixed(3)}, Confidence: ${(d.confidence * 100).toFixed(0)}%)`).join('\n')}\n`;
+      }
+    } catch {
+      // V3 intelligence not available — continue without it
+    }
+
+    const portfolioContext = `\nALPACA BROKERAGE (LIVE):\n${alpacaContext}\n\nMARKET INTELLIGENCE (LIVE):\n${marketContext}${gexContext}${macroContext}${driftContext}\n\nGLASTONBURY TERMINAL DATABASE:\n${supabaseContext}\n\nSTATIC HOLDINGS (not in brokerage):\n  - CR3 American Exteriors equity: ~$720,000 (23 territories)\n  - Anthropic RSUs: 5,749 shares @ $259.14 grant (quarterly vesting, 4 years)\n  - Miami Shores property: ~$580,000\n`;
 
     const content = await generateAnalysis(
       messages[messages.length - 1]?.content || '',
