@@ -129,7 +129,7 @@ export default function KeishaPage() {
     const symbolMatch = text.match(/\b([A-Z]{1,5})\b/g);
     if (!symbolMatch) return '';
 
-    const symbols = [...new Set(symbolMatch)].filter(s =>
+    const symbols = Array.from(new Set(symbolMatch)).filter(s =>
       s.length >= 2 && !['AM', 'PM', 'FOR', 'THE', 'AND', 'NOT', 'BUT', 'ALL', 'ANY', 'RUN', 'CFO', 'CEO', 'AI', 'IV', 'PE', 'RSU', 'QBI'].includes(s)
     ).slice(0, 3);
 

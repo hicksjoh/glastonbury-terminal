@@ -42,21 +42,24 @@ export async function GET(req: NextRequest) {
 
     // Parse insider trades
     const insiderRaw = results[0]?.ok ? await results[0].json() : [];
-    const insiderTrades = (Array.isArray(insiderRaw) ? insiderRaw : [])
+    const insiderTrades: {
+      symbol: string; name: string; title: string; transactionType: string;
+      shares: number; pricePerShare: number; totalValue: number; date: string; filingUrl: string;
+    }[] = (Array.isArray(insiderRaw) ? insiderRaw : [])
       .filter((t: { transactionDate?: string; filingDate?: string }) => {
         const d = new Date(t.transactionDate || t.filingDate || '');
         return d >= cutoff;
       })
       .map((t: Record<string, unknown>) => ({
-        symbol: t.symbol || symbol,
-        name: t.reportingName || t.owner || 'Unknown',
-        title: t.typeOfOwner || '',
-        transactionType: String(t.acquistionOrDisposition || t.transactionType || '').toLowerCase().includes('a') ? 'buy' : 'sell',
+        symbol: String(t.symbol || symbol),
+        name: String(t.reportingName || t.owner || 'Unknown'),
+        title: String(t.typeOfOwner || ''),
+        transactionType: String(t.acquistionOrDisposition || t.transactionType || '').toLowerCase().includes('a') ? 'buy' as const : 'sell' as const,
         shares: Number(t.securitiesTransacted || t.shares || 0),
         pricePerShare: Number(t.price || 0),
         totalValue: Number(t.securitiesTransacted || 0) * Number(t.price || 0),
-        date: t.transactionDate || t.filingDate || '',
-        filingUrl: t.link || '',
+        date: String(t.transactionDate || t.filingDate || ''),
+        filingUrl: String(t.link || ''),
       }))
       .slice(0, 50);
 
