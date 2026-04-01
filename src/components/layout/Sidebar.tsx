@@ -5,7 +5,7 @@ import { usePathname } from 'next/navigation';
 import {
   LayoutDashboard, TrendingUp, BarChart3, MessageSquare, Zap, Newspaper,
   Star, Grid3X3, CalendarDays, ScanSearch, Filter, Shield, ShieldCheck, Bell, Settings,
-  Wallet, MapPin, DollarSign, Receipt, BookOpen, FlaskConical,
+  Wallet, MapPin, DollarSign, Receipt, BookOpen, FlaskConical, Radar, Activity, Users,
 } from 'lucide-react';
 
 const NAV_SECTIONS = [
@@ -41,6 +41,16 @@ const NAV_SECTIONS = [
       { href: '/territories', label: 'Territories', icon: MapPin },
       { href: '/cashflow', label: 'Cash Flow', icon: DollarSign },
       { href: '/tax', label: 'Tax Center', icon: Receipt },
+    ],
+  },
+  {
+    label: 'ALPHA ENGINE',
+    items: [
+      { href: '/scanner', label: 'Signal Scanner', icon: Radar },
+      { href: '/flow', label: 'Options Flow', icon: Activity },
+      { href: '/insider', label: 'Insider Tracker', icon: Users },
+      { href: '/earnings', label: 'Earnings Intel', icon: CalendarDays },
+      { href: '/simulator', label: 'P&L Simulator', icon: FlaskConical },
     ],
   },
   {
