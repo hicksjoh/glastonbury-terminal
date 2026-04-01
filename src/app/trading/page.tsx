@@ -4,6 +4,7 @@ import { useSearchParams } from 'next/navigation';
 import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer } from 'recharts';
 import { AppShell } from '@/components/layout/AppShell';
 import { AlertTriangle, TrendingUp, TrendingDown, Search, X } from 'lucide-react';
+import TradeGuard from '@/components/TradeGuard';
 import PortfolioChart from '@/components/PortfolioChart';
 import OptionsChain from '@/components/options/OptionsChain';
 import OptionsOrderForm from '@/components/options/OptionsOrderForm';
@@ -80,7 +81,7 @@ function TradingPage() {
   const [positions, setPositions] = useState<MockPosition[]>(MOCK_POSITIONS);
   const [account, setAccount] = useState<AccountData>({ equity: '82000', cash: '18000', buying_power: '36000' });
   const [form, setForm] = useState<OrderForm>({ symbol: '', side: 'buy', qty: '', type: 'market', limitPrice: '' });
-  const [step, setStep] = useState<'form' | 'confirm' | 'submitted'>('form');
+  const [step, setStep] = useState<'form' | 'guard' | 'confirm' | 'submitted'>('form');
   const [apiConnected, setApiConnected] = useState(false);
 
   // Ticker search state
@@ -397,7 +398,7 @@ function TradingPage() {
             {/* Stock Order Form */}
             <div className="terminal-card">
               <div style={{ fontSize: 14, fontWeight: 700, marginBottom: 20 }}>
-                {step === 'submitted' ? 'Order Submitted' : step === 'confirm' ? 'Confirm Order' : 'Place Order'}
+                {step === 'submitted' ? 'Order Submitted' : step === 'confirm' ? 'Confirm Order' : step === 'guard' ? 'Keisha Guard Check' : 'Place Order'}
               </div>
 
               {step === 'form' && (
@@ -647,7 +648,7 @@ function TradingPage() {
                     />
                   )}
                   <button
-                    onClick={() => setStep('confirm')}
+                    onClick={() => setStep('guard')}
                     disabled={!form.symbol || !form.qty}
                     style={{
                       padding: '12px 0',
@@ -664,6 +665,21 @@ function TradingPage() {
                     Review Order
                   </button>
                 </div>
+              )}
+
+              {step === 'guard' && form.symbol && (
+                <TradeGuard
+                  symbol={form.symbol}
+                  side={form.side as 'buy' | 'sell'}
+                  quantity={parseInt(form.qty) || 0}
+                  price={selectedPrice || 0}
+                  onProceed={() => setStep('confirm')}
+                  onCancel={() => setStep('form')}
+                  onAdjustSize={(newQty) => {
+                    setForm(p => ({ ...p, qty: String(newQty) }));
+                    setStep('form');
+                  }}
+                />
               )}
 
               {step === 'confirm' && (

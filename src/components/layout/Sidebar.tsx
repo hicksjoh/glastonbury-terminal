@@ -4,7 +4,7 @@ import Image from 'next/image';
 import { usePathname } from 'next/navigation';
 import {
   LayoutDashboard, TrendingUp, BarChart3, MessageSquare, Zap, Newspaper,
-  Star, Grid3X3, CalendarDays, ScanSearch, Filter, Shield, Bell, Settings,
+  Star, Grid3X3, CalendarDays, ScanSearch, Filter, Shield, ShieldCheck, Bell, Settings,
   Wallet, MapPin, DollarSign, Receipt, BookOpen, FlaskConical,
 } from 'lucide-react';
 
@@ -50,6 +50,7 @@ const NAV_SECTIONS = [
       { href: '/monte-carlo', label: 'Monte Carlo', icon: BarChart3 },
       { href: '/alerts', label: 'Alerts', icon: Bell },
       { href: '/keisha', label: 'Keisha AI', icon: MessageSquare },
+      { href: '/guard-test', label: 'Guard Test', icon: ShieldCheck },
     ],
   },
 ];
