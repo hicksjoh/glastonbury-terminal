@@ -8,16 +8,22 @@ interface EarningsEntry {
   symbol: string;
   company: string;
   date: string;
-  time: string;
-  epsEstimate: number | null;
-  revenueEstimate: number | null;
+  time: 'bmo' | 'amc';
+  epsEstimate: number;
+  revenueEstimate: number;
   surpriseHistory: { beatRate: number; avgSurprise: number; avgMoveOnEarnings: number };
-  ivAnalysis: { currentIV: number | null; avgPostEarningsIV: number | null; crushEstimate: number | null; straddle_price: number | null };
+  ivAnalysis: { currentIV: number; avgPostEarningsIV: number; crushEstimate: number; straddle_price: number };
   playRecommendation: string;
 }
 
+interface EarningsData {
+  upcoming: EarningsEntry[];
+  thisWeek: number;
+  highImpact: EarningsEntry[];
+}
+
 export default function EarningsPage() {
-  const [data, setData] = useState<{ upcoming: EarningsEntry[]; thisWeek: number; highImpact: EarningsEntry[] } | null>(null);
+  const [data, setData] = useState<EarningsData | null>(null);
   const [loading, setLoading] = useState(true);
   const [range, setRange] = useState('this_week');
   const [selected, setSelected] = useState<EarningsEntry | null>(null);
@@ -26,10 +32,12 @@ export default function EarningsPage() {
     setLoading(true);
     fetch(`/api/earnings?range=${range}`)
       .then(r => r.json())
-      .then(d => setData(d))
+      .then(d => { if (!d.error) setData(d); })
       .catch(() => {})
       .finally(() => setLoading(false));
   }, [range]);
+
+  const getBeatColor = (rate: number) => rate >= 75 ? '#4ade80' : rate >= 50 ? '#f0c674' : '#f87171';
 
   return (
     <AppShell>
@@ -38,177 +46,232 @@ export default function EarningsPage() {
           <CalendarDays size={24} color="#c9a84c" />
           <h1 style={{ fontSize: 28, fontWeight: 700, color: '#fff', margin: 0 }}>Earnings Intelligence</h1>
         </div>
-        <p style={{ color: '#888', fontSize: 14, margin: '0 0 24px' }}>Upcoming earnings &bull; surprise history &bull; IV analysis &bull; play recommendations</p>
+        <p style={{ color: '#888', fontSize: 14, margin: '0 0 24px' }}>Upcoming earnings, IV analysis, surprise history &amp; play recommendations</p>
 
         {/* Range Filters */}
         <div style={{ display: 'flex', gap: 6, marginBottom: 24 }}>
           {[
             { key: 'this_week', label: 'This Week' },
             { key: 'next_week', label: 'Next Week' },
-            { key: 'two_weeks', label: '2 Weeks' },
+            { key: 'month', label: 'Next 30 Days' },
           ].map(r => (
             <button key={r.key} onClick={() => setRange(r.key)} style={{
-              padding: '7px 16px', borderRadius: 8, fontSize: 12, cursor: 'pointer',
-              border: `1px solid ${range === r.key ? '#c9a84c' : '#1e1e35'}`,
-              background: range === r.key ? 'rgba(201,168,76,0.1)' : 'rgba(255,255,255,0.03)',
-              color: range === r.key ? '#c9a84c' : '#888',
+              padding: '7px 16px', borderRadius: 8, cursor: 'pointer', fontSize: 12, fontWeight: range === r.key ? 600 : 400,
+              background: range === r.key ? 'rgba(138,92,246,0.15)' : 'rgba(255,255,255,0.03)',
+              border: `1px solid ${range === r.key ? '#8a5cf6' : '#1e1e35'}`,
+              color: range === r.key ? '#8a5cf6' : '#8888a8',
             }}>{r.label}</button>
           ))}
         </div>
 
         {loading ? (
-          <div style={{ textAlign: 'center', padding: 80, color: '#555' }}>Loading earnings calendar...</div>
-        ) : !data?.upcoming?.length ? (
-          <div style={{ background: 'rgba(255,255,255,0.02)', border: '1px solid #1e1e35', borderRadius: 12, padding: 48, textAlign: 'center', color: '#555', fontSize: 13 }}>
-            No earnings scheduled for this period
-          </div>
+          <div style={{ textAlign: 'center', padding: 80, color: '#555570' }}>Loading earnings calendar...</div>
+        ) : !data ? (
+          <div style={{ textAlign: 'center', padding: 80, color: '#555570' }}>Unable to load earnings data</div>
         ) : (
-          <div style={{ display: 'grid', gridTemplateColumns: selected ? '1fr 400px' : '1fr', gap: 20 }}>
-            {/* Calendar/List */}
+          <div style={{ display: 'grid', gridTemplateColumns: selected ? '1fr 1fr' : '1fr', gap: 20 }}>
+            {/* Left: Calendar / List */}
             <div>
-              {/* High Impact Banner */}
+              {/* Stats Row */}
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 12, marginBottom: 20 }}>
+                <div style={{ background: 'rgba(138,92,246,0.08)', border: '1px solid rgba(138,92,246,0.2)', borderRadius: 12, padding: 16 }}>
+                  <div style={{ color: '#8888a8', fontSize: 10, textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 6 }}>This Week</div>
+                  <div style={{ color: '#8a5cf6', fontSize: 28, fontWeight: 700, fontFamily: "'JetBrains Mono', monospace" }}>{data.thisWeek}</div>
+                </div>
+                <div style={{ background: 'rgba(74,222,128,0.08)', border: '1px solid rgba(74,222,128,0.2)', borderRadius: 12, padding: 16 }}>
+                  <div style={{ color: '#8888a8', fontSize: 10, textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 6 }}>Total Upcoming</div>
+                  <div style={{ color: '#4ade80', fontSize: 28, fontWeight: 700, fontFamily: "'JetBrains Mono', monospace" }}>{data.upcoming.length}</div>
+                </div>
+                <div style={{ background: 'rgba(248,113,113,0.08)', border: '1px solid rgba(248,113,113,0.2)', borderRadius: 12, padding: 16 }}>
+                  <div style={{ color: '#8888a8', fontSize: 10, textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 6 }}>High Impact</div>
+                  <div style={{ color: '#f87171', fontSize: 28, fontWeight: 700, fontFamily: "'JetBrains Mono', monospace" }}>{data.highImpact.length}</div>
+                </div>
+              </div>
+
+              {/* High Impact Section */}
               {data.highImpact.length > 0 && (
-                <div style={{
-                  background: 'rgba(248,113,113,0.06)', border: '1px solid rgba(248,113,113,0.15)',
-                  borderRadius: 10, padding: '12px 16px', marginBottom: 16,
-                  display: 'flex', alignItems: 'center', gap: 10,
-                }}>
-                  <Zap size={16} color="#f87171" />
-                  <span style={{ color: '#f87171', fontSize: 12, fontWeight: 600 }}>
-                    {data.highImpact.length} High Impact Earnings (avg move &gt;8%)
-                  </span>
-                  <span style={{ color: '#888', fontSize: 11 }}>
-                    {data.highImpact.map(h => h.symbol).join(', ')}
-                  </span>
+                <div style={{ marginBottom: 20 }}>
+                  <h3 style={{ color: '#f87171', fontSize: 13, fontWeight: 600, marginBottom: 10, display: 'flex', alignItems: 'center', gap: 6 }}>
+                    <Zap size={14} /> High Impact (avg move &gt;8%)
+                  </h3>
+                  <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                    {data.highImpact.map(e => (
+                      <button key={e.symbol} onClick={() => setSelected(e)} style={{
+                        padding: '6px 12px', borderRadius: 8, cursor: 'pointer', fontSize: 12,
+                        background: 'rgba(248,113,113,0.1)', border: '1px solid rgba(248,113,113,0.3)',
+                        color: '#f87171', fontWeight: 600, fontFamily: "'JetBrains Mono', monospace",
+                      }}>
+                        {e.symbol} &plusmn;{e.surpriseHistory.avgMoveOnEarnings.toFixed(1)}%
+                      </button>
+                    ))}
+                  </div>
                 </div>
               )}
 
-              {/* Earnings Grid */}
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: 12 }}>
-                {data.upcoming.map((e, i) => (
-                  <div
-                    key={i}
-                    onClick={() => setSelected(selected?.symbol === e.symbol ? null : e)}
-                    style={{
-                      background: selected?.symbol === e.symbol ? 'rgba(201,168,76,0.06)' : 'rgba(255,255,255,0.02)',
-                      border: `1px solid ${selected?.symbol === e.symbol ? 'rgba(201,168,76,0.3)' : '#1e1e35'}`,
-                      borderRadius: 10, padding: 16, cursor: 'pointer',
-                      transition: 'all 0.15s',
-                    }}
-                  >
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
-                      <div>
-                        <span style={{ fontWeight: 700, color: '#e8e8f0', fontSize: 15, fontFamily: "'JetBrains Mono', monospace" }}>{e.symbol}</span>
-                        <span style={{ color: '#666', fontSize: 11, marginLeft: 8 }}>{e.company}</span>
-                      </div>
-                      <span style={{
-                        padding: '2px 8px', borderRadius: 4, fontSize: 10, fontWeight: 600,
-                        background: e.time === 'bmo' ? 'rgba(240,198,116,0.15)' : 'rgba(138,92,246,0.15)',
-                        color: e.time === 'bmo' ? '#f0c674' : '#8a5cf6',
-                      }}>{e.time === 'bmo' ? 'Pre-Market' : 'After Hours'}</span>
-                    </div>
-
-                    <div style={{ fontSize: 11, color: '#888', marginBottom: 8 }}>{e.date}</div>
-
-                    <div style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
-                      {e.epsEstimate != null && (
-                        <div style={{ flex: 1 }}>
-                          <div style={{ fontSize: 10, color: '#555', marginBottom: 2 }}>EPS Est.</div>
-                          <div style={{ fontSize: 14, fontWeight: 600, color: '#ccc', fontFamily: "'JetBrains Mono', monospace" }}>
-                            ${e.epsEstimate.toFixed(2)}
-                          </div>
-                        </div>
-                      )}
-                      <div style={{ flex: 1 }}>
-                        <div style={{ fontSize: 10, color: '#555', marginBottom: 2 }}>Beat Rate</div>
-                        <div style={{
-                          fontSize: 14, fontWeight: 600, fontFamily: "'JetBrains Mono', monospace",
-                          color: e.surpriseHistory.beatRate >= 70 ? '#4ade80' : e.surpriseHistory.beatRate >= 50 ? '#f0c674' : '#f87171',
-                        }}>{e.surpriseHistory.beatRate}%</div>
-                      </div>
-                      <div style={{ flex: 1 }}>
-                        <div style={{ fontSize: 10, color: '#555', marginBottom: 2 }}>Avg Move</div>
-                        <div style={{ fontSize: 14, fontWeight: 600, color: '#22d3ee', fontFamily: "'JetBrains Mono', monospace" }}>
+              {/* Earnings Table */}
+              <div style={{ background: 'rgba(255,255,255,0.02)', borderRadius: 12, border: '1px solid #1e1e35', overflow: 'hidden' }}>
+                <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                  <thead>
+                    <tr style={{ borderBottom: '1px solid #1e1e35' }}>
+                      {['Date', 'Symbol', 'Time', 'EPS Est', 'Beat Rate', 'Avg Move', 'IV Crush', ''].map(h => (
+                        <th key={h} style={{
+                          textAlign: 'left', padding: '10px 12px', fontSize: 10, color: '#555570',
+                          textTransform: 'uppercase', letterSpacing: '0.06em', fontFamily: "'JetBrains Mono', monospace",
+                        }}>{h}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {data.upcoming.map(e => (
+                      <tr key={`${e.symbol}-${e.date}`}
+                        onClick={() => setSelected(e)}
+                        style={{ borderBottom: '1px solid rgba(30,30,53,0.5)', cursor: 'pointer' }}
+                        onMouseEnter={ev => (ev.currentTarget.style.background = '#1a1a2e')}
+                        onMouseLeave={ev => (ev.currentTarget.style.background = 'transparent')}
+                      >
+                        <td style={{ padding: '10px 12px', color: '#8888a8', fontSize: 12 }}>{e.date}</td>
+                        <td style={{ padding: '10px 12px', color: '#e8e8f0', fontWeight: 700, fontSize: 13, fontFamily: "'JetBrains Mono', monospace" }}>{e.symbol}</td>
+                        <td style={{ padding: '10px 12px' }}>
+                          <span style={{
+                            fontSize: 10, fontWeight: 600, padding: '2px 6px', borderRadius: 4,
+                            background: e.time === 'bmo' ? 'rgba(34,211,238,0.1)' : 'rgba(138,92,246,0.1)',
+                            color: e.time === 'bmo' ? '#22d3ee' : '#8a5cf6',
+                          }}>{e.time === 'bmo' ? 'Pre-Mkt' : 'After Close'}</span>
+                        </td>
+                        <td style={{ padding: '10px 12px', fontFamily: "'JetBrains Mono', monospace", fontSize: 12, color: '#e8e8f0' }}>
+                          ${e.epsEstimate?.toFixed(2) ?? 'N/A'}
+                        </td>
+                        <td style={{ padding: '10px 12px' }}>
+                          <span style={{ fontSize: 11, fontWeight: 600, fontFamily: "'JetBrains Mono', monospace", color: getBeatColor(e.surpriseHistory.beatRate) }}>
+                            {e.surpriseHistory.beatRate.toFixed(0)}%
+                          </span>
+                        </td>
+                        <td style={{ padding: '10px 12px', fontFamily: "'JetBrains Mono', monospace", fontSize: 12, color: '#f0c674' }}>
                           &plusmn;{e.surpriseHistory.avgMoveOnEarnings.toFixed(1)}%
-                        </div>
-                      </div>
-                    </div>
-
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 4, color: '#888', fontSize: 11 }}>
-                      <ChevronRight size={12} /> View details
-                    </div>
-                  </div>
-                ))}
+                        </td>
+                        <td style={{ padding: '10px 12px', fontFamily: "'JetBrains Mono', monospace", fontSize: 12, color: '#22d3ee' }}>
+                          {e.ivAnalysis.crushEstimate.toFixed(0)}%
+                        </td>
+                        <td style={{ padding: '10px 12px' }}><ChevronRight size={14} color="#555570" /></td>
+                      </tr>
+                    ))}
+                    {data.upcoming.length === 0 && (
+                      <tr><td colSpan={8} style={{ padding: 40, textAlign: 'center', color: '#555570', fontSize: 13 }}>No upcoming earnings for this period</td></tr>
+                    )}
+                  </tbody>
+                </table>
               </div>
             </div>
 
-            {/* Detail Panel */}
+            {/* Right: Detail Panel */}
             {selected && (
-              <div style={{
-                background: 'rgba(255,255,255,0.02)', border: '1px solid #1e1e35',
-                borderRadius: 12, padding: 20, position: 'sticky', top: 80, alignSelf: 'start',
-              }}>
-                <h3 style={{ fontSize: 18, fontWeight: 700, color: '#e8e8f0', margin: '0 0 4px', fontFamily: "'JetBrains Mono', monospace" }}>{selected.symbol}</h3>
-                <p style={{ color: '#888', fontSize: 12, margin: '0 0 16px' }}>{selected.company} &mdash; {selected.date}</p>
+              <div style={{ background: 'rgba(255,255,255,0.02)', borderRadius: 12, border: '1px solid #1e1e35', padding: 20 }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
+                  <div>
+                    <h2 style={{ fontSize: 22, fontWeight: 700, color: '#fff', margin: 0, fontFamily: "'JetBrains Mono', monospace" }}>{selected.symbol}</h2>
+                    <p style={{ color: '#8888a8', fontSize: 13, margin: '4px 0 0' }}>{selected.company}</p>
+                  </div>
+                  <button onClick={() => setSelected(null)} style={{
+                    padding: '4px 10px', borderRadius: 6, background: 'rgba(255,255,255,0.05)',
+                    border: '1px solid #1e1e35', color: '#8888a8', fontSize: 11, cursor: 'pointer',
+                  }}>Close</button>
+                </div>
 
-                {/* Surprise History */}
-                <div style={{ marginBottom: 16 }}>
-                  <h4 style={{ fontSize: 11, color: '#555', textTransform: 'uppercase', margin: '0 0 8px', fontFamily: "'JetBrains Mono', monospace" }}>Surprise History</h4>
-                  <div style={{ display: 'flex', gap: 8 }}>
-                    {Array.from({ length: 8 }).map((_, i) => {
-                      const isBeat = i < Math.round(selected.surpriseHistory.beatRate / 12.5);
-                      return (
-                        <div key={i} style={{
-                          flex: 1, height: 32, borderRadius: 4,
-                          background: isBeat ? 'rgba(74,222,128,0.2)' : 'rgba(248,113,113,0.2)',
-                          border: `1px solid ${isBeat ? 'rgba(74,222,128,0.3)' : 'rgba(248,113,113,0.3)'}`,
-                          display: 'flex', alignItems: 'center', justifyContent: 'center',
-                        }}>
-                          <span style={{ fontSize: 9, color: isBeat ? '#4ade80' : '#f87171', fontWeight: 700 }}>
-                            {isBeat ? 'BEAT' : 'MISS'}
-                          </span>
-                        </div>
-                      );
-                    })}
+                {/* Earnings Date + Avg Move */}
+                <div style={{ display: 'flex', gap: 12, marginBottom: 20 }}>
+                  <div style={{ flex: 1, background: 'rgba(138,92,246,0.08)', borderRadius: 10, padding: 14 }}>
+                    <div style={{ color: '#8888a8', fontSize: 10, textTransform: 'uppercase', marginBottom: 4 }}>Earnings Date</div>
+                    <div style={{ color: '#8a5cf6', fontSize: 16, fontWeight: 700 }}>{selected.date}</div>
+                    <div style={{ color: '#8888a8', fontSize: 11, marginTop: 2 }}>{selected.time === 'bmo' ? 'Before Market Open' : 'After Market Close'}</div>
+                  </div>
+                  <div style={{ flex: 1, background: 'rgba(240,198,116,0.08)', borderRadius: 10, padding: 14 }}>
+                    <div style={{ color: '#8888a8', fontSize: 10, textTransform: 'uppercase', marginBottom: 4 }}>Avg Earnings Move</div>
+                    <div style={{ color: '#f0c674', fontSize: 16, fontWeight: 700, fontFamily: "'JetBrains Mono', monospace" }}>
+                      &plusmn;{selected.surpriseHistory.avgMoveOnEarnings.toFixed(1)}%
+                    </div>
                   </div>
                 </div>
 
-                {/* Stats */}
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginBottom: 16 }}>
-                  <StatCard label="Beat Rate" value={`${selected.surpriseHistory.beatRate}%`} color={selected.surpriseHistory.beatRate >= 70 ? '#4ade80' : '#f0c674'} />
-                  <StatCard label="Avg Surprise" value={`${selected.surpriseHistory.avgSurprise > 0 ? '+' : ''}${selected.surpriseHistory.avgSurprise.toFixed(1)}%`} color="#22d3ee" />
-                  <StatCard label="Avg Move" value={`\u00B1${selected.surpriseHistory.avgMoveOnEarnings.toFixed(1)}%`} color="#8a5cf6" />
-                  <StatCard label="EPS Est." value={selected.epsEstimate ? `$${selected.epsEstimate.toFixed(2)}` : 'N/A'} color="#f0c674" />
+                {/* Surprise History */}
+                <div style={{ marginBottom: 20 }}>
+                  <h3 style={{ color: '#e8e8f0', fontSize: 14, fontWeight: 600, marginBottom: 12 }}>Surprise History (Last 8 Quarters)</h3>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 10 }}>
+                    <div style={{ background: 'rgba(74,222,128,0.08)', borderRadius: 8, padding: 12, textAlign: 'center' }}>
+                      <div style={{ color: '#8888a8', fontSize: 10, textTransform: 'uppercase', marginBottom: 4 }}>Beat Rate</div>
+                      <div style={{ color: getBeatColor(selected.surpriseHistory.beatRate), fontSize: 22, fontWeight: 700, fontFamily: "'JetBrains Mono', monospace" }}>
+                        {selected.surpriseHistory.beatRate.toFixed(0)}%
+                      </div>
+                    </div>
+                    <div style={{ background: 'rgba(34,211,238,0.08)', borderRadius: 8, padding: 12, textAlign: 'center' }}>
+                      <div style={{ color: '#8888a8', fontSize: 10, textTransform: 'uppercase', marginBottom: 4 }}>Avg Surprise</div>
+                      <div style={{ color: '#22d3ee', fontSize: 22, fontWeight: 700, fontFamily: "'JetBrains Mono', monospace" }}>
+                        {selected.surpriseHistory.avgSurprise >= 0 ? '+' : ''}{selected.surpriseHistory.avgSurprise.toFixed(1)}%
+                      </div>
+                    </div>
+                    <div style={{ background: 'rgba(138,92,246,0.08)', borderRadius: 8, padding: 12, textAlign: 'center' }}>
+                      <div style={{ color: '#8888a8', fontSize: 10, textTransform: 'uppercase', marginBottom: 4 }}>EPS Estimate</div>
+                      <div style={{ color: '#8a5cf6', fontSize: 22, fontWeight: 700, fontFamily: "'JetBrains Mono', monospace" }}>
+                        ${selected.epsEstimate?.toFixed(2) ?? 'N/A'}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* IV Analysis */}
+                <div style={{ marginBottom: 20 }}>
+                  <h3 style={{ color: '#e8e8f0', fontSize: 14, fontWeight: 600, marginBottom: 12 }}>IV Analysis</h3>
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+                    <div style={{ background: 'rgba(255,255,255,0.03)', borderRadius: 8, padding: 12 }}>
+                      <div style={{ color: '#8888a8', fontSize: 10, textTransform: 'uppercase', marginBottom: 4 }}>Current IV</div>
+                      <div style={{ color: '#e8e8f0', fontSize: 18, fontWeight: 700, fontFamily: "'JetBrains Mono', monospace" }}>
+                        {(selected.ivAnalysis.currentIV * 100).toFixed(1)}%
+                      </div>
+                    </div>
+                    <div style={{ background: 'rgba(255,255,255,0.03)', borderRadius: 8, padding: 12 }}>
+                      <div style={{ color: '#8888a8', fontSize: 10, textTransform: 'uppercase', marginBottom: 4 }}>Post-Earnings IV</div>
+                      <div style={{ color: '#e8e8f0', fontSize: 18, fontWeight: 700, fontFamily: "'JetBrains Mono', monospace" }}>
+                        {(selected.ivAnalysis.avgPostEarningsIV * 100).toFixed(1)}%
+                      </div>
+                    </div>
+                    <div style={{ background: 'rgba(248,113,113,0.08)', borderRadius: 8, padding: 12 }}>
+                      <div style={{ color: '#8888a8', fontSize: 10, textTransform: 'uppercase', marginBottom: 4 }}>IV Crush Est.</div>
+                      <div style={{ color: '#f87171', fontSize: 18, fontWeight: 700, fontFamily: "'JetBrains Mono', monospace" }}>
+                        {selected.ivAnalysis.crushEstimate.toFixed(0)}%
+                      </div>
+                    </div>
+                    <div style={{ background: 'rgba(240,198,116,0.08)', borderRadius: 8, padding: 12 }}>
+                      <div style={{ color: '#8888a8', fontSize: 10, textTransform: 'uppercase', marginBottom: 4 }}>ATM Straddle</div>
+                      <div style={{ color: '#f0c674', fontSize: 18, fontWeight: 700, fontFamily: "'JetBrains Mono', monospace" }}>
+                        ${selected.ivAnalysis.straddle_price.toFixed(2)}
+                      </div>
+                    </div>
+                  </div>
                 </div>
 
                 {/* Play Recommendation */}
                 <div style={{
-                  background: 'rgba(138,92,246,0.06)', border: '1px solid rgba(138,92,246,0.2)',
-                  borderRadius: 10, padding: '12px 16px',
+                  background: 'rgba(74,222,128,0.06)', border: '1px solid rgba(74,222,128,0.2)',
+                  borderRadius: 10, padding: 16,
                 }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 6 }}>
-                    <TrendingUp size={14} color="#8a5cf6" />
-                    <span style={{ fontSize: 11, fontWeight: 600, color: '#8a5cf6', textTransform: 'uppercase' }}>Play Recommendation</span>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+                    <TrendingUp size={16} color="#4ade80" />
+                    <span style={{ color: '#4ade80', fontSize: 12, fontWeight: 600, textTransform: 'uppercase' }}>AI Play Recommendation</span>
                   </div>
-                  <p style={{ fontSize: 12, color: '#ccc', margin: 0, lineHeight: 1.5 }}>{selected.playRecommendation}</p>
+                  <div style={{ color: '#e8e8f0', fontSize: 14, lineHeight: 1.6 }}>{selected.playRecommendation}</div>
                 </div>
+
+                <button onClick={() => { window.location.href = `/trading?symbol=${selected.symbol}&tab=options`; }} style={{
+                  width: '100%', padding: '12px', marginTop: 16, borderRadius: 10,
+                  background: '#8a5cf6', border: 'none', color: '#fff', fontSize: 14,
+                  fontWeight: 600, cursor: 'pointer',
+                }}>
+                  Trade {selected.symbol} Options
+                </button>
               </div>
             )}
           </div>
         )}
       </div>
     </AppShell>
-  );
-}
-
-function StatCard({ label, value, color }: { label: string; value: string; color: string }) {
-  return (
-    <div style={{
-      background: `${color}08`, border: `1px solid ${color}15`,
-      borderRadius: 8, padding: '10px 12px',
-    }}>
-      <div style={{ fontSize: 10, color: '#555', marginBottom: 3 }}>{label}</div>
-      <div style={{ fontSize: 16, fontWeight: 700, color, fontFamily: "'JetBrains Mono', monospace" }}>{value}</div>
-    </div>
   );
 }

@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { AppShell } from '@/components/layout/AppShell';
-import { Plus, Filter, ChevronDown, ChevronUp, TrendingUp, TrendingDown, Target, Award } from 'lucide-react';
+import { Plus, Filter, ChevronDown, ChevronUp, TrendingUp, TrendingDown, Target, Award, BarChart3 } from 'lucide-react';
 
 interface Trade {
   id: string;
@@ -34,6 +34,20 @@ interface JournalStats {
   keisha_override_count: number;
 }
 
+interface JournalAnalytics {
+  overview: { totalTrades: number; winRate: number; expectancy: number; sharpeRatio: number; profitFactor: number };
+  byStrategy: { strategy: string; trades: number; winRate: number; avgReturn: number; totalPnl: number }[];
+  byTimeOfDay: { hour: number; trades: number; winRate: number }[];
+  byDayOfWeek: { day: string; trades: number; winRate: number }[];
+  holdTime: { avgWinner: number; avgLoser: number };
+  streaks: { maxWin: number; maxLoss: number; current: number };
+  monthlyPnl: { month: string; pnl: number; trades: number }[];
+  keishaAccuracy: { agreed: number; disagreed: number; agreedAndRight: number; disagreedAndRight: number };
+  bestTrade: Record<string, unknown> | null;
+  worstTrade: Record<string, unknown> | null;
+  recentPerformance: { last10Trades: Record<string, unknown>[]; last30DaysPnl: number };
+}
+
 function formatCurrency(n: number) {
   return n >= 0 ? `+$${n.toFixed(2)}` : `-$${Math.abs(n).toFixed(2)}`;
 }
@@ -60,6 +74,21 @@ export default function JournalPage() {
       .finally(() => setLoading(false));
   }, [filterStrategy]);
 
+  const [tab, setTab] = useState<'journal' | 'analytics'>('journal');
+  const [analytics, setAnalytics] = useState<JournalAnalytics | null>(null);
+  const [analyticsLoading, setAnalyticsLoading] = useState(false);
+
+  useEffect(() => {
+    if (tab === 'analytics' && !analytics) {
+      setAnalyticsLoading(true);
+      fetch('/api/journal-analytics')
+        .then(r => r.json())
+        .then(d => { if (!d.error) setAnalytics(d); })
+        .catch(() => {})
+        .finally(() => setAnalyticsLoading(false));
+    }
+  }, [tab, analytics]);
+
   const strategies = ['all', 'wheel', 'dip_buy', 'earnings', 'momentum', 'custom'];
 
   return (
@@ -69,6 +98,21 @@ export default function JournalPage() {
           <div>
             <h1 style={{ fontSize: 28, fontWeight: 700, color: '#fff', margin: '0 0 4px' }}>Trade Journal</h1>
             <p style={{ color: '#8888a8', fontSize: 14, margin: 0 }}>Track, analyze, and improve your trading</p>
+          </div>
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+            {(['journal', 'analytics'] as const).map(t => (
+              <button key={t} onClick={() => setTab(t)} style={{
+                padding: '7px 16px', borderRadius: 8, fontSize: 12, cursor: 'pointer', textTransform: 'capitalize',
+                fontWeight: tab === t ? 600 : 400,
+                border: `1px solid ${tab === t ? (t === 'analytics' ? '#22d3ee' : '#8a5cf6') : '#1e1e35'}`,
+                background: tab === t ? (t === 'analytics' ? 'rgba(34,211,238,0.1)' : 'rgba(138,92,246,0.1)') : 'rgba(255,255,255,0.03)',
+                color: tab === t ? (t === 'analytics' ? '#22d3ee' : '#8a5cf6') : '#888',
+                display: 'flex', alignItems: 'center', gap: 6,
+              }}>
+                {t === 'analytics' && <BarChart3 size={13} />}
+                {t}
+              </button>
+            ))}
           </div>
           <button
             onClick={() => setShowAddForm(!showAddForm)}
@@ -82,7 +126,139 @@ export default function JournalPage() {
           </button>
         </div>
 
-        {loading ? (
+        {tab === 'analytics' ? (
+          /* Analytics Tab */
+          analyticsLoading ? (
+            <div style={{ textAlign: 'center', padding: 80, color: '#555' }}>Loading analytics...</div>
+          ) : !analytics ? (
+            <div style={{ textAlign: 'center', padding: 80, color: '#555' }}>No analytics data available. Add trades to your journal first.</div>
+          ) : (
+            <>
+              {/* Overview Stats */}
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: 10, marginBottom: 24 }}>
+                {[
+                  { label: 'Total Trades', value: analytics.overview.totalTrades, color: '#8a5cf6' },
+                  { label: 'Win Rate', value: `${analytics.overview.winRate}%`, color: analytics.overview.winRate >= 50 ? '#4ade80' : '#f87171' },
+                  { label: 'Expectancy', value: formatCurrency(analytics.overview.expectancy), color: analytics.overview.expectancy >= 0 ? '#4ade80' : '#f87171' },
+                  { label: 'Sharpe Ratio', value: analytics.overview.sharpeRatio.toFixed(3), color: analytics.overview.sharpeRatio >= 1 ? '#4ade80' : '#f0c674' },
+                  { label: 'Profit Factor', value: analytics.overview.profitFactor.toFixed(2), color: analytics.overview.profitFactor >= 1.5 ? '#4ade80' : '#f0c674' },
+                ].map(card => (
+                  <div key={card.label} style={{
+                    background: `${card.color}08`, border: `1px solid ${card.color}20`,
+                    borderRadius: 12, padding: 14,
+                  }}>
+                    <div style={{ color: '#888', fontSize: 10, textTransform: 'uppercase', marginBottom: 6, fontFamily: "'JetBrains Mono', monospace" }}>{card.label}</div>
+                    <div style={{ fontSize: 22, fontWeight: 700, color: card.color, fontFamily: "'JetBrains Mono', monospace" }}>{card.value}</div>
+                  </div>
+                ))}
+              </div>
+
+              {/* Monthly P&L Calendar Heatmap */}
+              <div style={{ background: 'rgba(255,255,255,0.02)', border: '1px solid #1e1e35', borderRadius: 12, padding: 20, marginBottom: 20 }}>
+                <h3 style={{ fontSize: 14, fontWeight: 700, color: '#e8e8e8', margin: '0 0 12px' }}>Monthly P&amp;L</h3>
+                <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                  {analytics.monthlyPnl.map(m => (
+                    <div key={m.month} style={{
+                      padding: '8px 12px', borderRadius: 6, minWidth: 80, textAlign: 'center',
+                      background: m.pnl >= 0 ? `rgba(74,222,128,${Math.min(0.3, Math.abs(m.pnl) / 5000)})` : `rgba(248,113,113,${Math.min(0.3, Math.abs(m.pnl) / 5000)})`,
+                      border: `1px solid ${m.pnl >= 0 ? 'rgba(74,222,128,0.2)' : 'rgba(248,113,113,0.2)'}`,
+                    }}>
+                      <div style={{ fontSize: 10, color: '#888', marginBottom: 2 }}>{m.month}</div>
+                      <div style={{ fontSize: 13, fontWeight: 700, color: m.pnl >= 0 ? '#4ade80' : '#f87171', fontFamily: "'JetBrains Mono', monospace" }}>
+                        {formatCurrency(m.pnl)}
+                      </div>
+                      <div style={{ fontSize: 9, color: '#555' }}>{m.trades} trades</div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16, marginBottom: 20 }}>
+                {/* Strategy Performance */}
+                <div style={{ background: 'rgba(255,255,255,0.02)', border: '1px solid #1e1e35', borderRadius: 12, padding: 20 }}>
+                  <h3 style={{ fontSize: 14, fontWeight: 700, color: '#e8e8e8', margin: '0 0 12px' }}>Strategy Performance</h3>
+                  {analytics.byStrategy.map(s => (
+                    <div key={s.strategy} style={{ marginBottom: 10 }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
+                        <span style={{ color: '#ccc', fontSize: 12, textTransform: 'capitalize' }}>{s.strategy.replace('_', ' ')}</span>
+                        <span style={{ color: s.winRate >= 50 ? '#4ade80' : '#f87171', fontSize: 12, fontFamily: "'JetBrains Mono', monospace" }}>{s.winRate}%</span>
+                      </div>
+                      <div style={{ height: 6, borderRadius: 3, background: 'rgba(255,255,255,0.05)' }}>
+                        <div style={{ height: '100%', borderRadius: 3, width: `${s.winRate}%`, background: s.winRate >= 50 ? '#4ade80' : '#f87171', transition: 'width 0.3s' }} />
+                      </div>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 2 }}>
+                        <span style={{ fontSize: 10, color: '#555' }}>{s.trades} trades</span>
+                        <span style={{ fontSize: 10, color: s.totalPnl >= 0 ? '#4ade80' : '#f87171' }}>{formatCurrency(s.totalPnl)}</span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+
+                {/* Keisha Accuracy */}
+                <div style={{ background: 'rgba(255,255,255,0.02)', border: '1px solid #1e1e35', borderRadius: 12, padding: 20 }}>
+                  <h3 style={{ fontSize: 14, fontWeight: 700, color: '#e8e8e8', margin: '0 0 12px' }}>Keisha Accuracy</h3>
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+                    <div style={{ background: 'rgba(74,222,128,0.08)', border: '1px solid rgba(74,222,128,0.2)', borderRadius: 8, padding: 12, textAlign: 'center' }}>
+                      <div style={{ fontSize: 22, fontWeight: 700, color: '#4ade80', fontFamily: "'JetBrains Mono', monospace" }}>{analytics.keishaAccuracy.agreed}</div>
+                      <div style={{ fontSize: 10, color: '#888' }}>Agreed</div>
+                    </div>
+                    <div style={{ background: 'rgba(248,113,113,0.08)', border: '1px solid rgba(248,113,113,0.2)', borderRadius: 8, padding: 12, textAlign: 'center' }}>
+                      <div style={{ fontSize: 22, fontWeight: 700, color: '#f87171', fontFamily: "'JetBrains Mono', monospace" }}>{analytics.keishaAccuracy.disagreed}</div>
+                      <div style={{ fontSize: 10, color: '#888' }}>Disagreed</div>
+                    </div>
+                    <div style={{ background: 'rgba(240,198,116,0.08)', border: '1px solid rgba(240,198,116,0.2)', borderRadius: 8, padding: 12, textAlign: 'center' }}>
+                      <div style={{ fontSize: 22, fontWeight: 700, color: '#f0c674', fontFamily: "'JetBrains Mono', monospace" }}>{analytics.keishaAccuracy.agreedAndRight}</div>
+                      <div style={{ fontSize: 10, color: '#888' }}>Agreed &amp; Right</div>
+                    </div>
+                    <div style={{ background: 'rgba(138,92,246,0.08)', border: '1px solid rgba(138,92,246,0.2)', borderRadius: 8, padding: 12, textAlign: 'center' }}>
+                      <div style={{ fontSize: 22, fontWeight: 700, color: '#8a5cf6', fontFamily: "'JetBrains Mono', monospace" }}>{analytics.keishaAccuracy.disagreedAndRight}</div>
+                      <div style={{ fontSize: 10, color: '#888' }}>Disagreed &amp; Right</div>
+                    </div>
+                  </div>
+
+                  {/* Streaks */}
+                  <div style={{ marginTop: 16, display: 'flex', gap: 10 }}>
+                    <div style={{ flex: 1, textAlign: 'center' }}>
+                      <div style={{ fontSize: 18, fontWeight: 700, color: '#4ade80', fontFamily: "'JetBrains Mono', monospace" }}>{analytics.streaks.maxWin}</div>
+                      <div style={{ fontSize: 10, color: '#555' }}>Max Win Streak</div>
+                    </div>
+                    <div style={{ flex: 1, textAlign: 'center' }}>
+                      <div style={{ fontSize: 18, fontWeight: 700, color: '#f87171', fontFamily: "'JetBrains Mono', monospace" }}>{analytics.streaks.maxLoss}</div>
+                      <div style={{ fontSize: 10, color: '#555' }}>Max Loss Streak</div>
+                    </div>
+                    <div style={{ flex: 1, textAlign: 'center' }}>
+                      <div style={{
+                        fontSize: 18, fontWeight: 700, fontFamily: "'JetBrains Mono', monospace",
+                        color: analytics.streaks.current > 0 ? '#4ade80' : analytics.streaks.current < 0 ? '#f87171' : '#888',
+                      }}>{analytics.streaks.current}</div>
+                      <div style={{ fontSize: 10, color: '#555' }}>Current Streak</div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Day of Week Performance */}
+              <div style={{ background: 'rgba(255,255,255,0.02)', border: '1px solid #1e1e35', borderRadius: 12, padding: 20 }}>
+                <h3 style={{ fontSize: 14, fontWeight: 700, color: '#e8e8e8', margin: '0 0 12px' }}>Performance by Day of Week</h3>
+                <div style={{ display: 'flex', gap: 8 }}>
+                  {analytics.byDayOfWeek.map(d => (
+                    <div key={d.day} style={{ flex: 1, textAlign: 'center' }}>
+                      <div style={{
+                        height: 60, borderRadius: 6, marginBottom: 6,
+                        background: d.winRate >= 50 ? `rgba(74,222,128,${0.1 + d.winRate / 200})` : `rgba(248,113,113,${0.1 + (100 - d.winRate) / 200})`,
+                        display: 'flex', alignItems: 'center', justifyContent: 'center',
+                      }}>
+                        <span style={{ fontSize: 14, fontWeight: 700, color: d.winRate >= 50 ? '#4ade80' : '#f87171', fontFamily: "'JetBrains Mono', monospace" }}>{d.winRate}%</span>
+                      </div>
+                      <div style={{ fontSize: 10, color: '#888' }}>{d.day.slice(0, 3)}</div>
+                      <div style={{ fontSize: 9, color: '#555' }}>{d.trades} trades</div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </>
+          )
+        ) : loading ? (
           <div style={{ textAlign: 'center', padding: 80, color: '#555570' }}>Loading journal...</div>
         ) : (
           <>

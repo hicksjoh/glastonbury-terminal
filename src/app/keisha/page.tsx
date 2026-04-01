@@ -12,8 +12,8 @@ const DOMAIN_CONFIG: Record<Domain, { label: string; color: string; prompts: str
     label: 'General',
     color: '#8a5cf6',
     prompts: [
+      'What signals fired today?',
       'What covered call should I write this week?',
-      'Am I on track for $50M?',
       "What's my Greeks exposure?",
       'Should I diversify my RSUs now?',
     ],
@@ -22,9 +22,9 @@ const DOMAIN_CONFIG: Record<Domain, { label: string; color: string; prompts: str
     label: 'CFO',
     color: '#4ade80',
     prompts: [
+      'Show me insider buying in my watchlist',
       "When's my next cash crunch?",
       'Opportunity cost of idle cash?',
-      'Territory burn rate analysis',
       'Monthly runway forecast',
     ],
   },
@@ -42,9 +42,9 @@ const DOMAIN_CONFIG: Record<Domain, { label: string; color: string; prompts: str
     label: 'Quant',
     color: '#22d3ee',
     prompts: [
+      'Run the confluence scanner',
       'Current market regime?',
       'Size with half-Kelly for NVDA',
-      'Find mispriced options',
       'Portfolio CVaR at 95%?',
     ],
   },
@@ -62,8 +62,8 @@ const DOMAIN_CONFIG: Record<Domain, { label: string; color: string; prompts: str
     label: 'Strategy',
     color: '#c084fc',
     prompts: [
+      'Best opportunity from today\'s flow',
       'Am I on track for $50M?',
-      'Which territory to sell next?',
       'Full risk report',
       'Best deployment of next $100K?',
     ],
@@ -124,12 +124,58 @@ export default function KeishaPage() {
     }
   };
 
+  // Fetch signal context for stock mentions
+  const fetchSignalContext = async (text: string): Promise<string> => {
+    const symbolMatch = text.match(/\b([A-Z]{1,5})\b/g);
+    if (!symbolMatch) return '';
+
+    const symbols = [...new Set(symbolMatch)].filter(s =>
+      s.length >= 2 && !['AM', 'PM', 'FOR', 'THE', 'AND', 'NOT', 'BUT', 'ALL', 'ANY', 'RUN', 'CFO', 'CEO', 'AI', 'IV', 'PE', 'RSU', 'QBI'].includes(s)
+    ).slice(0, 3);
+
+    if (symbols.length === 0) return '';
+
+    const contexts: string[] = [];
+    for (const symbol of symbols) {
+      try {
+        const [sentimentRes, insiderRes] = await Promise.all([
+          fetch(`/api/sentiment?symbol=${symbol}`).then(r => r.ok ? r.json() : null).catch(() => null),
+          fetch(`/api/insider?symbol=${symbol}&days=30`).then(r => r.ok ? r.json() : null).catch(() => null),
+        ]);
+
+        const parts: string[] = [`[SIGNAL CONTEXT for ${symbol}]`];
+        if (sentimentRes?.compositeScore) {
+          parts.push(`Sentiment: ${sentimentRes.compositeScore}/10 (${sentimentRes.trendDirection})`);
+        }
+        if (insiderRes?.insiderTrades?.length) {
+          const buys = insiderRes.insiderTrades.filter((t: { transactionType: string }) => t.transactionType === 'buy').length;
+          parts.push(`Insider activity: ${insiderRes.insiderTrades.length} trades (${buys} buys) in 30d`);
+        }
+        if (insiderRes?.congressTrades?.length) {
+          parts.push(`Congressional trades: ${insiderRes.congressTrades.length}`);
+        }
+        if (insiderRes?.signals?.length) {
+          parts.push(`Signals: ${insiderRes.signals.map((s: { type: string }) => s.type).join(', ')}`);
+        }
+        if (parts.length > 1) contexts.push(parts.join(' | '));
+      } catch {
+        // Skip context for this symbol
+      }
+    }
+
+    return contexts.length > 0 ? '\n\n' + contexts.join('\n') : '';
+  };
+
   const sendMessage = useCallback(async (content: string) => {
     if (!content.trim() || loading) return;
+
+    // Fetch signal context in background
+    const signalContext = await fetchSignalContext(content);
+
     const userMsg: ChatMessage = {
       id: Date.now().toString(),
       role: 'user',
-      content: `[${domain.toUpperCase()} MODE] ${content}`,
+      content: `[${domain.toUpperCase()} MODE] ${content}${signalContext}`,
       timestamp: new Date().toISOString(),
     };
     setMessages(prev => [...prev, { ...userMsg, content }]);

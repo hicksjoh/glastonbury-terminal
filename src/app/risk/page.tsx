@@ -381,10 +381,149 @@ export default function RiskPage() {
                 );
               })()}
             </div>
+
+            {/* Enhanced Correlation Section */}
+            <CorrelationSection symbols={symbols} />
           </>
         )}
       </div>
     </AppShell>
+  );
+}
+
+function CorrelationSection({ symbols }: { symbols: string[] }) {
+  const [corrData, setCorrData] = useState<{
+    matrix: number[][];
+    symbols: string[];
+    highCorrelation: { pair: [string, string]; correlation: number }[];
+    portfolioBeta: number;
+    hedgeSuggestion: string | null;
+    diversificationScore: number;
+  } | null>(null);
+  const [corrLoading, setCorrLoading] = useState(true);
+
+  useEffect(() => {
+    if (symbols.length < 2) return;
+    fetch(`/api/correlation?symbols=${symbols.join(',')}&period=90`)
+      .then(r => r.json())
+      .then(d => { if (!d.error) setCorrData(d); })
+      .catch(() => {})
+      .finally(() => setCorrLoading(false));
+  }, [symbols]);
+
+  if (corrLoading) {
+    return <div style={{ textAlign: 'center', padding: 40, color: '#555' }}>Computing enhanced correlation...</div>;
+  }
+  if (!corrData) return null;
+
+  const getCHeatColor = (val: number): string => {
+    if (val >= 0.8) return 'rgba(239, 68, 68, 0.5)';
+    if (val >= 0.5) return 'rgba(249, 115, 22, 0.3)';
+    if (val >= 0.2) return 'rgba(251, 191, 36, 0.15)';
+    if (val > -0.2) return 'rgba(255,255,255,0.03)';
+    if (val > -0.5) return 'rgba(96, 165, 250, 0.15)';
+    return 'rgba(59, 130, 246, 0.3)';
+  };
+
+  return (
+    <div style={{ marginTop: 32 }}>
+      <h2 style={{ fontSize: 18, fontWeight: 700, color: '#e8e8e8', marginBottom: 16 }}>
+        Enhanced Correlation &amp; Diversification
+      </h2>
+
+      {/* Summary Cards */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 12, marginBottom: 20 }}>
+        <div style={{
+          background: 'rgba(138, 92, 246, 0.08)', border: '1px solid rgba(138, 92, 246, 0.2)',
+          borderRadius: 12, padding: '16px 14px',
+        }}>
+          <div style={{ fontSize: 10, color: '#888', textTransform: 'uppercase', marginBottom: 8 }}>Portfolio Beta</div>
+          <div style={{ fontSize: 28, fontWeight: 700, color: '#8a5cf6', fontFamily: "'JetBrains Mono', monospace" }}>
+            {corrData.portfolioBeta.toFixed(3)}
+          </div>
+          <div style={{ fontSize: 11, color: '#555', marginTop: 4 }}>vs SPY benchmark</div>
+        </div>
+
+        <div style={{
+          background: 'rgba(74, 222, 128, 0.08)', border: '1px solid rgba(74, 222, 128, 0.2)',
+          borderRadius: 12, padding: '16px 14px',
+        }}>
+          <div style={{ fontSize: 10, color: '#888', textTransform: 'uppercase', marginBottom: 8 }}>Diversification Score</div>
+          <div style={{
+            fontSize: 28, fontWeight: 700, fontFamily: "'JetBrains Mono', monospace",
+            color: corrData.diversificationScore >= 60 ? '#4ade80' : corrData.diversificationScore >= 30 ? '#f0c674' : '#f87171',
+          }}>
+            {corrData.diversificationScore}/100
+          </div>
+          <div style={{ fontSize: 11, color: '#555', marginTop: 4 }}>Higher = more diversified</div>
+        </div>
+
+        <div style={{
+          background: 'rgba(240, 198, 116, 0.08)', border: '1px solid rgba(240, 198, 116, 0.2)',
+          borderRadius: 12, padding: '16px 14px',
+        }}>
+          <div style={{ fontSize: 10, color: '#888', textTransform: 'uppercase', marginBottom: 8 }}>High Correlations</div>
+          <div style={{ fontSize: 28, fontWeight: 700, color: '#f0c674', fontFamily: "'JetBrains Mono', monospace" }}>
+            {corrData.highCorrelation.length}
+          </div>
+          <div style={{ fontSize: 11, color: '#555', marginTop: 4 }}>Pairs &gt;0.8 correlation</div>
+        </div>
+      </div>
+
+      {/* Hedge Suggestion */}
+      {corrData.hedgeSuggestion && (
+        <div style={{
+          background: 'rgba(248, 113, 113, 0.06)', border: '1px solid rgba(248, 113, 113, 0.2)',
+          borderRadius: 10, padding: '12px 16px', marginBottom: 20,
+          display: 'flex', alignItems: 'center', gap: 10,
+        }}>
+          <Shield size={16} color="#f87171" />
+          <span style={{ color: '#f87171', fontSize: 12 }}>{corrData.hedgeSuggestion}</span>
+        </div>
+      )}
+
+      {/* Enhanced Heatmap */}
+      <div style={{
+        background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.06)',
+        borderRadius: 12, padding: 20,
+      }}>
+        <h3 style={{ fontSize: 14, fontWeight: 700, color: '#e8e8e8', margin: '0 0 12px' }}>Correlation Heatmap (90 days)</h3>
+        <div style={{ overflowX: 'auto' }}>
+          <table style={{ borderCollapse: 'separate', borderSpacing: 2 }}>
+            <thead>
+              <tr>
+                <th style={{ padding: 6 }} />
+                {corrData.symbols.map(s => (
+                  <th key={s} style={{ padding: '6px 4px', fontSize: 10, color: '#888', fontWeight: 600, textAlign: 'center', minWidth: 48 }}>{s}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {corrData.symbols.map((symA, i) => (
+                <tr key={symA}>
+                  <td style={{ padding: '4px 8px', fontSize: 10, color: '#ccc', fontWeight: 600, fontFamily: "'JetBrains Mono', monospace" }}>{symA}</td>
+                  {corrData.symbols.map((symB, j) => {
+                    const val = corrData.matrix[i]?.[j] ?? 0;
+                    return (
+                      <td key={symB} style={{
+                        padding: 4, textAlign: 'center', fontSize: 10,
+                        fontFamily: "'JetBrains Mono', monospace",
+                        color: i === j ? '#444' : val >= 0.5 ? '#ef4444' : val <= -0.5 ? '#3b82f6' : '#888',
+                        background: i === j ? 'rgba(255,255,255,0.05)' : getCHeatColor(val),
+                        borderRadius: 3, fontWeight: Math.abs(val) > 0.7 ? 700 : 400,
+                        minWidth: 48,
+                      }}>
+                        {val.toFixed(2)}
+                      </td>
+                    );
+                  })}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
   );
 }
 
