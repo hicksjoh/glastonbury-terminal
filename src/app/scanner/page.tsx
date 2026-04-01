@@ -86,9 +86,7 @@ export default function ScannerPage() {
               display: 'flex', alignItems: 'center', gap: 6, padding: '7px 14px', borderRadius: 8,
               background: 'rgba(255,255,255,0.05)', border: '1px solid #1e1e35',
               color: '#8888a8', fontSize: 12, cursor: 'pointer',
-            }}>
-              <RefreshCw size={13} /> Refresh
-            </button>
+            }}><RefreshCw size={13} /> Refresh</button>
           </div>
         </div>
         <p style={{ color: '#888', fontSize: 14, margin: '0 0 24px' }}>Keisha finds trades for you &mdash; powered by multi-signal confluence</p>
@@ -140,11 +138,11 @@ export default function ScannerPage() {
                     {/* Source Badges */}
                     <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', marginBottom: 10 }}>
                       {s.sources.map(src => {
-                        const sc = SOURCE_COLORS[src] || { bg: 'rgba(255,255,255,0.05)', color: '#8888a8' };
+                        const st = SOURCE_COLORS[src] || { bg: 'rgba(255,255,255,0.05)', color: '#8888a8' };
                         return (
                           <span key={src} style={{
                             padding: '2px 8px', borderRadius: 4, fontSize: 10, fontWeight: 500,
-                            background: sc.bg, color: sc.color,
+                            background: st.bg, color: st.color,
                           }}>{src.replace(/_/g, ' ')}</span>
                         );
                       })}
@@ -161,13 +159,9 @@ export default function ScannerPage() {
 
                     {/* Kelly Sizing */}
                     <div style={{ display: 'flex', gap: 12, marginBottom: 8 }}>
-                      <span style={{ color: '#22d3ee', fontSize: 12, fontFamily: "'JetBrains Mono', monospace" }}>
-                        Buy {s.kellySizing.shares} shares
-                      </span>
+                      <span style={{ color: '#22d3ee', fontSize: 12, fontFamily: "'JetBrains Mono', monospace" }}>Buy {s.kellySizing.shares} shares</span>
                       <span style={{ color: '#555570', fontSize: 12 }}>|</span>
-                      <span style={{ color: '#f0c674', fontSize: 12, fontFamily: "'JetBrains Mono', monospace" }}>
-                        ${s.kellySizing.dollars.toLocaleString()}
-                      </span>
+                      <span style={{ color: '#f0c674', fontSize: 12, fontFamily: "'JetBrains Mono', monospace" }}>${s.kellySizing.dollars.toLocaleString()}</span>
                       <span style={{ color: '#555570', fontSize: 12 }}>|</span>
                       <span style={{ color: '#8888a8', fontSize: 12 }}>{s.kellySizing.pctOfPortfolio.toFixed(1)}% of portfolio</span>
                     </div>
@@ -182,15 +176,11 @@ export default function ScannerPage() {
                           flex: 1, padding: '10px', borderRadius: 8, background: '#8a5cf6',
                           border: 'none', color: '#fff', fontSize: 13, fontWeight: 600, cursor: 'pointer',
                           display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
-                        }}>
-                          <ExternalLink size={14} /> Send to Trading
-                        </button>
+                        }}><ExternalLink size={14} /> Send to Trading</button>
                         <button onClick={() => { window.location.href = `/keisha?query=Analyze ${s.symbol}`; }} style={{
                           flex: 1, padding: '10px', borderRadius: 8, background: 'rgba(255,255,255,0.05)',
                           border: '1px solid #1e1e35', color: '#e8e8f0', fontSize: 13, fontWeight: 500, cursor: 'pointer',
-                        }}>
-                          Ask Keisha
-                        </button>
+                        }}>Ask Keisha</button>
                       </div>
                     </div>
                   )}
