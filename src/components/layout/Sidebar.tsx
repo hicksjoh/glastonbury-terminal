@@ -167,7 +167,7 @@ export function Sidebar() {
           Cmd+K Search
         </div>
         <div>Paper Trading Active</div>
-        <div style={{ color: '#2a2a3a', fontSize: 10, marginTop: 4 }}>v1.0 &bull; 2026</div>
+        <div style={{ color: '#2a2a3a', fontSize: 10, marginTop: 4 }}>v2.0 &bull; 2026</div>
       </div>
     </aside>
   );
