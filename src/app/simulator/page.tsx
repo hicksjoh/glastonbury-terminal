@@ -110,8 +110,8 @@ export default function SimulatorPage() {
   };
 
   const heatmapData = result ? (() => {
-    const dtes = [...new Set(result.grid.map(g => g.dte))].sort((a, b) => b - a);
-    const prices = [...new Set(result.grid.map(g => g.price))].sort((a, b) => a - b);
+    const dtes = Array.from(new Set(result.grid.map(g => g.dte))).sort((a, b) => b - a);
+    const prices = Array.from(new Set(result.grid.map(g => g.price))).sort((a, b) => a - b);
     const map = new Map<string, GridPoint>();
     result.grid.forEach(g => map.set(`${g.price}-${g.dte}`, g));
     return { dtes, prices, map };
