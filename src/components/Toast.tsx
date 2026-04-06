@@ -38,12 +38,17 @@ function ToastItem({ toast, onDismiss }: { toast: Toast; onDismiss: (id: string)
 
   useEffect(() => {
     // Trigger enter animation
-    requestAnimationFrame(() => setVisible(true));
+    const rafId = requestAnimationFrame(() => setVisible(true));
+    let dismissTimer: ReturnType<typeof setTimeout> | null = null;
     const timer = setTimeout(() => {
       setVisible(false);
-      setTimeout(() => onDismiss(toast.id), 200);
+      dismissTimer = setTimeout(() => onDismiss(toast.id), 200);
     }, 5000);
-    return () => clearTimeout(timer);
+    return () => {
+      cancelAnimationFrame(rafId);
+      clearTimeout(timer);
+      if (dismissTimer) clearTimeout(dismissTimer);
+    };
   }, [toast.id, onDismiss]);
 
   return (
@@ -96,9 +101,15 @@ function ToastItem({ toast, onDismiss }: { toast: Toast; onDismiss: (id: string)
 export function ToastProvider({ children }: { children: ReactNode }) {
   const [toasts, setToasts] = useState<Toast[]>([]);
 
+  const MAX_TOASTS = 5;
+
   const addToast = useCallback(({ type, message }: { type: ToastType; message: string }) => {
     const id = `toast-${++toastCounter}-${Date.now()}`;
-    setToasts(prev => [...prev, { id, type, message }]);
+    setToasts(prev => {
+      const next = [...prev, { id, type, message }];
+      // Remove oldest toasts if over the limit
+      return next.length > MAX_TOASTS ? next.slice(next.length - MAX_TOASTS) : next;
+    });
   }, []);
 
   const removeToast = useCallback((id: string) => {

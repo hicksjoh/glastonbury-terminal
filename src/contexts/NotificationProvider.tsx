@@ -87,7 +87,7 @@ export function NotificationProvider({ children }: { children: ReactNode }) {
         const data = await res.json();
 
         if (data.triggered && data.triggered.length > 0) {
-          setAlertBadgeCount(prev => prev + data.triggered.length);
+          setAlertBadgeCount(prev => Math.min(prev + data.triggered.length, 99));
 
           for (const alert of data.triggered) {
             // Add to in-app notifications
@@ -202,10 +202,16 @@ function showToast(n: Notification) {
     color: #e8e8f0; font-size: 13px; box-shadow: 0 8px 32px rgba(0,0,0,0.4);
     animation: slideIn 0.3s ease; cursor: pointer;
   `;
-  toast.innerHTML = `
-    <div style="font-weight:700;margin-bottom:4px;color:${n.priority === 'P0' ? '#f87171' : '#f0c674'}">${n.title}</div>
-    <div style="color:#8888a8">${n.message || ''}</div>
-  `;
+  const titleDiv = document.createElement('div');
+  titleDiv.style.cssText = `font-weight:700;margin-bottom:4px;color:${n.priority === 'P0' ? '#f87171' : '#f0c674'}`;
+  titleDiv.textContent = n.title;
+
+  const bodyDiv = document.createElement('div');
+  bodyDiv.style.cssText = 'color:#8888a8';
+  bodyDiv.textContent = n.message || '';
+
+  toast.appendChild(titleDiv);
+  toast.appendChild(bodyDiv);
   toast.onclick = () => toast.remove();
   document.body.appendChild(toast);
   setTimeout(() => toast.remove(), 6000);

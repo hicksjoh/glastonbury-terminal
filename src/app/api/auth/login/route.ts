@@ -1,9 +1,16 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { createHash } from 'crypto';
+import { createHash, timingSafeEqual } from 'crypto';
 import { rateLimit } from '@/lib/rate-limit';
 
 function hashToken(password: string): string {
   return createHash('sha256').update(`gt:${password}`).digest('hex');
+}
+
+function safeCompare(a: string, b: string): boolean {
+  const bufA = Buffer.from(a);
+  const bufB = Buffer.from(b);
+  if (bufA.length !== bufB.length) return false;
+  return timingSafeEqual(bufA, bufB);
 }
 
 export async function POST(req: NextRequest) {
@@ -14,7 +21,7 @@ export async function POST(req: NextRequest) {
     const { password } = await req.json();
     const APP_PASSWORD = process.env.APP_PASSWORD || 'glastonbury2026';
 
-    if (password === APP_PASSWORD) {
+    if (typeof password === 'string' && safeCompare(password, APP_PASSWORD)) {
       const token = hashToken(APP_PASSWORD);
       const res = NextResponse.json({ success: true });
       res.cookies.set('gt-auth', token, {

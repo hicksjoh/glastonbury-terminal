@@ -9,27 +9,46 @@ async function sha256(input: string): Promise<string> {
     .join('');
 }
 
+// API routes that don't require gt-auth cookie authentication
+const PUBLIC_API_ROUTES = [
+  '/api/auth/login',
+  '/api/health',
+  '/api/briefing/scheduled',
+  '/api/portfolio/snapshot',
+];
+
 export async function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
 
-  // Skip API routes and static files
-  if (pathname.startsWith('/api/') || pathname.startsWith('/_next/') || pathname.includes('.')) {
+  // Skip static files
+  if (pathname.startsWith('/_next/') || pathname.includes('.')) {
+    return NextResponse.next();
+  }
+
+  // Allow public API routes without auth (they handle their own auth if needed)
+  if (PUBLIC_API_ROUTES.some(route => pathname.startsWith(route))) {
     return NextResponse.next();
   }
 
   const APP_PASSWORD = process.env.APP_PASSWORD || 'glastonbury2026';
   const authCookie = request.cookies.get('gt-auth');
 
-  if (authCookie?.value) {
-    // Check hashed token
-    const expectedHash = await sha256(`gt:${APP_PASSWORD}`);
-    if (authCookie.value === expectedHash) {
-      return NextResponse.next();
+  // Check hashed token
+  const isAuthenticated = authCookie?.value
+    ? authCookie.value === await sha256(`gt:${APP_PASSWORD}`)
+    : false;
+
+  // Protected API routes: return 401 JSON instead of redirect
+  if (pathname.startsWith('/api/')) {
+    if (!isAuthenticated) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
-    // Also accept legacy plaintext cookie for existing sessions
-    if (authCookie.value === APP_PASSWORD) {
-      return NextResponse.next();
-    }
+    return NextResponse.next();
+  }
+
+  // Authenticated page requests
+  if (isAuthenticated) {
+    return NextResponse.next();
   }
 
   // Redirect to login if not on login page

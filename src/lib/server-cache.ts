@@ -20,6 +20,30 @@ export function getCached<T>(key: string): T | null {
 
 export function setCache<T>(key: string, data: T, ttlMs: number): void {
   cache.set(key, { data, expiresAt: Date.now() + ttlMs });
+  cleanupCache();
+}
+
+function cleanupCache(): void {
+  if (cache.size <= 500) return;
+
+  // First pass: evict all expired entries
+  const now = Date.now();
+  cache.forEach((entry, key) => {
+    if (now > entry.expiresAt) {
+      cache.delete(key);
+    }
+  });
+
+  // If still over 500, evict oldest entries first
+  if (cache.size > 500) {
+    const entries: [string, CacheEntry<unknown>][] = [];
+    cache.forEach((v, k) => entries.push([k, v]));
+    entries.sort((a, b) => a[1].expiresAt - b[1].expiresAt);
+    const toEvict = entries.length - 500;
+    for (let i = 0; i < toEvict; i++) {
+      cache.delete(entries[i][0]);
+    }
+  }
 }
 
 // TTL presets
