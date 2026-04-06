@@ -4,6 +4,7 @@ import { Component, ReactNode } from 'react';
 interface Props {
   children: ReactNode;
   fallback?: ReactNode;
+  label?: string;
 }
 
 interface State {
@@ -22,8 +23,9 @@ export class ErrorBoundary extends Component<Props, State> {
   }
 
   componentDidCatch(error: Error, errorInfo: React.ErrorInfo) {
-    console.error('[ErrorBoundary] Caught error:', error);
-    console.error('[ErrorBoundary] Component stack:', errorInfo.componentStack);
+    const label = this.props.label ? ` [${this.props.label}]` : '';
+    console.error(`[ErrorBoundary]${label} Caught error:`, error);
+    console.error(`[ErrorBoundary]${label} Component stack:`, errorInfo.componentStack);
   }
 
   render() {

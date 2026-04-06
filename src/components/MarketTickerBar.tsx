@@ -88,7 +88,7 @@ export default function MarketTickerBar() {
           animation: priceFlash 1.2s ease-out;
         }
       `}</style>
-      <div style={{
+      <div aria-label="Market status" role="status" style={{
         height: 36,
         background: 'rgba(0, 0, 0, 0.6)',
         borderBottom: '1px solid rgba(138, 92, 246, 0.2)',

@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import { AppShell } from '@/components/layout/AppShell';
+import { ErrorBoundary } from '@/components/ErrorBoundary';
 import { CheckCircle, XCircle, RefreshCw, Shield, Sliders, Bell, Zap, Info } from 'lucide-react';
 
 interface ConnectionStatus {
@@ -195,6 +196,7 @@ export default function SettingsPage() {
 
   return (
     <AppShell>
+      <ErrorBoundary label="settings">
       <div style={{ maxWidth: 800, margin: '0 auto' }}>
         <h1 style={{ fontSize: 28, fontWeight: 700, color: '#fff', margin: '0 0 4px' }}>Settings</h1>
         <p style={{ color: '#8888a8', fontSize: 14, margin: '0 0 28px' }}>Terminal configuration & connections</p>
@@ -388,6 +390,7 @@ export default function SettingsPage() {
           Glastonbury Terminal v1.0 &bull; The Glastonbury Group &bull; 2026
         </div>
       </div>
+      </ErrorBoundary>
     </AppShell>
   );
 }

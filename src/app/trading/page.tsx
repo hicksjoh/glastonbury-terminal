@@ -3,6 +3,7 @@ import { useState, useEffect, useRef, useCallback, Suspense } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer } from 'recharts';
 import { AppShell } from '@/components/layout/AppShell';
+import { ErrorBoundary } from '@/components/ErrorBoundary';
 import { AlertTriangle, TrendingUp, TrendingDown, Search, X, Users, LinkIcon, Download } from 'lucide-react';
 import { exportToCSV } from '@/lib/export';
 import Link from 'next/link';
@@ -336,6 +337,7 @@ function TradingPage() {
 
   return (
     <AppShell>
+      <ErrorBoundary label="trading">
       {/* Paper Trading Warning Banner */}
       <div style={{
         backgroundColor: '#f59e0b10',
@@ -1286,6 +1288,7 @@ function TradingPage() {
           onCancel={() => setConfirmOrder(null)}
         />
       )}
+      </ErrorBoundary>
     </AppShell>
   );
 }

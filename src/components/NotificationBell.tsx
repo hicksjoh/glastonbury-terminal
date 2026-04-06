@@ -38,6 +38,7 @@ export function NotificationBell() {
   return (
     <div ref={panelRef} style={{ position: 'relative' }}>
       <button
+        aria-label="Notifications"
         onClick={() => setOpen(!open)}
         style={{
           background: 'none', border: 'none', cursor: 'pointer', position: 'relative',

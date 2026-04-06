@@ -80,22 +80,25 @@ const NAV_SECTIONS = [
   },
 ];
 
-export function Sidebar() {
+export function Sidebar({ isOpen, isMobile, onClose }: { isOpen?: boolean; isMobile?: boolean; onClose?: () => void }) {
   const pathname = usePathname();
   const alertBadge = useAlertBadge();
   return (
-    <aside style={{
+    <aside aria-label="Sidebar navigation" style={{
       width: 220,
       minHeight: '100vh',
       backgroundColor: '#1a1a24',
       borderRight: '1px solid #2a2a3a',
       display: 'flex',
-      flexDirection: 'column',
+      flexDirection: 'column' as const,
       padding: '20px 16px',
       position: 'fixed',
       left: 0,
       top: 0,
+      zIndex: 40,
       overflowY: 'auto',
+      transform: isMobile && !isOpen ? 'translateX(-100%)' : 'translateX(0)',
+      transition: 'transform 0.3s ease',
     }}>
       {/* Logo */}
       <div style={{ marginBottom: 24, paddingLeft: 8 }}>
@@ -111,9 +114,9 @@ export function Sidebar() {
         <div style={{ color: '#6b6b80', fontSize: 11, marginTop: 2 }}>THE GLASTONBURY GROUP</div>
       </div>
       {/* Nav */}
-      <nav style={{ flex: 1 }}>
+      <nav aria-label="Main navigation" style={{ flex: 1 }}>
         {NAV_SECTIONS.map((section, si) => (
-          <div key={si} style={{ marginBottom: 4 }}>
+          <div key={si} style={{ marginBottom: 4 }} {...(section.label ? { role: 'group', 'aria-label': section.label } : {})}>
             {section.label && (
               <div style={{
                 color: '#444',
@@ -134,6 +137,8 @@ export function Sidebar() {
                 <Link
                   key={href}
                   href={href}
+                  aria-current={active ? 'page' : undefined}
+                  onClick={() => { if (isMobile && onClose) onClose(); }}
                   style={{
                     display: 'flex',
                     alignItems: 'center',
@@ -180,6 +185,8 @@ export function Sidebar() {
         <div style={{ marginTop: 8, paddingTop: 8, borderTop: '1px solid #2a2a3a' }}>
           <Link
             href="/settings"
+            aria-current={pathname === '/settings' ? 'page' : undefined}
+            onClick={() => { if (isMobile && onClose) onClose(); }}
             style={{
               display: 'flex', alignItems: 'center', gap: 10,
               padding: '8px 12px', borderRadius: 8, textDecoration: 'none',

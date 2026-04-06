@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import { AppShell } from '@/components/layout/AppShell';
+import { ErrorBoundary } from '@/components/ErrorBoundary';
 import Image from 'next/image';
 import MarkdownRenderer from '@/components/MarkdownRenderer';
 import { MOCK_AUDIT_LOG, PORTFOLIO_SUMMARY } from '@/lib/data';
@@ -530,7 +531,8 @@ export default function DashboardPage() {
         )}
 
         {/* ═══ ROW 1: KPI Metric Strip ═══ */}
-        <div style={{ display: 'flex', gap: 12, marginBottom: 20, flexWrap: 'wrap' }}>
+        <ErrorBoundary label="stat-cards">
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))', gap: 12, marginBottom: 20 }}>
           {/* Cash Available */}
           <GlassCard style={{ flex: '1 1 150px', padding: '16px 18px' }}>
             <div style={{ fontSize: 10, color: '#888', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 6 }}>Cash Available</div>
@@ -601,11 +603,13 @@ export default function DashboardPage() {
             <div style={{ fontSize: 11, color: '#555', marginTop: 4 }}>{vix > 0 ? vixLabel : (loading ? '' : 'Configure Finnhub')}</div>
           </GlassCard>
         </div>
+        </ErrorBoundary>
 
         {/* ═══ ROW 2: Three-Column Main Content ═══ */}
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 260px', gap: 16, marginBottom: 20 }}>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: 16, marginBottom: 20 }}>
 
           {/* Column 1: Keisha AI Briefing */}
+          <ErrorBoundary label="keisha-briefing">
           <GlassCard style={{ padding: '20px 22px', overflow: 'hidden' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
@@ -679,8 +683,10 @@ export default function DashboardPage() {
               </div>
             )}
           </GlassCard>
+          </ErrorBoundary>
 
           {/* Column 2: Top Positions + Mini Chart */}
+          <ErrorBoundary label="top-positions">
           <GlassCard style={{ padding: '20px 22px', display: 'flex', flexDirection: 'column' }}>
             <div style={{ fontSize: 11, fontWeight: 600, color: '#888', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 14 }}>
               Top Positions
@@ -747,8 +753,10 @@ export default function DashboardPage() {
               </div>
             )}
           </GlassCard>
+          </ErrorBoundary>
 
           {/* Column 3: Market Movers + Connection Health */}
+          <ErrorBoundary label="market-movers">
           <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
             {/* Movers */}
             <GlassCard style={{ padding: '16px 18px', flex: 1 }}>
@@ -803,12 +811,14 @@ export default function DashboardPage() {
               ))}
             </GlassCard>
           </div>
+          </ErrorBoundary>
         </div>
 
         {/* ═══ ROW 3: Wealth Breakdown / $50M Ring / Agent Activity ═══ */}
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 240px 1fr', gap: 16, marginBottom: 20 }}>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: 16, marginBottom: 20 }}>
 
           {/* Wealth Breakdown */}
+          <ErrorBoundary label="wealth-breakdown">
           <GlassCard style={{ padding: '20px 22px' }}>
             <div style={{ fontSize: 11, fontWeight: 600, color: '#888', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 16 }}>
               Wealth Breakdown
@@ -847,6 +857,7 @@ export default function DashboardPage() {
               })}
             </div>
           </GlassCard>
+          </ErrorBoundary>
 
           {/* $50M Progress Ring */}
           <GlassCard style={{ padding: '20px', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center' }}>
@@ -876,6 +887,7 @@ export default function DashboardPage() {
           </GlassCard>
 
           {/* Agent Activity */}
+          <ErrorBoundary label="agent-activity">
           <GlassCard style={{ padding: '20px 22px' }}>
             <div style={{ fontSize: 11, fontWeight: 600, color: '#888', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 14 }}>
               Agent Activity
@@ -905,6 +917,7 @@ export default function DashboardPage() {
               View full audit log →
             </button>
           </GlassCard>
+          </ErrorBoundary>
         </div>
 
         {/* ═══ ROW 4: Quick Action Buttons ═══ */}

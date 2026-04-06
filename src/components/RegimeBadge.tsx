@@ -26,7 +26,7 @@ export function RegimeBadge() {
   const info = REGIME_LABELS[regime] || REGIME_LABELS['bull_low_vol'];
 
   return (
-    <div style={{
+    <div aria-label="Market regime indicator" style={{
       display: 'inline-flex', alignItems: 'center', gap: 6,
       background: info.bg, border: `1px solid ${info.color}33`,
       borderRadius: 6, padding: '4px 10px', fontSize: 10,

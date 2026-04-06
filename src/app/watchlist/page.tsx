@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useCallback, useRef } from 'react';
 import { AppShell } from '@/components/layout/AppShell';
+import { ErrorBoundary } from '@/components/ErrorBoundary';
 import { SparklineChart } from '@/components/SparklineChart';
 import { cacheSet, cacheGet, formatStaleAge } from '@/lib/cache';
 
@@ -304,6 +305,7 @@ export default function WatchlistPage() {
 
   return (
     <AppShell>
+      <ErrorBoundary label="watchlist">
       <style>{`
         @keyframes pulse-green {
           0%, 100% { opacity: 1; }
@@ -697,6 +699,7 @@ export default function WatchlistPage() {
           </div>
         )}
       </div>
+      </ErrorBoundary>
     </AppShell>
   );
 }

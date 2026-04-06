@@ -1,6 +1,7 @@
 'use client';
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { AppShell } from '@/components/layout/AppShell';
+import { ErrorBoundary } from '@/components/ErrorBoundary';
 import { ChatMessage } from '@/types';
 import { Send, Mic, MicOff, Zap, CheckCircle, Plus, Trash2, PanelLeftClose, PanelLeft, Volume2, VolumeX, Copy, Check, Search } from 'lucide-react';
 import MarkdownRenderer from '@/components/MarkdownRenderer';
@@ -786,6 +787,7 @@ export default function KeishaPage() {
       </div>
 
       {/* Main Layout: Sidebar + Chat */}
+      <ErrorBoundary label="keisha-chat">
       <div style={{ display: 'flex', gap: 0, height: 'calc(100vh - 300px)' }}>
         {/* ── Conversation Sidebar ────────────────────────────────────────── */}
         <div style={{
@@ -1100,6 +1102,7 @@ export default function KeishaPage() {
           </div>
         </div>
       </div>
+      </ErrorBoundary>
 
       {/* Hover styles for message action buttons */}
       <style>{`

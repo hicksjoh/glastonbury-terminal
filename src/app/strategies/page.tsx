@@ -1,6 +1,7 @@
 'use client';
 import { useState, useEffect, useCallback } from 'react';
 import { AppShell } from '@/components/layout/AppShell';
+import { ErrorBoundary } from '@/components/ErrorBoundary';
 import { Strategy, AuditLogEntry } from '@/types';
 import { formatDistanceToNow } from 'date-fns';
 import { AlertTriangle, Settings, Plus, X } from 'lucide-react';
@@ -358,6 +359,7 @@ export default function StrategiesPage() {
 
   return (
     <AppShell>
+      <ErrorBoundary label="strategies">
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 32 }}>
         <div>
           <h1 style={{ fontSize: 24, fontWeight: 700, color: '#e8e8e8', margin: 0 }}>Strategies</h1>
@@ -521,6 +523,7 @@ export default function StrategiesPage() {
           onCreated={(created) => setStrategies(prev => [...prev, created])}
         />
       )}
+      </ErrorBoundary>
     </AppShell>
   );
 }

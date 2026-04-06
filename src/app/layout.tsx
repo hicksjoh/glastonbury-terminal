@@ -41,6 +41,43 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <link rel="apple-touch-icon" href="/icon-192.png" />
       </head>
       <body className={inter.className} style={{ backgroundColor: '#08080d', color: '#e8e8e8', minHeight: '100vh' }}>
+        <a
+          href="#main-content"
+          style={{
+            position: 'absolute', width: 1, height: 1, padding: 0, margin: -1,
+            overflow: 'hidden', clip: 'rect(0,0,0,0)', whiteSpace: 'nowrap', borderWidth: 0,
+          }}
+          onFocus={(e) => {
+            e.currentTarget.style.position = 'fixed';
+            e.currentTarget.style.top = '16px';
+            e.currentTarget.style.left = '16px';
+            e.currentTarget.style.width = 'auto';
+            e.currentTarget.style.height = 'auto';
+            e.currentTarget.style.padding = '8px 16px';
+            e.currentTarget.style.margin = '0';
+            e.currentTarget.style.overflow = 'visible';
+            e.currentTarget.style.clip = 'auto';
+            e.currentTarget.style.whiteSpace = 'normal';
+            e.currentTarget.style.zIndex = '9999';
+            e.currentTarget.style.background = '#8a5cf6';
+            e.currentTarget.style.color = '#fff';
+            e.currentTarget.style.borderRadius = '8px';
+            e.currentTarget.style.fontSize = '14px';
+            e.currentTarget.style.fontWeight = '600';
+            e.currentTarget.style.textDecoration = 'none';
+          }}
+          onBlur={(e) => {
+            e.currentTarget.style.position = 'absolute';
+            e.currentTarget.style.width = '1px';
+            e.currentTarget.style.height = '1px';
+            e.currentTarget.style.padding = '0';
+            e.currentTarget.style.margin = '-1px';
+            e.currentTarget.style.overflow = 'hidden';
+            e.currentTarget.style.clip = 'rect(0,0,0,0)';
+          }}
+        >
+          Skip to main content
+        </a>
         <Providers>
           <CommandBar />
           {children}
