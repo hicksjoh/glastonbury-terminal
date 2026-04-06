@@ -7,14 +7,17 @@ import {
   detectTradeIntent,
   logRecommendation,
   logConversation,
-  parseSuggestions,
-  parseActions,
-  SUGGESTION_PROMPT_SUFFIX,
-  ACTION_PROMPT_SUFFIX,
 } from '@/lib/keisha-context';
+import {
+  KEISHA_TOOLS,
+  DANGEROUS_TOOLS,
+  MAX_TOOL_ITERATIONS,
+  executeToolCall,
+} from '@/lib/keisha-tools';
+import type { MessageParam, TextBlockParam, ToolUseBlockParam, ToolResultBlockParam } from '@anthropic-ai/sdk/resources/messages';
 
 // ═════════════════════════════════════════════════════════════════════════════
-//  POST Handler — Keisha Supreme
+//  POST Handler — Keisha Supreme (Tool Use + Agentic Loop)
 // ═════════════════════════════════════════════════════════════════════════════
 
 export async function POST(req: NextRequest) {
@@ -35,7 +38,7 @@ export async function POST(req: NextRequest) {
 
     // ── Build system prompt with context ────────────────────────────────
     const today = new Date().toLocaleDateString('en-US', {
-      weekday: 'long', year: 'numeric', month: 'long', day: 'numeric'
+      weekday: 'long', year: 'numeric', month: 'long', day: 'numeric',
     });
 
     const systemWithContext = `${KEISHA_SYSTEM_PROMPT}
@@ -45,70 +48,122 @@ export async function POST(req: NextRequest) {
 ═══════════════════════════════════════════
 ${portfolioContext}
 
-When answering, always ground your response in the live data above. If certain data points are missing (e.g., market is closed, no positions yet), acknowledge it and work with what you have. Never fabricate numbers.${ACTION_PROMPT_SUFFIX}${SUGGESTION_PROMPT_SUFFIX}`;
+When answering, always ground your response in the live data above. If certain data points are missing (e.g., market is closed, no positions yet), acknowledge it and work with what you have. Never fabricate numbers.
+
+TOOL USAGE RULES:
+- Use lookup_price and get_position to fetch real-time data BEFORE giving analysis
+- Chain multiple lookups when comparing stocks or building a thesis
+- Always call suggest_followups at the END of your response with 3 relevant follow-up questions
+- For orders (place_order), ONLY use the tool when Wes explicitly asks to buy or sell
+- For non-destructive tools (lookups, watchlist, alerts), execute immediately when relevant`;
 
     // ── Build conversation history ─────────────────────────────────────
-    const conversationHistory = messages.map((m: { role: string; content: string }) => ({
-      role: m.role as 'user' | 'assistant',
-      content: m.content,
-    }));
+    const conversationHistory: MessageParam[] = messages.map(
+      (m: { role: string; content: string }) => ({
+        role: m.role as 'user' | 'assistant',
+        content: m.content,
+      }),
+    );
 
-    // ── Generate response ───────────────────────────────────────────────
-    const response = await anthropic.messages.create({
-      model: 'claude-opus-4-6',
-      max_tokens: 4096,
-      system: systemWithContext,
-      messages: conversationHistory,
-    });
+    // ── Agentic Loop — iterate until Claude gives a final text response ─
+    let currentMessages = [...conversationHistory];
+    const actionResults: { type: string; result: unknown; success: boolean }[] = [];
+    const pendingConfirmations: { type: string; params: Record<string, unknown> }[] = [];
+    let suggestions: string[] = [];
+    let finalText = '';
 
-    const rawContent = response.content[0].type === 'text' ? response.content[0].text : '';
+    for (let i = 0; i < MAX_TOOL_ITERATIONS; i++) {
+      const response = await anthropic.messages.create({
+        model: 'claude-opus-4-6',
+        max_tokens: 4096,
+        system: systemWithContext,
+        messages: currentMessages,
+        tools: KEISHA_TOOLS,
+      });
 
-    // ── Parse suggestions and actions from response ───────────────────────
-    const { cleanText: textWithoutSuggestions, suggestions } = parseSuggestions(rawContent);
-    const { cleanText: cleanedContent, actions } = parseActions(textWithoutSuggestions);
-    let content = cleanedContent;
+      // ── Extract text and tool_use blocks ────────────────────────────
+      const textBlocks = response.content.filter(b => b.type === 'text');
+      const toolBlocks = response.content.filter(b => b.type === 'tool_use');
 
-    // ── Execute safe actions, hold dangerous ones for confirmation ────────
-    const DANGEROUS_ACTIONS = new Set(['place_order']);
-    const actionResults: { type: string; result: any; success: boolean }[] = [];
-    const pendingConfirmations: { type: string; params: Record<string, string> }[] = [];
+      // Accumulate text
+      for (const block of textBlocks) {
+        if (block.type === 'text') finalText += block.text;
+      }
 
-    if (actions.length > 0) {
-      const actionBaseUrl = process.env.VERCEL_URL
-        ? `https://${process.env.VERCEL_URL}`
-        : 'http://localhost:3000';
-      for (const action of actions) {
-        if (DANGEROUS_ACTIONS.has(action.type)) {
-          pendingConfirmations.push(action);
+      // No tool calls — we're done
+      if (toolBlocks.length === 0 || response.stop_reason === 'end_turn') {
+        // If stop_reason is end_turn but there are tool blocks, process them first
+        if (toolBlocks.length === 0) break;
+      }
+
+      // ── Process tool calls ──────────────────────────────────────────
+      const toolResults: ToolResultBlockParam[] = [];
+
+      for (const block of toolBlocks) {
+        if (block.type !== 'tool_use') continue;
+        const { id, name, input } = block;
+        const toolInput = input as Record<string, unknown>;
+
+        // Handle suggest_followups (not a real action)
+        if (name === 'suggest_followups') {
+          const sugs = toolInput.suggestions;
+          if (Array.isArray(sugs)) {
+            suggestions = sugs.map(s => String(s)).slice(0, 3);
+          }
+          toolResults.push({
+            type: 'tool_result',
+            tool_use_id: id,
+            content: 'Suggestions noted.',
+          } as unknown as ToolResultBlockParam);
           continue;
         }
-        try {
-          const actionRes = await fetch(`${actionBaseUrl}/api/keisha/actions`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ action: action.type, params: action.params }),
-          });
-          const actionData = await actionRes.json();
-          actionResults.push({ type: action.type, result: actionData, success: actionRes.ok });
-        } catch {
-          actionResults.push({ type: action.type, result: { error: 'Action failed' }, success: false });
+
+        // Handle dangerous tools — don't execute, return as pending
+        if (DANGEROUS_TOOLS.has(name)) {
+          pendingConfirmations.push({ type: name, params: toolInput });
+          toolResults.push({
+            type: 'tool_result',
+            tool_use_id: id,
+            content: JSON.stringify({
+              pending: true,
+              message: `Order requires Wes's confirmation. A confirmation prompt has been sent to the UI.`,
+            }),
+          } as unknown as ToolResultBlockParam);
+          continue;
         }
+
+        // Execute safe tools
+        const { result, success } = await executeToolCall(name, toolInput);
+        actionResults.push({ type: name, result, success });
+        toolResults.push({
+          type: 'tool_result',
+          tool_use_id: id,
+          content: JSON.stringify(result),
+        } as unknown as ToolResultBlockParam);
       }
+
+      // ── Feed results back for next iteration ────────────────────────
+      currentMessages = [
+        ...currentMessages,
+        { role: 'assistant' as const, content: response.content as any },
+        { role: 'user' as const, content: toolResults as any },
+      ];
+
+      // If stop_reason was end_turn (text + tools in same response), break after processing
+      if (response.stop_reason === 'end_turn') break;
     }
 
-    // ── Feature 3: NLP Trade Detection (post-processing) ────────────────
-    const tradeCard = await detectTradeIntent(content);
-    if (tradeCard) {
-      content += tradeCard;
-    }
+    // ── Post-processing: trade intent detection ────────────────────────
+    const tradeCard = await detectTradeIntent(finalText);
+    if (tradeCard) finalText += tradeCard;
 
-    // ── Feature 1 & 6: Log recommendation + conversation (background) ──
-    logRecommendation(supabase, content).catch(() => {});
-    logConversation(supabase, userMessage, content).catch(() => {});
+    // ── Background logging ─────────────────────────────────────────────
+    logRecommendation(supabase, finalText).catch(() => {});
+    logConversation(supabase, userMessage, finalText).catch(() => {});
 
     return NextResponse.json({
-      content,
-      suggestions,
+      content: finalText,
+      suggestions: suggestions.length > 0 ? suggestions : undefined,
       actions: actionResults.length > 0 ? actionResults : undefined,
       pendingConfirmations: pendingConfirmations.length > 0 ? pendingConfirmations : undefined,
     });

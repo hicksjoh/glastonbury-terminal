@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { createServiceClient } from '@/lib/supabase';
+import { sendPushNotification, PushSubscriptionData } from '@/lib/web-push';
 
 const FMP_BASE = 'https://financialmodelingprep.com/stable';
 const FMP_KEY = process.env.FMP_API_KEY || '';
@@ -177,6 +178,46 @@ export async function GET() {
           });
         } catch {
           // best-effort
+        }
+
+        // Send Web Push to all registered subscriptions
+        try {
+          const { data: subs } = await supabase
+            .from('push_subscriptions')
+            .select('endpoint, p256dh, auth');
+
+          if (subs && subs.length > 0) {
+            const pushPayload = {
+              title: `Alert: ${alert.name}`,
+              body: alert.conditions
+                .map(c => `${c.symbol} ${c.metric} ${c.operator} ${c.value}`)
+                .join(alert.logic === 'OR' ? ' OR ' : ' AND '),
+              icon: '/icon-192.png',
+              url: '/alerts',
+            };
+
+            const results = await Promise.all(
+              subs.map(async (sub) => {
+                const subscription: PushSubscriptionData = {
+                  endpoint: sub.endpoint,
+                  keys: { p256dh: sub.p256dh, auth: sub.auth },
+                };
+                const ok = await sendPushNotification(subscription, pushPayload);
+                return { endpoint: sub.endpoint, ok };
+              })
+            );
+
+            // Remove expired subscriptions
+            const expired = results.filter(r => !r.ok).map(r => r.endpoint);
+            if (expired.length > 0) {
+              await supabase
+                .from('push_subscriptions')
+                .delete()
+                .in('endpoint', expired);
+            }
+          }
+        } catch {
+          // best-effort push delivery
         }
       }
     }

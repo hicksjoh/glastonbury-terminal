@@ -16,7 +16,7 @@ const securityHeaders = [
       "style-src 'self' 'unsafe-inline'",
       "img-src 'self' data: blob: https:",
       "font-src 'self' data:",
-      "connect-src 'self' https://paper-api.alpaca.markets https://data.alpaca.markets https://*.supabase.co https://financialmodelingprep.com https://api.anthropic.com https://finnhub.io wss://*.supabase.co",
+      "connect-src 'self' https://paper-api.alpaca.markets https://data.alpaca.markets wss://stream.data.alpaca.markets https://*.supabase.co https://financialmodelingprep.com https://api.anthropic.com https://finnhub.io wss://*.supabase.co",
       "frame-src 'self' https://s3.tradingview.com https://*.tradingview.com",
       "frame-ancestors 'none'",
       "worker-src 'self' blob:",

@@ -704,15 +704,23 @@ export default function KeishaPage() {
                 fullText += data.text;
                 setMessages(prev => prev.map(m => m.id === assistantId ? { ...m, content: fullText } : m));
               }
+              if (data.toolsRunning) {
+                // Keisha is chaining tools — show thinking indicator
+                if (!fullText.endsWith('\n\n')) fullText += '\n\n';
+                fullText += '_Pulling live data..._\n\n';
+                setMessages(prev => prev.map(m => m.id === assistantId ? { ...m, content: fullText } : m));
+              }
               if (data.suggestions) {
                 setSuggestions(data.suggestions);
               }
               if (data.action) {
-                // Action was executed by Keisha — show result as a status message
+                // Tool was executed by Keisha — show result inline
                 const a = data.action;
                 const statusIcon = a.success ? '\u2705' : '\u274c';
                 const statusMsg = a.result?.message || a.result?.error || `${a.type} completed`;
-                fullText += `\n\n${statusIcon} **Action:** ${statusMsg}`;
+                // Remove the "Pulling live data..." placeholder if present
+                fullText = fullText.replace(/_Pulling live data\.\.\._\n\n$/, '');
+                fullText += `\n\n${statusIcon} **${a.type}:** ${statusMsg}`;
                 setMessages(prev => prev.map(m => m.id === assistantId ? { ...m, content: fullText } : m));
               }
               if (data.pendingConfirmation) {
