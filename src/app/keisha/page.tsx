@@ -199,6 +199,8 @@ export default function KeishaPage() {
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [searchResults, setSearchResults] = useState<ConversationSummary[]>([]);
+  const [pendingOrder, setPendingOrder] = useState<{ type: string; params: Record<string, string> } | null>(null);
+  const [confirmingOrder, setConfirmingOrder] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
   const recognitionRef = useRef<Record<string, unknown> | null>(null);
 
@@ -589,6 +591,46 @@ export default function KeishaPage() {
     }
   };
 
+  const handleOrderConfirm = async () => {
+    if (!pendingOrder) return;
+    setConfirmingOrder(true);
+    try {
+      const res = await fetch('/api/keisha/actions', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: pendingOrder.type, params: pendingOrder.params }),
+      });
+      const data = await res.json();
+      const statusIcon = res.ok ? '\u2705' : '\u274c';
+      const statusMsg = data.message || data.error || 'Order processed';
+      setMessages(prev => [...prev, {
+        id: Date.now().toString(),
+        role: 'assistant',
+        content: `${statusIcon} **Order Executed:** ${statusMsg}`,
+        timestamp: new Date().toISOString(),
+      }]);
+    } catch {
+      setMessages(prev => [...prev, {
+        id: Date.now().toString(),
+        role: 'assistant',
+        content: '\u274c Order submission failed — check your connection.',
+        timestamp: new Date().toISOString(),
+      }]);
+    }
+    setPendingOrder(null);
+    setConfirmingOrder(false);
+  };
+
+  const handleOrderCancel = () => {
+    setPendingOrder(null);
+    setMessages(prev => [...prev, {
+      id: Date.now().toString(),
+      role: 'assistant',
+      content: 'Order cancelled. No trade was placed.',
+      timestamp: new Date().toISOString(),
+    }]);
+  };
+
   const sendMessage = useCallback(async (content: string) => {
     if (!content.trim() || loading) return;
 
@@ -673,6 +715,11 @@ export default function KeishaPage() {
                 fullText += `\n\n${statusIcon} **Action:** ${statusMsg}`;
                 setMessages(prev => prev.map(m => m.id === assistantId ? { ...m, content: fullText } : m));
               }
+              if (data.pendingConfirmation) {
+                // Dangerous action (e.g. place_order) — requires user confirmation
+                const pc = data.pendingConfirmation;
+                setPendingOrder({ type: pc.type, params: pc.params });
+              }
               if (data.trade) {
                 const tradeInfo = data.trade;
                 setTradeModal({
@@ -718,6 +765,11 @@ export default function KeishaPage() {
 
         const updatedMessages = [...messages, displayUserMsg, assistantMsg];
         setMessages(updatedMessages);
+
+        // Handle pending confirmations from non-streaming response
+        if (data.pendingConfirmations?.length > 0) {
+          setPendingOrder(data.pendingConfirmations[0]);
+        }
 
         if (convoId) {
           saveMessages(convoId, updatedMessages);
@@ -1122,6 +1174,64 @@ export default function KeishaPage() {
           }}
           onCancel={() => setTradeModal(null)}
         />
+      )}
+
+      {/* Order Confirmation Banner */}
+      {pendingOrder && (
+        <div style={{
+          position: 'fixed', bottom: 100, left: '50%', transform: 'translateX(-50%)',
+          background: 'rgba(20, 20, 30, 0.98)', border: '1px solid rgba(240, 198, 116, 0.4)',
+          borderRadius: 14, padding: '16px 24px', zIndex: 1000, maxWidth: 440, width: '90%',
+          boxShadow: '0 12px 40px rgba(0,0,0,0.5)',
+        }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
+            <Zap size={16} color="#f0c674" />
+            <span style={{ fontSize: 14, fontWeight: 700, color: '#f0c674' }}>
+              Confirm Trade
+            </span>
+          </div>
+          <div style={{ fontSize: 13, color: '#ccc', marginBottom: 12 }}>
+            <strong>{pendingOrder.params.side?.toUpperCase()}</strong> {pendingOrder.params.qty} shares of <strong>{pendingOrder.params.symbol}</strong> ({pendingOrder.params.orderType || 'market'})
+            {pendingOrder.params.limitPrice && <> at <strong>${pendingOrder.params.limitPrice}</strong></>}
+          </div>
+          <div style={{ display: 'flex', gap: 8 }}>
+            <button
+              onClick={handleOrderConfirm}
+              disabled={confirmingOrder}
+              style={{
+                padding: '8px 20px', borderRadius: 8, border: 'none',
+                background: '#4ade80', color: '#080b14', fontWeight: 600,
+                fontSize: 13, cursor: confirmingOrder ? 'wait' : 'pointer',
+                opacity: confirmingOrder ? 0.6 : 1,
+              }}
+            >
+              {confirmingOrder ? 'Executing...' : 'Confirm & Execute'}
+            </button>
+            <button
+              onClick={() => {
+                setPendingOrder(null);
+                window.location.href = `/trading?symbol=${pendingOrder.params.symbol}&side=${pendingOrder.params.side || 'buy'}`;
+              }}
+              style={{
+                padding: '8px 16px', borderRadius: 8,
+                border: '1px solid #8a5cf6', background: 'transparent',
+                color: '#8a5cf6', fontWeight: 600, fontSize: 13, cursor: 'pointer',
+              }}
+            >
+              Modify in Trading
+            </button>
+            <button
+              onClick={handleOrderCancel}
+              style={{
+                padding: '8px 16px', borderRadius: 8,
+                border: '1px solid #333', background: 'transparent',
+                color: '#888', fontSize: 13, cursor: 'pointer',
+              }}
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
       )}
     </AppShell>
   );

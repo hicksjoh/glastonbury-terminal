@@ -95,13 +95,27 @@ When answering, always ground your response in the live data above. If certain d
           const { cleanText: textWithoutSuggestions, suggestions } = parseSuggestions(fullResponse);
           const { cleanText, actions } = parseActions(textWithoutSuggestions);
 
-          // ── Execute any actions Keisha included ──────────────────────────
+          // ── Execute safe actions, hold dangerous ones for confirmation ──
+          const DANGEROUS_ACTIONS = new Set(['place_order']);
+
           if (actions.length > 0) {
             const actionBaseUrl = process.env.VERCEL_URL
               ? `https://${process.env.VERCEL_URL}`
               : 'http://localhost:3000';
 
             for (const action of actions) {
+              if (DANGEROUS_ACTIONS.has(action.type)) {
+                // Send as pending confirmation — NOT auto-executed
+                controller.enqueue(
+                  encoder.encode(`data: ${JSON.stringify({
+                    pendingConfirmation: {
+                      type: action.type,
+                      params: action.params,
+                    }
+                  })}\n\n`)
+                );
+                continue;
+              }
               try {
                 const actionRes = await fetch(`${actionBaseUrl}/api/keisha/actions`, {
                   method: 'POST',

@@ -68,13 +68,20 @@ When answering, always ground your response in the live data above. If certain d
     const { cleanText: cleanedContent, actions } = parseActions(textWithoutSuggestions);
     let content = cleanedContent;
 
-    // ── Execute any actions Keisha included ──────────────────────────────
+    // ── Execute safe actions, hold dangerous ones for confirmation ────────
+    const DANGEROUS_ACTIONS = new Set(['place_order']);
     const actionResults: { type: string; result: any; success: boolean }[] = [];
+    const pendingConfirmations: { type: string; params: Record<string, string> }[] = [];
+
     if (actions.length > 0) {
       const actionBaseUrl = process.env.VERCEL_URL
         ? `https://${process.env.VERCEL_URL}`
         : 'http://localhost:3000';
       for (const action of actions) {
+        if (DANGEROUS_ACTIONS.has(action.type)) {
+          pendingConfirmations.push(action);
+          continue;
+        }
         try {
           const actionRes = await fetch(`${actionBaseUrl}/api/keisha/actions`, {
             method: 'POST',
@@ -99,7 +106,12 @@ When answering, always ground your response in the live data above. If certain d
     logRecommendation(supabase, content).catch(() => {});
     logConversation(supabase, userMessage, content).catch(() => {});
 
-    return NextResponse.json({ content, suggestions, actions: actionResults.length > 0 ? actionResults : undefined });
+    return NextResponse.json({
+      content,
+      suggestions,
+      actions: actionResults.length > 0 ? actionResults : undefined,
+      pendingConfirmations: pendingConfirmations.length > 0 ? pendingConfirmations : undefined,
+    });
   } catch (error) {
     const msg = error instanceof Error ? error.message : 'Unknown error';
     console.error('Keisha API error:', msg);
