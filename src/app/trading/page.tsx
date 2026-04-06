@@ -6,6 +6,7 @@ import { AppShell } from '@/components/layout/AppShell';
 import { ErrorBoundary } from '@/components/ErrorBoundary';
 import { AlertTriangle, TrendingUp, TrendingDown, Search, X, Users, LinkIcon, Download } from 'lucide-react';
 import { exportToCSV } from '@/lib/export';
+import { SkeletonTable } from '@/components/Skeleton';
 import Link from 'next/link';
 import TradeGuard from '@/components/TradeGuard';
 import PortfolioChart from '@/components/PortfolioChart';
@@ -971,7 +972,7 @@ function TradingPage() {
               </div>
               {positionsLoading ? (
                 <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: 200 }}>
-                  <div style={{ width: 120, height: 120, borderRadius: '50%', backgroundColor: '#2a2a3a', animation: 'pulse 1.5s ease-in-out infinite' }} />
+                  <div style={{ width: 120, height: 120, borderRadius: '50%', background: 'linear-gradient(90deg, rgba(255,255,255,0.04) 25%, rgba(255,255,255,0.08) 50%, rgba(255,255,255,0.04) 75%)', backgroundSize: '200% 100%', animation: 'shimmer 1.5s infinite' }} />
                 </div>
               ) : positions.length === 0 ? (
                 <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: 200, color: '#6b6b80', fontSize: 13 }}>
@@ -1206,18 +1207,20 @@ function TradingPage() {
             )}
             {positionsLoading ? (
               <div style={{ padding: '20px 0' }}>
-                {[1, 2, 3].map(i => (
-                  <div key={i} style={{ display: 'flex', gap: 16, padding: '12px', borderBottom: '1px solid #1a1a24' }}>
-                    {[80, 40, 90, 90, 70, 60].map((w, j) => (
-                      <div key={j} style={{ width: w, height: 14, backgroundColor: '#2a2a3a', borderRadius: 4, animation: 'pulse 1.5s ease-in-out infinite' }} />
-                    ))}
-                  </div>
-                ))}
-                <style>{`@keyframes pulse { 0%, 100% { opacity: 0.4; } 50% { opacity: 1; } }`}</style>
+                <SkeletonTable rows={4} cols={6} />
               </div>
             ) : positions.length === 0 ? (
-              <div style={{ textAlign: 'center', padding: '24px 0', color: '#6b6b80', fontSize: 13 }}>
-                No stock positions yet.{!apiConnected && ' Connect Alpaca to see your holdings.'}
+              <div style={{
+                textAlign: 'center',
+                padding: '32px 20px',
+                color: '#6b6b80',
+                background: 'rgba(255,255,255,0.02)',
+                borderRadius: 10,
+                border: '1px solid rgba(255,255,255,0.06)',
+              }}>
+                <div style={{ fontSize: 28, marginBottom: 10, opacity: 0.4 }}>&#128200;</div>
+                <div style={{ fontSize: 14, fontWeight: 600, color: '#888', marginBottom: 4 }}>No open positions</div>
+                <div style={{ fontSize: 13 }}>Place a trade to get started.{!apiConnected && ' Connect Alpaca to see your holdings.'}</div>
               </div>
             ) : (
               <table style={{ width: '100%', borderCollapse: 'collapse' }}>

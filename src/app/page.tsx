@@ -7,6 +7,7 @@ import { ErrorBoundary } from '@/components/ErrorBoundary';
 import Image from 'next/image';
 import MarkdownRenderer from '@/components/MarkdownRenderer';
 import { MOCK_AUDIT_LOG, PORTFOLIO_SUMMARY } from '@/lib/data';
+import { formatCurrency, formatPL } from '@/lib/format';
 import { AuditLogEntry } from '@/types';
 
 // ─── Count-up animation hook ────────────────────────────────
@@ -94,12 +95,6 @@ function Sparkline({ data, width = 80, height = 28, color = '#4ade80' }: { data:
 }
 
 // ─── Format helpers ─────────────────────────────────────────
-function fmtMoney(n: number, compact = false) {
-  if (compact && Math.abs(n) >= 1000000) return `$${(n / 1000000).toFixed(2)}M`;
-  if (compact && Math.abs(n) >= 1000) return `$${(n / 1000).toFixed(0)}K`;
-  return `$${n.toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}`;
-}
-
 function timeAgo(ts: string) {
   const diff = Date.now() - new Date(ts).getTime();
   const mins = Math.floor(diff / 60000);
@@ -358,12 +353,12 @@ export default function DashboardPage() {
       const eq = parseFloat(accountRes.equity) || 0;
       const ca = parseFloat(accountRes.cash) || 0;
       if (ca > 0) chips.push({ icon: '💰', text: `$${Math.round(ca / 1000)}K cash ready to deploy` });
-      if (eq > 0) chips.push({ icon: '📈', text: `Portfolio: ${fmtMoney(eq, true)}` });
+      if (eq > 0) chips.push({ icon: '📈', text: `Portfolio: ${formatCurrency(eq)}` });
     }
     chips.push({ icon: '📋', text: '23 CR3 territories signed' });
     // Use freshly fetched real estate value if available
     const freshMiami = wealthRes?.success ? (wealthRes.data?.breakdown?.real_estate?.value || 580000) : 580000;
-    chips.push({ icon: '🏠', text: `Miami Shores: ${fmtMoney(freshMiami, true)} equity` });
+    chips.push({ icon: '🏠', text: `Miami Shores: ${formatCurrency(freshMiami)} equity` });
     chips.push({ icon: '🎯', text: '2026 Foundation Year — building base' });
     if (chips.length > 0) setInsightChips(chips);
 
@@ -476,12 +471,12 @@ export default function DashboardPage() {
               <div style={{ display: 'flex', alignItems: 'center', gap: 12, justifyContent: 'flex-end' }}>
                 <Sparkline data={historyPoints.length > 2 ? historyPoints : [98000, 99000, 99500, 100000, 100200, 99800, 100500, 101000, 100800, 100000]} color={todayPL >= 0 ? '#4ade80' : '#f87171'} />
                 <span style={{ fontSize: 36, fontWeight: 700, color: '#fff', fontFamily: "'JetBrains Mono', monospace", letterSpacing: '-0.02em' }}>
-                  {fmtMoney(animatedNetWorth, true)}
+                  {formatCurrency(animatedNetWorth)}
                 </span>
               </div>
               {todayPL !== 0 && (
                 <div style={{ fontSize: 14, color: todayPL >= 0 ? '#4ade80' : '#f87171', fontWeight: 600, fontFamily: "'JetBrains Mono', monospace", marginTop: 2 }}>
-                  {todayPL >= 0 ? '+' : ''}{fmtMoney(Math.round(todayPL))} today
+                  {formatPL(todayPL)} today
                 </div>
               )}
             </div>
@@ -537,7 +532,7 @@ export default function DashboardPage() {
           <GlassCard style={{ flex: '1 1 150px', padding: '16px 18px' }}>
             <div style={{ fontSize: 10, color: '#888', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 6 }}>Cash Available</div>
             <div style={{ fontSize: 20, fontWeight: 700, color: '#fff', fontFamily: "'JetBrains Mono', monospace" }}>
-              {fmtMoney(animatedCash, true)}
+              {formatCurrency(animatedCash)}
             </div>
             <div style={{ fontSize: 11, color: '#555', marginTop: 4 }}>Ready to deploy</div>
           </GlassCard>
@@ -546,7 +541,7 @@ export default function DashboardPage() {
           <GlassCard style={{ flex: '1 1 150px', padding: '16px 18px' }}>
             <div style={{ fontSize: 10, color: '#888', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 6 }}>Today&apos;s P&amp;L</div>
             <div style={{ fontSize: 20, fontWeight: 700, color: todayPL >= 0 ? '#4ade80' : '#f87171', fontFamily: "'JetBrains Mono', monospace" }}>
-              {todayPL >= 0 ? '+' : ''}{fmtMoney(Math.round(todayPL))}
+              {formatPL(todayPL)}
             </div>
             <div style={{ fontSize: 11, color: '#555', marginTop: 4 }}>{todayPL >= 0 ? 'Winning day' : 'Down day'}</div>
           </GlassCard>
@@ -557,7 +552,7 @@ export default function DashboardPage() {
             <div style={{ fontSize: 20, fontWeight: 700, color: '#fff', fontFamily: "'JetBrains Mono', monospace" }}>
               {positionCount}
             </div>
-            <div style={{ fontSize: 11, color: '#555', marginTop: 4 }}>{fmtMoney(totalInvested, true)} invested</div>
+            <div style={{ fontSize: 11, color: '#555', marginTop: 4 }}>{formatCurrency(totalInvested)} invested</div>
           </GlassCard>
 
           {/* $50M Progress */}
@@ -566,7 +561,7 @@ export default function DashboardPage() {
             <div style={{ fontSize: 20, fontWeight: 700, color: '#f0c674', fontFamily: "'JetBrains Mono', monospace" }}>
               {fiftyMPct.toFixed(2)}%
             </div>
-            <div style={{ fontSize: 11, color: '#555', marginTop: 4 }}>{fmtMoney(totalNetWorth, true)} of $50M</div>
+            <div style={{ fontSize: 11, color: '#555', marginTop: 4 }}>{formatCurrency(totalNetWorth)} of $50M</div>
           </GlassCard>
 
           {/* Active Strategies */}
@@ -580,7 +575,7 @@ export default function DashboardPage() {
           <GlassCard style={{ flex: '1 1 150px', padding: '16px 18px' }} onClick={() => router.push('/trading?tab=options')}>
             <div style={{ fontSize: 10, color: '#888', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 6 }}>Options P&amp;L</div>
             <div style={{ fontSize: 20, fontWeight: 700, color: optionsPnl >= 0 ? '#4ade80' : '#f87171', fontFamily: "'JetBrains Mono', monospace" }}>
-              {optionsPnl !== 0 ? `${optionsPnl >= 0 ? '+' : ''}${fmtMoney(Math.round(optionsPnl))}` : '—'}
+              {optionsPnl !== 0 ? formatPL(optionsPnl) : '—'}
             </div>
             <div style={{ fontSize: 11, color: '#555', marginTop: 4 }}>Open positions</div>
           </GlassCard>
@@ -694,7 +689,7 @@ export default function DashboardPage() {
 
             {positions.length === 0 ? (
               <div style={{ color: '#555', fontSize: 13, padding: '12px 0' }}>
-                No open positions — {fmtMoney(cash, true)} cash ready to deploy
+                No open positions — {formatCurrency(cash)} cash ready to deploy
               </div>
             ) : (
               <div style={{ flex: 1 }}>
@@ -718,7 +713,7 @@ export default function DashboardPage() {
                       {pos.allocation.toFixed(0)}%
                     </span>
                     <span style={{ fontSize: 12, color: '#d0d0e0', fontFamily: "'JetBrains Mono', monospace", width: 64, textAlign: 'right' }}>
-                      {fmtMoney(pos.marketValue, true)}
+                      {formatCurrency(pos.marketValue)}
                     </span>
                     <span style={{
                       fontSize: 12, fontWeight: 600, fontFamily: "'JetBrains Mono', monospace", width: 56, textAlign: 'right',
@@ -849,7 +844,7 @@ export default function DashboardPage() {
                     <div>
                       <div style={{ fontSize: 12, color: '#d0d0e0', fontWeight: 500 }}>{seg.label}</div>
                       <div style={{ fontSize: 11, color: '#555', fontFamily: "'JetBrains Mono', monospace" }}>
-                        {fmtMoney(val, true)} · {pct.toFixed(1)}%
+                        {formatCurrency(val)} · {pct.toFixed(1)}%
                       </div>
                     </div>
                   </div>
@@ -871,7 +866,7 @@ export default function DashboardPage() {
             </div>
             <div style={{ textAlign: 'center', marginTop: 12 }}>
               <div style={{ fontSize: 14, fontWeight: 600, color: '#d0d0e0', fontFamily: "'JetBrains Mono', monospace" }}>
-                {fmtMoney(totalNetWorth, true)}
+                {formatCurrency(totalNetWorth)}
               </div>
               <div style={{ fontSize: 11, color: '#555', marginTop: 2 }}>of $50M target</div>
               <div style={{

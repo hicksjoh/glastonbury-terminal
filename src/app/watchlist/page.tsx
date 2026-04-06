@@ -4,6 +4,7 @@ import { useEffect, useState, useCallback, useRef } from 'react';
 import { AppShell } from '@/components/layout/AppShell';
 import { ErrorBoundary } from '@/components/ErrorBoundary';
 import { SparklineChart } from '@/components/SparklineChart';
+import { SkeletonTable } from '@/components/Skeleton';
 import { cacheSet, cacheGet, formatStaleAge } from '@/lib/cache';
 
 interface WatchlistItem {
@@ -379,7 +380,22 @@ export default function WatchlistPage() {
         </div>
 
         {loading ? (
-          <div style={{ textAlign: 'center', padding: 60, color: '#666' }}>Loading watchlist...</div>
+          <div style={{ padding: '20px 0' }}>
+            <SkeletonTable rows={8} cols={6} />
+          </div>
+        ) : items.length === 0 ? (
+          <div style={{
+            textAlign: 'center',
+            padding: '60px 20px',
+            color: '#6b6b80',
+            background: 'rgba(255,255,255,0.02)',
+            borderRadius: 12,
+            border: '1px solid rgba(255,255,255,0.06)',
+          }}>
+            <div style={{ fontSize: 32, marginBottom: 12, opacity: 0.4 }}>&#9734;</div>
+            <div style={{ fontSize: 15, fontWeight: 600, color: '#888', marginBottom: 6 }}>Your watchlist is empty</div>
+            <div style={{ fontSize: 13 }}>Add symbols above to start tracking.</div>
+          </div>
         ) : (
           <div style={{
             background: 'rgba(255,255,255,0.02)',

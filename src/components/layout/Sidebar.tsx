@@ -125,6 +125,7 @@ export function Sidebar({ isOpen, isMobile, onClose }: { isOpen?: boolean; isMob
                 textTransform: 'uppercase',
                 letterSpacing: '0.08em',
                 padding: '8px 12px 4px',
+                marginTop: 12,
                 fontFamily: "'JetBrains Mono', monospace",
               }}>
                 {section.label}
@@ -221,7 +222,7 @@ export function Sidebar({ isOpen, isMobile, onClose }: { isOpen?: boolean; isMob
           </div>
         </div>
         <div>Paper Trading Active</div>
-        <div style={{ color: '#2a2a3a', fontSize: 10, marginTop: 4 }}>v3.0 &bull; 2026</div>
+        <div style={{ color: '#2a2a3a', fontSize: 10, marginTop: 4 }}>v4.0 &bull; 2026</div>
       </div>
     </aside>
   );
