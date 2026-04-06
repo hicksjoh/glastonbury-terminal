@@ -13,9 +13,15 @@ export default function Error({ error, reset }: { error: Error; reset: () => voi
       <button onClick={reset} style={{
         padding: '12px 32px', borderRadius: 10, cursor: 'pointer',
         background: '#8a5cf6', border: 'none', color: '#fff', fontSize: 14, fontWeight: 700,
+        textDecoration: 'none',
       }}>
         Try Again
       </button>
+      <a href="/" style={{
+        marginTop: 12, color: '#8a5cf6', fontSize: 13, textDecoration: 'underline',
+      }}>
+        Go to Dashboard
+      </a>
     </div>
   );
 }

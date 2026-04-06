@@ -134,7 +134,7 @@ function TradingPage() {
             marketValue: parseFloat(p.market_value),
             costBasis: parseFloat(p.cost_basis),
             unrealizedPL: parseFloat(p.unrealized_pl),
-            unrealizedPLPercent: parseFloat(p.unrealized_plpc) * 100,
+            unrealizedPLPercent: isFinite(parseFloat(p.unrealized_plpc) * 100) ? parseFloat(p.unrealized_plpc) * 100 : 0,
             currentPrice: parseFloat(p.current_price),
           }));
           setPositions(mapped);
@@ -1246,7 +1246,7 @@ function TradingPage() {
                       <td style={{ padding: '12px 12px', fontSize: 14, color: pos.unrealizedPLPercent >= 0 ? '#22c55e' : '#ef4444' }}>
                         <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
                           {pos.unrealizedPLPercent >= 0 ? <TrendingUp size={12} /> : <TrendingDown size={12} />}
-                          {pos.unrealizedPLPercent >= 0 ? '+' : ''}{pos.unrealizedPLPercent.toFixed(1)}%
+                          {isFinite(pos.unrealizedPLPercent) ? `${pos.unrealizedPLPercent >= 0 ? '+' : ''}${pos.unrealizedPLPercent.toFixed(1)}%` : 'New'}
                         </div>
                       </td>
                     </tr>

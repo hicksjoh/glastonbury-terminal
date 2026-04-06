@@ -21,23 +21,42 @@ export class ErrorBoundary extends Component<Props, State> {
     return { hasError: true, error };
   }
 
+  componentDidCatch(error: Error, errorInfo: React.ErrorInfo) {
+    console.error('[ErrorBoundary] Caught error:', error);
+    console.error('[ErrorBoundary] Component stack:', errorInfo.componentStack);
+  }
+
   render() {
     if (this.state.hasError) {
       return this.props.fallback || (
         <div style={{
-          display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
-          minHeight: '50vh', padding: 40, textAlign: 'center',
+          background: 'rgba(248, 113, 113, 0.05)',
+          border: '1px solid rgba(248, 113, 113, 0.2)',
+          borderRadius: 12,
+          padding: 20,
+          display: 'flex',
+          flexDirection: 'column',
+          alignItems: 'center',
+          textAlign: 'center',
         }}>
-          <div style={{ fontSize: 48, marginBottom: 16 }}>⚠️</div>
-          <h2 style={{ fontSize: 20, fontWeight: 700, color: '#fff', marginBottom: 8 }}>Something went wrong</h2>
-          <p style={{ color: '#888', fontSize: 14, marginBottom: 20, maxWidth: 400 }}>
+          <div style={{ fontSize: 36, marginBottom: 12 }}>⚠️</div>
+          <h2 style={{ fontSize: 18, fontWeight: 700, color: '#f87171', margin: '0 0 8px 0' }}>
+            Something went wrong
+          </h2>
+          <p style={{ color: '#888', fontSize: 13, marginBottom: 16, maxWidth: 400 }}>
             {this.state.error?.message || 'An unexpected error occurred'}
           </p>
           <button
             onClick={() => this.setState({ hasError: false, error: null })}
             style={{
-              padding: '10px 24px', borderRadius: 8, cursor: 'pointer',
-              background: '#8a5cf6', border: 'none', color: '#fff', fontSize: 14, fontWeight: 600,
+              padding: '10px 24px',
+              borderRadius: 8,
+              cursor: 'pointer',
+              background: '#8a5cf6',
+              border: 'none',
+              color: '#fff',
+              fontSize: 14,
+              fontWeight: 600,
             }}
           >
             Try Again
