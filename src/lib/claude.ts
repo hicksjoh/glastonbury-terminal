@@ -234,7 +234,7 @@ export async function generateBriefing(portfolioContext: string): Promise<string
   });
 
   const message = await anthropic.messages.create({
-    model: 'claude-sonnet-4-20250514',
+    model: 'claude-opus-4-6',
     max_tokens: 1200,
     system: KEISHA_SYSTEM_PROMPT,
     messages: [{
@@ -276,7 +276,7 @@ ${portfolioContext}
 When answering, always ground your response in the live data above. If certain data points are missing (e.g., market is closed, no positions yet), acknowledge it and work with what you have. Never fabricate numbers.`;
 
   const response = await anthropic.messages.create({
-    model: 'claude-sonnet-4-20250514',
+    model: 'claude-opus-4-6',
     max_tokens: 4096,
     system: systemWithContext,
     messages: conversationHistory.map(m => ({

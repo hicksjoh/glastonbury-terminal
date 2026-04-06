@@ -2,7 +2,7 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { AppShell } from '@/components/layout/AppShell';
 import { ChatMessage } from '@/types';
-import { Send, Mic, MicOff, Zap, CheckCircle, Plus, Trash2, PanelLeftClose, PanelLeft } from 'lucide-react';
+import { Send, Mic, MicOff, Zap, CheckCircle, Plus, Trash2, PanelLeftClose, PanelLeft, Volume2, VolumeX, Copy, Check, Search } from 'lucide-react';
 import MarkdownRenderer from '@/components/MarkdownRenderer';
 
 type Domain = 'general' | 'cfo' | 'tax' | 'quant' | 'wealth' | 'strategy';
@@ -193,6 +193,11 @@ export default function KeishaPage() {
   const [tradeModal, setTradeModal] = useState<{
     action: string; symbol: string; crewVerdict: string; guardCheck: string;
   } | null>(null);
+  const [suggestions, setSuggestions] = useState<string[]>([]);
+  const [speaking, setSpeaking] = useState<string | null>(null);
+  const [copiedId, setCopiedId] = useState<string | null>(null);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [searchResults, setSearchResults] = useState<ConversationSummary[]>([]);
   const bottomRef = useRef<HTMLDivElement>(null);
   const recognitionRef = useRef<Record<string, unknown> | null>(null);
 
@@ -364,6 +369,52 @@ export default function KeishaPage() {
       setListening(true);
     }
   };
+
+  // ── Voice output (TTS) ──────────────────────────────────────────────────
+  const speakMessage = (text: string, msgId: string) => {
+    if (speaking === msgId) {
+      speechSynthesis.cancel();
+      setSpeaking(null);
+      return;
+    }
+    speechSynthesis.cancel();
+    const utterance = new SpeechSynthesisUtterance(text);
+    utterance.rate = 1.1;
+    utterance.pitch = 1.0;
+    const voices = speechSynthesis.getVoices();
+    const preferred = voices.find(v => v.name.includes('Samantha') || v.name.includes('Karen') || v.name.includes('Zira'));
+    if (preferred) utterance.voice = preferred;
+    utterance.onend = () => setSpeaking(null);
+    setSpeaking(msgId);
+    speechSynthesis.speak(utterance);
+  };
+
+  // ── Copy message to clipboard ──────────────────────────────────────────
+  const copyMessage = async (content: string, msgId: string) => {
+    await navigator.clipboard.writeText(content);
+    setCopiedId(msgId);
+    setTimeout(() => setCopiedId(null), 1500);
+  };
+
+  // ── Search conversations ───────────────────────────────────────────────
+  useEffect(() => {
+    if (!searchQuery.trim()) {
+      setSearchResults([]);
+      return;
+    }
+    const timer = setTimeout(async () => {
+      try {
+        const res = await fetch(`/api/keisha/conversations/search?q=${encodeURIComponent(searchQuery)}&persona=${domain}`);
+        if (res.ok) {
+          const data = await res.json();
+          setSearchResults(data.conversations || []);
+        }
+      } catch {
+        // Silently fail
+      }
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [searchQuery, domain]);
 
   // Fetch signal context for stock mentions
   const fetchSignalContext = async (text: string): Promise<string> => {
@@ -540,6 +591,9 @@ export default function KeishaPage() {
   const sendMessage = useCallback(async (content: string) => {
     if (!content.trim() || loading) return;
 
+    // Clear previous suggestions
+    setSuggestions([]);
+
     // Fetch signal context in background
     const signalContext = await fetchSignalContext(content);
 
@@ -561,47 +615,128 @@ export default function KeishaPage() {
       if (convoId) setActiveConvoId(convoId);
     }
 
+    const history = [...messages, userMsg].filter(m => m.id !== '0');
+    const requestBody = JSON.stringify({
+      messages: history.map(m => ({ role: m.role, content: m.content })),
+      domain,
+      conversationId: convoId,
+    });
+
+    // ── Try streaming endpoint first ──────────────────────────────────
+    let streamed = false;
     try {
-      const history = [...messages, userMsg].filter(m => m.id !== '0');
-      const res = await fetch('/api/keisha', {
+      const res = await fetch('/api/keisha/stream', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          messages: history.map(m => ({ role: m.role, content: m.content })),
-          domain,
-          conversationId: convoId,
-        }),
+        body: requestBody,
       });
-      const data = await res.json();
-      const assistantMsg: ChatMessage = {
-        id: (Date.now() + 1).toString(),
-        role: 'assistant',
-        content: data.content || data.error || 'Something went wrong.',
-        timestamp: new Date().toISOString(),
-      };
 
-      const updatedMessages = [...messages, displayUserMsg, assistantMsg];
-      setMessages(updatedMessages);
+      if (res.ok && res.body) {
+        streamed = true;
+        const reader = res.body.getReader();
+        const decoder = new TextDecoder();
+        let fullText = '';
+        const assistantId = (Date.now() + 1).toString();
 
-      // Auto-save to Supabase
-      if (convoId) {
-        saveMessages(convoId, updatedMessages);
+        setMessages(prev => [...prev, {
+          id: assistantId, role: 'assistant', content: '', timestamp: new Date().toISOString(),
+        }]);
+        setLoading(false);
+
+        let buffer = '';
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split('\n');
+          // Keep incomplete last line in buffer
+          buffer = lines.pop() || '';
+
+          for (const line of lines) {
+            if (!line.startsWith('data: ')) continue;
+            try {
+              const data = JSON.parse(line.slice(6));
+              if (data.text) {
+                fullText += data.text;
+                setMessages(prev => prev.map(m => m.id === assistantId ? { ...m, content: fullText } : m));
+              }
+              if (data.suggestions) {
+                setSuggestions(data.suggestions);
+              }
+              if (data.action) {
+                // Action was executed by Keisha — show result as a status message
+                const a = data.action;
+                const statusIcon = a.success ? '\u2705' : '\u274c';
+                const statusMsg = a.result?.message || a.result?.error || `${a.type} completed`;
+                fullText += `\n\n${statusIcon} **Action:** ${statusMsg}`;
+                setMessages(prev => prev.map(m => m.id === assistantId ? { ...m, content: fullText } : m));
+              }
+              if (data.trade) {
+                const tradeInfo = data.trade;
+                setTradeModal({
+                  action: tradeInfo.action,
+                  symbol: tradeInfo.symbol,
+                  crewVerdict: tradeInfo.crewVerdict || 'N/A',
+                  guardCheck: tradeInfo.guardCheck || 'N/A',
+                });
+              }
+              if (data.done) break;
+            } catch {
+              // Skip malformed SSE lines
+            }
+          }
+        }
+
+        // Final update with complete text
+        setMessages(prev => {
+          const updated = prev.map(m => m.id === assistantId ? { ...m, content: fullText } : m);
+          if (convoId) saveMessages(convoId, updated);
+          return updated;
+        });
       }
     } catch {
-      const errorMsg: ChatMessage = {
-        id: (Date.now() + 1).toString(),
-        role: 'assistant',
-        content: 'Connection error — check your ANTHROPIC_API_KEY.',
-        timestamp: new Date().toISOString(),
-      };
-      const updatedMessages = [...messages, displayUserMsg, errorMsg];
-      setMessages(updatedMessages);
-
-      if (convoId) {
-        saveMessages(convoId, updatedMessages);
-      }
+      // Streaming failed — fall through to non-streaming
     }
-    setLoading(false);
+
+    // ── Fallback to non-streaming endpoint ────────────────────────────
+    if (!streamed) {
+      try {
+        const res = await fetch('/api/keisha', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: requestBody,
+        });
+        const data = await res.json();
+        const assistantMsg: ChatMessage = {
+          id: (Date.now() + 1).toString(),
+          role: 'assistant',
+          content: data.content || data.error || 'Something went wrong.',
+          timestamp: new Date().toISOString(),
+        };
+
+        const updatedMessages = [...messages, displayUserMsg, assistantMsg];
+        setMessages(updatedMessages);
+
+        if (convoId) {
+          saveMessages(convoId, updatedMessages);
+        }
+      } catch {
+        const errorMsg: ChatMessage = {
+          id: (Date.now() + 1).toString(),
+          role: 'assistant',
+          content: 'Connection error — check your ANTHROPIC_API_KEY.',
+          timestamp: new Date().toISOString(),
+        };
+        const updatedMessages = [...messages, displayUserMsg, errorMsg];
+        setMessages(updatedMessages);
+
+        if (convoId) {
+          saveMessages(convoId, updatedMessages);
+        }
+      }
+      setLoading(false);
+    }
   }, [loading, messages, domain, activeConvoId, createConversation, saveMessages]);
 
   const config = DOMAIN_CONFIG[domain];
@@ -698,6 +833,23 @@ export default function KeishaPage() {
             </div>
           </div>
 
+          {/* Search */}
+          <div style={{ padding: '4px 10px' }}>
+            <div style={{ position: 'relative' }}>
+              <Search size={12} style={{ position: 'absolute', left: 8, top: '50%', transform: 'translateY(-50%)', color: '#555' }} />
+              <input
+                value={searchQuery}
+                onChange={e => setSearchQuery(e.target.value)}
+                placeholder="Search conversations..."
+                style={{
+                  width: '100%', padding: '6px 10px 6px 26px', fontSize: 12, background: '#0e0e1a',
+                  border: '1px solid #1e1e35', borderRadius: 6, color: '#aaa', outline: 'none',
+                  margin: '6px 0', boxSizing: 'border-box',
+                }}
+              />
+            </div>
+          </div>
+
           {/* Conversation List */}
           <div style={{ flex: 1, overflowY: 'auto', padding: '4px 0' }}>
             {loadingConvos && (
@@ -709,7 +861,7 @@ export default function KeishaPage() {
                 <br />Start chatting to save history.
               </div>
             )}
-            {conversations.map(convo => (
+            {(searchQuery.trim() ? searchResults : conversations).map(convo => (
               <div
                 key={convo.id}
                 onClick={() => loadConversation(convo.id)}
@@ -790,22 +942,65 @@ export default function KeishaPage() {
             {messages.map(msg => (
               <div key={msg.id} style={{ display: 'flex', justifyContent: msg.role === 'user' ? 'flex-end' : 'flex-start' }}>
                 {msg.role === 'assistant' && (
-                  <div style={{
-                    width: 32, height: 32, borderRadius: '50%', backgroundColor: config.color,
-                    display: 'flex', alignItems: 'center', justifyContent: 'center',
-                    fontSize: 13, fontWeight: 800, color: '#08080d', flexShrink: 0, marginRight: 10, marginTop: 4,
-                  }}>K</div>
+                  <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4, marginRight: 10, marginTop: 4, flexShrink: 0 }}>
+                    <div style={{
+                      width: 32, height: 32, borderRadius: '50%', backgroundColor: config.color,
+                      display: 'flex', alignItems: 'center', justifyContent: 'center',
+                      fontSize: 13, fontWeight: 800, color: '#08080d',
+                    }}>K</div>
+                  </div>
                 )}
-                <div style={{
-                  maxWidth: '70%', padding: '12px 16px',
-                  borderRadius: msg.role === 'user' ? '16px 16px 4px 16px' : '16px 16px 16px 4px',
-                  backgroundColor: msg.role === 'user' ? config.color : '#1a1a24',
-                  color: msg.role === 'user' ? '#08080d' : '#e8e8e8',
-                  fontSize: 14, lineHeight: 1.6,
-                  border: msg.role === 'user' ? 'none' : '1px solid #2a2a3a',
-                  ...(msg.role === 'user' ? { whiteSpace: 'pre-wrap' as const } : {}),
-                }}>
+                <div
+                  className="msg-bubble"
+                  style={{
+                    maxWidth: '70%', padding: '12px 16px', position: 'relative',
+                    borderRadius: msg.role === 'user' ? '16px 16px 4px 16px' : '16px 16px 16px 4px',
+                    backgroundColor: msg.role === 'user' ? config.color : '#1a1a24',
+                    color: msg.role === 'user' ? '#08080d' : '#e8e8e8',
+                    fontSize: 14, lineHeight: 1.6,
+                    border: msg.role === 'user' ? 'none' : '1px solid #2a2a3a',
+                    ...(msg.role === 'user' ? { whiteSpace: 'pre-wrap' as const } : {}),
+                  }}
+                >
                   {msg.role === 'assistant' ? renderMessageContent(msg.content, msg.id) : msg.content}
+                  {msg.role === 'assistant' && msg.id !== '0' && (
+                    <div
+                      className="msg-actions"
+                      style={{
+                        position: 'absolute', top: 6, right: 6,
+                        display: 'flex', gap: 2, opacity: 0, transition: 'opacity 0.15s',
+                      }}
+                    >
+                      <button
+                        onClick={() => speakMessage(msg.content, msg.id)}
+                        title={speaking === msg.id ? 'Stop reading' : 'Read aloud'}
+                        style={{
+                          padding: 4, borderRadius: 4, border: 'none',
+                          background: 'rgba(0,0,0,0.4)', cursor: 'pointer',
+                          display: 'flex', alignItems: 'center',
+                        }}
+                      >
+                        {speaking === msg.id
+                          ? <VolumeX size={13} color="#f87171" />
+                          : <Volume2 size={13} color="#888" />
+                        }
+                      </button>
+                      <button
+                        onClick={() => copyMessage(msg.content, msg.id)}
+                        title="Copy message"
+                        style={{
+                          padding: 4, borderRadius: 4, border: 'none',
+                          background: 'rgba(0,0,0,0.4)', cursor: 'pointer',
+                          display: 'flex', alignItems: 'center',
+                        }}
+                      >
+                        {copiedId === msg.id
+                          ? <Check size={13} color="#4ade80" />
+                          : <Copy size={13} color="#888" />
+                        }
+                      </button>
+                    </div>
+                  )}
                 </div>
               </div>
             ))}
@@ -825,6 +1020,28 @@ export default function KeishaPage() {
             )}
             <div ref={bottomRef} />
           </div>
+
+          {/* Suggested Follow-ups */}
+          {suggestions.length > 0 && !loading && (
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginBottom: 12 }}>
+              {suggestions.map((s, i) => (
+                <button
+                  key={i}
+                  onClick={() => { setSuggestions([]); sendMessage(s); }}
+                  style={{
+                    padding: '6px 14px', backgroundColor: `${config.color}0F`,
+                    border: `1px solid ${config.color}33`, borderRadius: 20,
+                    color: config.color, fontSize: 12, cursor: 'pointer',
+                    transition: 'all 0.15s',
+                  }}
+                  onMouseEnter={e => { e.currentTarget.style.background = `${config.color}1F`; }}
+                  onMouseLeave={e => { e.currentTarget.style.background = `${config.color}0F`; }}
+                >
+                  {s}
+                </button>
+              ))}
+            </div>
+          )}
 
           {/* Quick Prompts */}
           {messages.length <= 1 && (
@@ -883,6 +1100,11 @@ export default function KeishaPage() {
           </div>
         </div>
       </div>
+
+      {/* Hover styles for message action buttons */}
+      <style>{`
+        .msg-bubble:hover .msg-actions { opacity: 1 !important; }
+      `}</style>
 
       {/* Trade Execution Modal */}
       {tradeModal && (
