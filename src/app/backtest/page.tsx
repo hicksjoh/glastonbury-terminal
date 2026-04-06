@@ -1,8 +1,23 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useCallback } from 'react';
 import { AppShell } from '@/components/layout/AppShell';
-import { Play, RotateCw, TrendingUp, TrendingDown, BarChart3 } from 'lucide-react';
+import { Play, RotateCw, BarChart3, AlertTriangle } from 'lucide-react';
+
+// ── Types ──────────────────────────────────────────────────────────
+
+interface Trade {
+  date: string;
+  action: 'BUY' | 'SELL';
+  price: number;
+  pnl: number;
+  shares: number;
+}
+
+interface EquityPoint {
+  date: string;
+  value: number;
+}
 
 interface BacktestResult {
   totalReturn: number;
@@ -15,7 +30,16 @@ interface BacktestResult {
   avgLoss: number;
   profitFactor: number;
   trades: number;
+  tradeLog: Trade[];
+  equityCurve: EquityPoint[];
+  message?: string;
 }
+
+interface ApiError {
+  error: string;
+}
+
+// ── Constants ──────────────────────────────────────────────────────
 
 const STRATEGIES = [
   { id: 'wheel', label: 'Covered Call Wheel', desc: 'Sell puts, own stock, sell calls' },
@@ -25,6 +49,29 @@ const STRATEGIES = [
   { id: 'custom', label: 'Custom Strategy', desc: 'Define your own rules' },
 ];
 
+const CARD_STYLE: React.CSSProperties = {
+  background: 'rgba(255,255,255,0.03)',
+  border: '1px solid #1e1e35',
+  borderRadius: 14,
+  padding: 20,
+};
+
+const LABEL_STYLE: React.CSSProperties = {
+  color: '#8a5cf6',
+  fontSize: 11,
+  textTransform: 'uppercase',
+  letterSpacing: '0.1em',
+  fontWeight: 600,
+  marginBottom: 14,
+  fontFamily: "'JetBrains Mono', monospace",
+};
+
+const MONO: React.CSSProperties = {
+  fontFamily: "'JetBrains Mono', monospace",
+};
+
+// ── Component ──────────────────────────────────────────────────────
+
 export default function BacktestPage() {
   const [strategy, setStrategy] = useState('wheel');
   const [ticker, setTicker] = useState('SPY');
@@ -32,40 +79,51 @@ export default function BacktestPage() {
   const [positionSize, setPositionSize] = useState(10);
   const [running, setRunning] = useState(false);
   const [result, setResult] = useState<BacktestResult | null>(null);
+  const [error, setError] = useState<string | null>(null);
 
-  const runBacktest = () => {
+  const runBacktest = useCallback(async () => {
     setRunning(true);
-    // Simulated backtest results
-    setTimeout(() => {
-      setResult({
-        totalReturn: 24.5 + Math.random() * 10,
-        cagr: 18.2 + Math.random() * 5,
-        sharpe: 1.2 + Math.random() * 0.5,
-        sortino: 1.6 + Math.random() * 0.5,
-        maxDrawdown: -(8 + Math.random() * 10),
-        winRate: 58 + Math.random() * 15,
-        avgWin: 3.2 + Math.random() * 2,
-        avgLoss: -(1.5 + Math.random()),
-        profitFactor: 1.8 + Math.random() * 0.5,
-        trades: 24 + Math.floor(Math.random() * 30),
+    setError(null);
+    setResult(null);
+
+    try {
+      const res = await fetch('/api/backtest', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          symbol: ticker,
+          strategy,
+          period,
+          positionSize,
+        }),
       });
+
+      const data: BacktestResult | ApiError = await res.json();
+
+      if (!res.ok || 'error' in data) {
+        setError((data as ApiError).error);
+      } else {
+        setResult(data as BacktestResult);
+      }
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : 'Network error';
+      setError(msg);
+    } finally {
       setRunning(false);
-    }, 1500);
-  };
+    }
+  }, [ticker, strategy, period, positionSize]);
 
   return (
     <AppShell>
       <div>
         <h1 style={{ fontSize: 28, fontWeight: 700, color: '#fff', margin: '0 0 4px' }}>Strategy Backtester</h1>
-        <p style={{ color: '#8888a8', fontSize: 14, margin: '0 0 28px' }}>Test strategies against historical data</p>
+        <p style={{ color: '#8888a8', fontSize: 14, margin: '0 0 28px' }}>Test strategies against real FMP historical data</p>
 
         <div style={{ display: 'grid', gridTemplateColumns: '300px 1fr', gap: 24 }}>
-          {/* Sidebar Controls */}
+          {/* ── Sidebar Controls ── */}
           <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-            <div style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid #1e1e35', borderRadius: 14, padding: 20 }}>
-              <div style={{ color: '#8a5cf6', fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.1em', fontWeight: 600, marginBottom: 14, fontFamily: "'JetBrains Mono', monospace" }}>
-                Strategy
-              </div>
+            <div style={CARD_STYLE}>
+              <div style={LABEL_STYLE}>Strategy</div>
               {STRATEGIES.map(s => (
                 <div
                   key={s.id}
@@ -82,15 +140,13 @@ export default function BacktestPage() {
               ))}
             </div>
 
-            <div style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid #1e1e35', borderRadius: 14, padding: 20 }}>
-              <div style={{ color: '#8a5cf6', fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.1em', fontWeight: 600, marginBottom: 14, fontFamily: "'JetBrains Mono', monospace" }}>
-                Parameters
-              </div>
+            <div style={CARD_STYLE}>
+              <div style={LABEL_STYLE}>Parameters</div>
 
-              <label style={{ color: '#8888a8', fontSize: 11, display: 'block', marginBottom: 4 }}>Ticker Universe</label>
+              <label style={{ color: '#8888a8', fontSize: 11, display: 'block', marginBottom: 4 }}>Ticker Symbol</label>
               <input
                 value={ticker}
-                onChange={e => setTicker(e.target.value)}
+                onChange={e => setTicker(e.target.value.toUpperCase())}
                 style={{
                   width: '100%', padding: '8px 12px', borderRadius: 8,
                   background: '#0a0a1a', border: '1px solid #1e1e35', color: '#e8e8f0',
@@ -139,19 +195,59 @@ export default function BacktestPage() {
             </div>
           </div>
 
-          {/* Results Area */}
+          {/* ── Results Area ── */}
           <div>
-            {!result ? (
+            {/* Error Banner */}
+            {error && (
               <div style={{
-                background: 'rgba(255,255,255,0.02)', border: '1px solid #1e1e35', borderRadius: 14,
+                background: 'rgba(248,113,113,0.08)', border: '1px solid #f87171',
+                borderRadius: 12, padding: '14px 18px', marginBottom: 16,
+                display: 'flex', alignItems: 'flex-start', gap: 10,
+              }}>
+                <AlertTriangle size={16} color="#f87171" style={{ marginTop: 2, flexShrink: 0 }} />
+                <div style={{ color: '#f87171', fontSize: 13, lineHeight: 1.5 }}>{error}</div>
+              </div>
+            )}
+
+            {/* Empty State */}
+            {!result && !error && !running && (
+              <div style={{
+                ...CARD_STYLE,
                 padding: 80, textAlign: 'center',
+                background: 'rgba(255,255,255,0.02)',
               }}>
                 <BarChart3 size={48} color="#1e1e35" style={{ marginBottom: 16 }} />
                 <div style={{ color: '#555570', fontSize: 14 }}>Select a strategy and parameters, then hit Run Backtest</div>
               </div>
-            ) : (
+            )}
+
+            {/* Loading State */}
+            {running && (
+              <div style={{
+                ...CARD_STYLE,
+                padding: 80, textAlign: 'center',
+                background: 'rgba(255,255,255,0.02)',
+              }}>
+                <RotateCw size={32} color="#8a5cf6" className="animate-spin" style={{ marginBottom: 16 }} />
+                <div style={{ color: '#8888a8', fontSize: 14 }}>Fetching data and running backtest for {ticker}...</div>
+              </div>
+            )}
+
+            {/* Results */}
+            {result && (
               <>
-                {/* Results Grid */}
+                {/* Strategy message */}
+                {result.message && (
+                  <div style={{
+                    background: 'rgba(138,92,246,0.08)', border: '1px solid rgba(138,92,246,0.3)',
+                    borderRadius: 10, padding: '10px 14px', marginBottom: 14,
+                    color: '#a78bfa', fontSize: 12,
+                  }}>
+                    {result.message}
+                  </div>
+                )}
+
+                {/* Metrics Grid */}
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 10, marginBottom: 20 }}>
                   {[
                     { label: 'Total Return', value: `${result.totalReturn.toFixed(1)}%`, color: result.totalReturn >= 0 ? '#4ade80' : '#f87171' },
@@ -160,50 +256,37 @@ export default function BacktestPage() {
                     { label: 'Sortino Ratio', value: result.sortino.toFixed(3), color: '#22d3ee' },
                     { label: 'Max Drawdown', value: `${result.maxDrawdown.toFixed(1)}%`, color: '#f87171' },
                     { label: 'Win Rate', value: `${result.winRate.toFixed(1)}%`, color: result.winRate >= 50 ? '#4ade80' : '#f87171' },
-                    { label: 'Avg Win', value: `+${result.avgWin.toFixed(1)}%`, color: '#4ade80' },
-                    { label: 'Avg Loss', value: `${result.avgLoss.toFixed(1)}%`, color: '#f87171' },
-                    { label: 'Profit Factor', value: result.profitFactor.toFixed(2), color: result.profitFactor >= 1.5 ? '#4ade80' : '#f0c674' },
+                    { label: 'Avg Win', value: result.avgWin >= 0 ? `+$${result.avgWin.toFixed(0)}` : `$${result.avgWin.toFixed(0)}`, color: '#4ade80' },
+                    { label: 'Avg Loss', value: `$${result.avgLoss.toFixed(0)}`, color: '#f87171' },
+                    { label: 'Profit Factor', value: result.profitFactor >= 100 ? '99+' : result.profitFactor.toFixed(2), color: result.profitFactor >= 1.5 ? '#4ade80' : '#f0c674' },
                   ].map(r => (
                     <div key={r.label} style={{
-                      background: 'rgba(255,255,255,0.03)', border: '1px solid #1e1e35',
-                      borderRadius: 12, padding: 14,
+                      ...CARD_STYLE,
+                      padding: 14,
+                      borderRadius: 12,
                     }}>
-                      <div style={{ color: '#8888a8', fontSize: 10, textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 6, fontFamily: "'JetBrains Mono', monospace" }}>
+                      <div style={{ color: '#8888a8', fontSize: 10, textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 6, ...MONO }}>
                         {r.label}
                       </div>
-                      <div style={{ fontSize: 22, fontWeight: 700, color: r.color, fontFamily: "'JetBrains Mono', monospace" }}>
+                      <div style={{ fontSize: 22, fontWeight: 700, color: r.color, ...MONO }}>
                         {r.value}
                       </div>
                     </div>
                   ))}
                 </div>
 
-                {/* Equity Curve Placeholder */}
-                <div style={{
-                  background: 'rgba(255,255,255,0.02)', border: '1px solid #1e1e35',
-                  borderRadius: 14, padding: 24, marginBottom: 16,
-                }}>
-                  <div style={{ color: '#8a5cf6', fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.1em', fontWeight: 600, marginBottom: 16, fontFamily: "'JetBrains Mono', monospace" }}>
-                    Equity Curve
-                  </div>
-                  {/* Simplified sparkline equity curve */}
-                  <div style={{ display: 'flex', alignItems: 'flex-end', height: 150, gap: 2 }}>
-                    {Array.from({ length: 60 }, (_, i) => {
-                      const growth = Math.pow(1 + result.totalReturn / 100, i / 60);
-                      const noise = 1 + (Math.sin(i * 0.5) * 0.03 + Math.sin(i * 1.3) * 0.02);
-                      const h = growth * noise * 100;
-                      return (
-                        <div key={i} style={{
-                          flex: 1, height: h, background: result.totalReturn >= 0 ? '#4ade8040' : '#f8717140',
-                          borderRadius: '2px 2px 0 0',
-                        }} />
-                      );
-                    })}
-                  </div>
-                </div>
+                {/* Equity Curve */}
+                <EquityCurveChart curve={result.equityCurve} positive={result.totalReturn >= 0} />
 
-                <div style={{ color: '#555570', fontSize: 12, textAlign: 'center' }}>
-                  {result.trades} total trades over {period} period • Strategy: {STRATEGIES.find(s => s.id === strategy)?.label}
+                {/* Trade Log Table */}
+                {result.tradeLog.length > 0 && (
+                  <TradeLogTable trades={result.tradeLog} />
+                )}
+
+                <div style={{ color: '#555570', fontSize: 12, textAlign: 'center', marginTop: 16 }}>
+                  {result.trades} closed trade{result.trades !== 1 ? 's' : ''} over {period} period
+                  {' '}&bull;{' '}Strategy: {STRATEGIES.find(s => s.id === strategy)?.label}
+                  {' '}&bull;{' '}Symbol: {ticker}
                 </div>
               </>
             )}
@@ -211,5 +294,105 @@ export default function BacktestPage() {
         </div>
       </div>
     </AppShell>
+  );
+}
+
+// ── Equity Curve Chart ─────────────────────────────────────────────
+
+function EquityCurveChart({ curve, positive }: { curve: EquityPoint[]; positive: boolean }) {
+  if (curve.length === 0) return null;
+
+  const values = curve.map(p => p.value);
+  const minVal = Math.min(...values);
+  const maxVal = Math.max(...values);
+  const range = maxVal - minVal || 1;
+  const chartHeight = 180;
+  const chartWidth = 700;
+
+  // Build SVG path
+  const points = curve.map((p, i) => {
+    const x = (i / (curve.length - 1)) * chartWidth;
+    const y = chartHeight - ((p.value - minVal) / range) * (chartHeight - 20);
+    return `${x},${y}`;
+  });
+
+  const linePath = `M ${points.join(' L ')}`;
+  const areaPath = `${linePath} L ${chartWidth},${chartHeight} L 0,${chartHeight} Z`;
+
+  const lineColor = positive ? '#4ade80' : '#f87171';
+  const fillColor = positive ? 'rgba(74,222,128,0.08)' : 'rgba(248,113,113,0.08)';
+
+  // Tick labels (first, middle, last date)
+  const firstDate = curve[0]?.date ?? '';
+  const midDate = curve[Math.floor(curve.length / 2)]?.date ?? '';
+  const lastDate = curve[curve.length - 1]?.date ?? '';
+
+  return (
+    <div style={{ ...CARD_STYLE, padding: 24, marginBottom: 16, background: 'rgba(255,255,255,0.02)' }}>
+      <div style={{ ...LABEL_STYLE }}>Equity Curve</div>
+      <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6 }}>
+        <span style={{ color: '#555570', fontSize: 10, ...MONO }}>${minVal.toLocaleString(undefined, { maximumFractionDigits: 0 })}</span>
+        <span style={{ color: '#555570', fontSize: 10, ...MONO }}>${maxVal.toLocaleString(undefined, { maximumFractionDigits: 0 })}</span>
+      </div>
+      <svg viewBox={`0 0 ${chartWidth} ${chartHeight}`} style={{ width: '100%', height: chartHeight }}>
+        <path d={areaPath} fill={fillColor} />
+        <path d={linePath} fill="none" stroke={lineColor} strokeWidth="2" />
+      </svg>
+      <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 6 }}>
+        <span style={{ color: '#555570', fontSize: 10, ...MONO }}>{firstDate}</span>
+        <span style={{ color: '#555570', fontSize: 10, ...MONO }}>{midDate}</span>
+        <span style={{ color: '#555570', fontSize: 10, ...MONO }}>{lastDate}</span>
+      </div>
+    </div>
+  );
+}
+
+// ── Trade Log Table ────────────────────────────────────────────────
+
+function TradeLogTable({ trades }: { trades: Trade[] }) {
+  return (
+    <div style={{ ...CARD_STYLE, padding: 0, overflow: 'hidden', background: 'rgba(255,255,255,0.02)' }}>
+      <div style={{ ...LABEL_STYLE, padding: '16px 20px 0', marginBottom: 0 }}>Trade Log</div>
+      <div style={{ overflowX: 'auto' }}>
+        <table style={{ width: '100%', borderCollapse: 'collapse', ...MONO, fontSize: 12 }}>
+          <thead>
+            <tr style={{ borderBottom: '1px solid #1e1e35' }}>
+              {['Date', 'Action', 'Price', 'Shares', 'P&L'].map(h => (
+                <th key={h} style={{
+                  padding: '10px 16px', textAlign: 'left',
+                  color: '#555570', fontSize: 10, textTransform: 'uppercase', letterSpacing: '0.06em',
+                  fontWeight: 600,
+                }}>
+                  {h}
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {trades.map((t, i) => (
+              <tr key={`${t.date}-${t.action}-${i}`} style={{ borderBottom: '1px solid rgba(30,30,53,0.5)' }}>
+                <td style={{ padding: '8px 16px', color: '#8888a8' }}>{t.date}</td>
+                <td style={{
+                  padding: '8px 16px',
+                  color: t.action === 'BUY' ? '#4ade80' : '#f87171',
+                  fontWeight: 700,
+                }}>
+                  {t.action}
+                </td>
+                <td style={{ padding: '8px 16px', color: '#e8e8f0' }}>${t.price.toFixed(2)}</td>
+                <td style={{ padding: '8px 16px', color: '#8888a8' }}>{t.shares}</td>
+                <td style={{
+                  padding: '8px 16px',
+                  color: t.pnl > 0 ? '#4ade80' : t.pnl < 0 ? '#f87171' : '#555570',
+                  fontWeight: 600,
+                }}>
+                  {t.action === 'BUY' ? '—' : `${t.pnl >= 0 ? '+' : ''}$${t.pnl.toFixed(2)}`}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
   );
 }

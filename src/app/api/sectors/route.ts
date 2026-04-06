@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { getCached, setCache, TTL } from '@/lib/server-cache';
 
 const FMP_V3 = 'https://financialmodelingprep.com/api/v3';
 const FMP_KEY = process.env.FMP_API_KEY || '';
@@ -110,12 +111,16 @@ export async function GET(req: NextRequest) {
     const type = req.nextUrl.searchParams.get('type');
     const sector = req.nextUrl.searchParams.get('sector');
 
+    const cacheKey = `sectors:${type || 'overview'}:${sector || 'all'}`;
+    const cached = getCached(cacheKey);
+    if (cached) return NextResponse.json(cached);
+
     if (type === 'stocks' && sector) {
       // Try stock-screener first (single API call for top 5 movers)
       let screenerResults = await fetchSectorStocksViaScreener(sector);
 
       if (screenerResults.length > 0) {
-        return NextResponse.json({
+        const payload = {
           stocks: screenerResults.map(q => ({
             symbol: q.symbol,
             name: q.name,
@@ -124,13 +129,15 @@ export async function GET(req: NextRequest) {
             marketCap: q.marketCap,
             sector: sector,
           })),
-        });
+        };
+        setCache(cacheKey, payload, TTL.MEDIUM);
+        return NextResponse.json(payload);
       }
 
       // Fallback: fetch individual quotes for representative stocks
       const sectorStocks = SECTOR_REPS[sector] || [];
       const quotes = await Promise.all(sectorStocks.map(fetchQuote));
-      return NextResponse.json({
+      const payload = {
         stocks: quotes
           .filter((q): q is QuoteData => q !== null)
           .map(q => ({
@@ -141,13 +148,17 @@ export async function GET(req: NextRequest) {
             marketCap: q.marketCap,
             sector: sector,
           })),
-      });
+      };
+      setCache(cacheKey, payload, TTL.MEDIUM);
+      return NextResponse.json(payload);
     }
 
     // Try FMP's dedicated sector performance endpoint first
     const sectorPerf = await fetchSectorPerformance();
     if (sectorPerf && sectorPerf.length > 0) {
-      return NextResponse.json({ sectors: sectorPerf });
+      const payload = { sectors: sectorPerf };
+      setCache(cacheKey, payload, TTL.MEDIUM);
+      return NextResponse.json(payload);
     }
 
     // Fallback: average performance of representative stocks per sector
@@ -166,7 +177,9 @@ export async function GET(req: NextRequest) {
       return { sector: sectorName, changesPercentage: avg.toFixed(2) };
     });
 
-    return NextResponse.json({ sectors });
+    const payload = { sectors };
+    setCache(cacheKey, payload, TTL.MEDIUM);
+    return NextResponse.json(payload);
   } catch (error) {
     console.error('Sectors error:', error);
     return NextResponse.json({ sectors: [], stocks: [] });

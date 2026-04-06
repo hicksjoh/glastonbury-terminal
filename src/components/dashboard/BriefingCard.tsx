@@ -10,6 +10,14 @@ export function BriefingCard() {
   async function fetchBriefing() {
     setLoading(true);
     try {
+      // Check for today's pre-generated briefing first
+      const cachedRes = await fetch('/api/briefing/today').then(r => r.ok ? r.json() : null).catch(() => null);
+      if (cachedRes?.briefing) {
+        setBriefing(cachedRes.briefing);
+        setLoading(false);
+        return;
+      }
+      // No cached briefing — generate fresh
       const res = await fetch('/api/briefing');
       const data = await res.json();
       setBriefing(data.briefing || 'Unable to generate briefing — check API configuration.');

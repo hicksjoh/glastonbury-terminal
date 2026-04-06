@@ -1,12 +1,14 @@
 'use client';
 
+import React from 'react';
+
 interface SparklineChartProps {
   data: number[];
   width?: number;
   height?: number;
 }
 
-export function SparklineChart({ data, width = 100, height = 40 }: SparklineChartProps) {
+export const SparklineChart = React.memo(function SparklineChart({ data, width = 100, height = 40 }: SparklineChartProps) {
   if (!data || data.length < 2) {
     return <div style={{ width, height, opacity: 0.3, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 9, color: '#555' }}>--</div>;
   }
@@ -37,4 +39,4 @@ export function SparklineChart({ data, width = 100, height = 40 }: SparklineChar
       />
     </svg>
   );
-}
+});

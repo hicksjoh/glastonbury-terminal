@@ -2,10 +2,20 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { AppShell } from '@/components/layout/AppShell';
 import { ChatMessage } from '@/types';
-import { Send, Mic, MicOff, Zap, AlertTriangle, CheckCircle } from 'lucide-react';
+import { Send, Mic, MicOff, Zap, CheckCircle, Plus, Trash2, PanelLeftClose, PanelLeft } from 'lucide-react';
 import MarkdownRenderer from '@/components/MarkdownRenderer';
 
 type Domain = 'general' | 'cfo' | 'tax' | 'quant' | 'wealth' | 'strategy';
+
+interface ConversationSummary {
+  id: string;
+  persona: string;
+  title: string;
+  preview: string;
+  messageCount: number;
+  created_at: string;
+  updated_at: string;
+}
 
 const DOMAIN_CONFIG: Record<Domain, { label: string; color: string; prompts: string[] }> = {
   general: {
@@ -185,6 +195,138 @@ export default function KeishaPage() {
   } | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const recognitionRef = useRef<Record<string, unknown> | null>(null);
+
+  useEffect(() => { document.title = 'Keisha AI | Glastonbury Terminal'; }, []);
+
+  // ── Conversation persistence state ──────────────────────────────────────
+  const [conversations, setConversations] = useState<ConversationSummary[]>([]);
+  const [activeConvoId, setActiveConvoId] = useState<string | null>(null);
+  const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [loadingConvos, setLoadingConvos] = useState(false);
+  const savingRef = useRef(false);
+
+  // ── Load conversations for current persona ──────────────────────────────
+  const loadConversations = useCallback(async (persona: string) => {
+    setLoadingConvos(true);
+    try {
+      const res = await fetch(`/api/keisha/conversations?persona=${persona}`);
+      if (res.ok) {
+        const data = await res.json();
+        setConversations(data.conversations || []);
+      }
+    } catch {
+      // Silently fail — sidebar just stays empty
+    }
+    setLoadingConvos(false);
+  }, []);
+
+  // Load conversations when domain changes
+  useEffect(() => {
+    loadConversations(domain);
+    // Start fresh when switching personas
+    setActiveConvoId(null);
+    setMessages([INITIAL_MESSAGE]);
+  }, [domain, loadConversations]);
+
+  // ── Create a new conversation in Supabase ───────────────────────────────
+  const createConversation = useCallback(async (): Promise<string | null> => {
+    try {
+      const res = await fetch('/api/keisha/conversations', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ persona: domain }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        return data.conversation?.id || null;
+      }
+    } catch {
+      // Fall through
+    }
+    return null;
+  }, [domain]);
+
+  // ── Save messages to active conversation ────────────────────────────────
+  const saveMessages = useCallback(async (convoId: string, msgs: ChatMessage[]) => {
+    if (savingRef.current) return;
+    savingRef.current = true;
+    try {
+      // Strip the initial greeting from saved messages
+      const toSave = msgs.filter(m => m.id !== '0').map(m => ({
+        id: m.id,
+        role: m.role,
+        content: m.content,
+        timestamp: m.timestamp,
+      }));
+
+      // Generate title from first user message
+      const firstUserMsg = toSave.find(m => m.role === 'user');
+      const title = firstUserMsg?.content?.slice(0, 60) || 'New Conversation';
+
+      await fetch(`/api/keisha/conversations/${convoId}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          messages_json: toSave,
+          title,
+        }),
+      });
+
+      // Refresh sidebar
+      loadConversations(domain);
+    } catch {
+      // Non-critical
+    }
+    savingRef.current = false;
+  }, [domain, loadConversations]);
+
+  // ── Load a specific conversation ────────────────────────────────────────
+  const loadConversation = useCallback(async (convoId: string) => {
+    try {
+      const res = await fetch(`/api/keisha/conversations/${convoId}`);
+      if (res.ok) {
+        const data = await res.json();
+        const savedMsgs: ChatMessage[] = data.conversation?.messages_json || [];
+        setMessages([INITIAL_MESSAGE, ...savedMsgs]);
+        setActiveConvoId(convoId);
+      }
+    } catch {
+      // Silently fail
+    }
+  }, []);
+
+  // ── Delete a conversation ───────────────────────────────────────────────
+  const deleteConversation = useCallback(async (convoId: string) => {
+    try {
+      await fetch(`/api/keisha/conversations/${convoId}`, { method: 'DELETE' });
+      if (activeConvoId === convoId) {
+        setActiveConvoId(null);
+        setMessages([INITIAL_MESSAGE]);
+      }
+      loadConversations(domain);
+    } catch {
+      // Silently fail
+    }
+  }, [activeConvoId, domain, loadConversations]);
+
+  // ── Clear all conversations for persona ─────────────────────────────────
+  const clearAllConversations = useCallback(async () => {
+    if (!confirm(`Delete all ${DOMAIN_CONFIG[domain].label} conversations?`)) return;
+    try {
+      await fetch(`/api/keisha/conversations?persona=${domain}`, { method: 'DELETE' });
+      setConversations([]);
+      setActiveConvoId(null);
+      setMessages([INITIAL_MESSAGE]);
+    } catch {
+      // Silently fail
+    }
+  }, [domain]);
+
+  // ── Start a new conversation ────────────────────────────────────────────
+  const startNewConversation = useCallback(() => {
+    setActiveConvoId(null);
+    setMessages([INITIAL_MESSAGE]);
+  }, []);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -407,9 +549,17 @@ export default function KeishaPage() {
       content: `[${domain.toUpperCase()} MODE] ${content}${signalContext}`,
       timestamp: new Date().toISOString(),
     };
-    setMessages(prev => [...prev, { ...userMsg, content }]);
+    const displayUserMsg: ChatMessage = { ...userMsg, content };
+    setMessages(prev => [...prev, displayUserMsg]);
     setInput('');
     setLoading(true);
+
+    // Ensure we have a conversation ID
+    let convoId = activeConvoId;
+    if (!convoId) {
+      convoId = await createConversation();
+      if (convoId) setActiveConvoId(convoId);
+    }
 
     try {
       const history = [...messages, userMsg].filter(m => m.id !== '0');
@@ -419,33 +569,55 @@ export default function KeishaPage() {
         body: JSON.stringify({
           messages: history.map(m => ({ role: m.role, content: m.content })),
           domain,
+          conversationId: convoId,
         }),
       });
       const data = await res.json();
-      setMessages(prev => [
-        ...prev,
-        {
-          id: (Date.now() + 1).toString(),
-          role: 'assistant',
-          content: data.content || data.error || 'Something went wrong.',
-          timestamp: new Date().toISOString(),
-        },
-      ]);
+      const assistantMsg: ChatMessage = {
+        id: (Date.now() + 1).toString(),
+        role: 'assistant',
+        content: data.content || data.error || 'Something went wrong.',
+        timestamp: new Date().toISOString(),
+      };
+
+      const updatedMessages = [...messages, displayUserMsg, assistantMsg];
+      setMessages(updatedMessages);
+
+      // Auto-save to Supabase
+      if (convoId) {
+        saveMessages(convoId, updatedMessages);
+      }
     } catch {
-      setMessages(prev => [
-        ...prev,
-        {
-          id: (Date.now() + 1).toString(),
-          role: 'assistant',
-          content: 'Connection error — check your ANTHROPIC_API_KEY.',
-          timestamp: new Date().toISOString(),
-        },
-      ]);
+      const errorMsg: ChatMessage = {
+        id: (Date.now() + 1).toString(),
+        role: 'assistant',
+        content: 'Connection error — check your ANTHROPIC_API_KEY.',
+        timestamp: new Date().toISOString(),
+      };
+      const updatedMessages = [...messages, displayUserMsg, errorMsg];
+      setMessages(updatedMessages);
+
+      if (convoId) {
+        saveMessages(convoId, updatedMessages);
+      }
     }
     setLoading(false);
-  }, [loading, messages, domain]);
+  }, [loading, messages, domain, activeConvoId, createConversation, saveMessages]);
 
   const config = DOMAIN_CONFIG[domain];
+
+  // Format date for sidebar
+  const formatDate = (dateStr: string) => {
+    const d = new Date(dateStr);
+    const now = new Date();
+    const diffMs = now.getTime() - d.getTime();
+    const diffHrs = diffMs / (1000 * 60 * 60);
+
+    if (diffHrs < 1) return 'Just now';
+    if (diffHrs < 24) return `${Math.floor(diffHrs)}h ago`;
+    if (diffHrs < 48) return 'Yesterday';
+    return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+  };
 
   return (
     <AppShell>
@@ -478,103 +650,237 @@ export default function KeishaPage() {
         })}
       </div>
 
-      {/* Chat Container */}
-      <div style={{ display: 'flex', flexDirection: 'column', height: 'calc(100vh - 300px)' }}>
-        {/* Messages */}
-        <div style={{ flex: 1, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 16, paddingBottom: 16 }}>
-          {messages.map(msg => (
-            <div key={msg.id} style={{ display: 'flex', justifyContent: msg.role === 'user' ? 'flex-end' : 'flex-start' }}>
-              {msg.role === 'assistant' && (
+      {/* Main Layout: Sidebar + Chat */}
+      <div style={{ display: 'flex', gap: 0, height: 'calc(100vh - 300px)' }}>
+        {/* ── Conversation Sidebar ────────────────────────────────────────── */}
+        <div style={{
+          width: sidebarOpen ? 260 : 0,
+          minWidth: sidebarOpen ? 260 : 0,
+          overflow: 'hidden',
+          transition: 'all 0.2s ease',
+          borderRight: sidebarOpen ? '1px solid #1e1e35' : 'none',
+          display: 'flex',
+          flexDirection: 'column',
+        }}>
+          {/* Sidebar Header */}
+          <div style={{
+            display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+            padding: '8px 12px', borderBottom: '1px solid #1e1e35',
+          }}>
+            <span style={{ fontSize: 12, color: '#6b6b80', fontWeight: 600, textTransform: 'uppercase', letterSpacing: 0.5 }}>
+              History
+            </span>
+            <div style={{ display: 'flex', gap: 4 }}>
+              <button
+                onClick={startNewConversation}
+                title="New conversation"
+                style={{
+                  padding: '4px 8px', borderRadius: 6, border: `1px solid ${config.color}40`,
+                  background: 'transparent', color: config.color, fontSize: 11, cursor: 'pointer',
+                  display: 'flex', alignItems: 'center', gap: 4,
+                }}
+              >
+                <Plus size={12} /> New
+              </button>
+              {conversations.length > 0 && (
+                <button
+                  onClick={clearAllConversations}
+                  title="Clear all conversations"
+                  style={{
+                    padding: '4px 6px', borderRadius: 6, border: '1px solid rgba(248,113,113,0.3)',
+                    background: 'transparent', color: '#f87171', cursor: 'pointer',
+                    display: 'flex', alignItems: 'center',
+                  }}
+                >
+                  <Trash2 size={12} />
+                </button>
+              )}
+            </div>
+          </div>
+
+          {/* Conversation List */}
+          <div style={{ flex: 1, overflowY: 'auto', padding: '4px 0' }}>
+            {loadingConvos && (
+              <div style={{ padding: '12px 14px', color: '#555', fontSize: 12 }}>Loading...</div>
+            )}
+            {!loadingConvos && conversations.length === 0 && (
+              <div style={{ padding: '16px 14px', color: '#444', fontSize: 12, textAlign: 'center' }}>
+                No conversations yet.
+                <br />Start chatting to save history.
+              </div>
+            )}
+            {conversations.map(convo => (
+              <div
+                key={convo.id}
+                onClick={() => loadConversation(convo.id)}
+                style={{
+                  padding: '10px 14px',
+                  cursor: 'pointer',
+                  background: activeConvoId === convo.id ? `${config.color}10` : 'transparent',
+                  borderLeft: activeConvoId === convo.id ? `2px solid ${config.color}` : '2px solid transparent',
+                  transition: 'all 0.15s',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: 4,
+                }}
+                onMouseEnter={e => {
+                  if (activeConvoId !== convo.id) e.currentTarget.style.background = 'rgba(255,255,255,0.02)';
+                }}
+                onMouseLeave={e => {
+                  if (activeConvoId !== convo.id) e.currentTarget.style.background = 'transparent';
+                }}
+              >
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                  <div style={{
+                    fontSize: 13, color: activeConvoId === convo.id ? '#e8e8e8' : '#aaa',
+                    fontWeight: activeConvoId === convo.id ? 600 : 400,
+                    overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                    flex: 1, marginRight: 8,
+                  }}>
+                    {convo.title || 'Untitled'}
+                  </div>
+                  <button
+                    onClick={(e) => { e.stopPropagation(); deleteConversation(convo.id); }}
+                    style={{
+                      padding: '2px 4px', borderRadius: 4, border: 'none',
+                      background: 'transparent', color: '#555', cursor: 'pointer',
+                      opacity: 0.5, flexShrink: 0,
+                    }}
+                    onMouseEnter={e => { e.currentTarget.style.opacity = '1'; e.currentTarget.style.color = '#f87171'; }}
+                    onMouseLeave={e => { e.currentTarget.style.opacity = '0.5'; e.currentTarget.style.color = '#555'; }}
+                  >
+                    <Trash2 size={11} />
+                  </button>
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <span style={{ fontSize: 11, color: '#555', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }}>
+                    {convo.preview || 'Empty conversation'}
+                  </span>
+                  <span style={{ fontSize: 10, color: '#444', flexShrink: 0, marginLeft: 6 }}>
+                    {formatDate(convo.updated_at)}
+                  </span>
+                </div>
+                <div style={{ fontSize: 10, color: '#444' }}>
+                  {convo.messageCount} message{convo.messageCount !== 1 ? 's' : ''}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* ── Chat Area ──────────────────────────────────────────────────── */}
+        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', paddingLeft: sidebarOpen ? 16 : 0 }}>
+          {/* Sidebar toggle */}
+          <div style={{ marginBottom: 8 }}>
+            <button
+              onClick={() => setSidebarOpen(prev => !prev)}
+              style={{
+                padding: '4px 8px', borderRadius: 6, border: '1px solid #1e1e35',
+                background: 'transparent', color: '#6b6b80', cursor: 'pointer',
+                display: 'flex', alignItems: 'center', gap: 4, fontSize: 11,
+              }}
+            >
+              {sidebarOpen ? <PanelLeftClose size={14} /> : <PanelLeft size={14} />}
+              {sidebarOpen ? 'Hide history' : 'Show history'}
+            </button>
+          </div>
+
+          {/* Messages */}
+          <div style={{ flex: 1, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 16, paddingBottom: 16 }}>
+            {messages.map(msg => (
+              <div key={msg.id} style={{ display: 'flex', justifyContent: msg.role === 'user' ? 'flex-end' : 'flex-start' }}>
+                {msg.role === 'assistant' && (
+                  <div style={{
+                    width: 32, height: 32, borderRadius: '50%', backgroundColor: config.color,
+                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    fontSize: 13, fontWeight: 800, color: '#08080d', flexShrink: 0, marginRight: 10, marginTop: 4,
+                  }}>K</div>
+                )}
+                <div style={{
+                  maxWidth: '70%', padding: '12px 16px',
+                  borderRadius: msg.role === 'user' ? '16px 16px 4px 16px' : '16px 16px 16px 4px',
+                  backgroundColor: msg.role === 'user' ? config.color : '#1a1a24',
+                  color: msg.role === 'user' ? '#08080d' : '#e8e8e8',
+                  fontSize: 14, lineHeight: 1.6,
+                  border: msg.role === 'user' ? 'none' : '1px solid #2a2a3a',
+                  ...(msg.role === 'user' ? { whiteSpace: 'pre-wrap' as const } : {}),
+                }}>
+                  {msg.role === 'assistant' ? renderMessageContent(msg.content, msg.id) : msg.content}
+                </div>
+              </div>
+            ))}
+            {loading && (
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
                 <div style={{
                   width: 32, height: 32, borderRadius: '50%', backgroundColor: config.color,
                   display: 'flex', alignItems: 'center', justifyContent: 'center',
-                  fontSize: 13, fontWeight: 800, color: '#08080d', flexShrink: 0, marginRight: 10, marginTop: 4,
+                  fontSize: 13, fontWeight: 800, color: '#08080d',
                 }}>K</div>
-              )}
-              <div style={{
-                maxWidth: '70%', padding: '12px 16px',
-                borderRadius: msg.role === 'user' ? '16px 16px 4px 16px' : '16px 16px 16px 4px',
-                backgroundColor: msg.role === 'user' ? config.color : '#1a1a24',
-                color: msg.role === 'user' ? '#08080d' : '#e8e8e8',
-                fontSize: 14, lineHeight: 1.6,
-                border: msg.role === 'user' ? 'none' : '1px solid #2a2a3a',
-                ...(msg.role === 'user' ? { whiteSpace: 'pre-wrap' as const } : {}),
-              }}>
-                {msg.role === 'assistant' ? renderMessageContent(msg.content, msg.id) : msg.content}
+                <div style={{ display: 'flex', gap: 4, padding: '12px 16px', backgroundColor: '#1a1a24', borderRadius: 12, border: '1px solid #2a2a3a' }}>
+                  {[0, 1, 2].map(i => (
+                    <div key={i} style={{ width: 6, height: 6, borderRadius: '50%', backgroundColor: config.color, animation: `bounce 1.2s ease-in-out ${i * 0.2}s infinite` }} />
+                  ))}
+                </div>
               </div>
-            </div>
-          ))}
-          {loading && (
-            <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-              <div style={{
-                width: 32, height: 32, borderRadius: '50%', backgroundColor: config.color,
-                display: 'flex', alignItems: 'center', justifyContent: 'center',
-                fontSize: 13, fontWeight: 800, color: '#08080d',
-              }}>K</div>
-              <div style={{ display: 'flex', gap: 4, padding: '12px 16px', backgroundColor: '#1a1a24', borderRadius: 12, border: '1px solid #2a2a3a' }}>
-                {[0, 1, 2].map(i => (
-                  <div key={i} style={{ width: 6, height: 6, borderRadius: '50%', backgroundColor: config.color, animation: `bounce 1.2s ease-in-out ${i * 0.2}s infinite` }} />
-                ))}
-              </div>
+            )}
+            <div ref={bottomRef} />
+          </div>
+
+          {/* Quick Prompts */}
+          {messages.length <= 1 && (
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginBottom: 12 }}>
+              {config.prompts.map(p => (
+                <button
+                  key={p}
+                  onClick={() => sendMessage(p)}
+                  style={{
+                    padding: '6px 12px', backgroundColor: 'transparent',
+                    border: `1px solid ${config.color}40`, borderRadius: 20,
+                    color: config.color, fontSize: 12, cursor: 'pointer',
+                  }}
+                >
+                  {p}
+                </button>
+              ))}
             </div>
           )}
-          <div ref={bottomRef} />
-        </div>
 
-        {/* Quick Prompts */}
-        {messages.length <= 1 && (
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginBottom: 12 }}>
-            {config.prompts.map(p => (
-              <button
-                key={p}
-                onClick={() => sendMessage(p)}
-                style={{
-                  padding: '6px 12px', backgroundColor: 'transparent',
-                  border: `1px solid ${config.color}40`, borderRadius: 20,
-                  color: config.color, fontSize: 12, cursor: 'pointer',
-                }}
-              >
-                {p}
-              </button>
-            ))}
+          {/* Input Row */}
+          <div style={{ display: 'flex', gap: 8, paddingTop: 8 }}>
+            <button
+              onClick={toggleVoice}
+              style={{
+                width: 48, height: 48, borderRadius: 12, border: `1px solid ${listening ? '#f87171' : '#1e1e35'}`,
+                background: listening ? 'rgba(248,113,113,0.1)' : 'rgba(255,255,255,0.03)',
+                cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0,
+              }}
+            >
+              {listening ? <MicOff size={18} color="#f87171" /> : <Mic size={18} color="#555570" />}
+            </button>
+            <input
+              value={input}
+              onChange={e => setInput(e.target.value)}
+              onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(input); } }}
+              placeholder={`Ask Keisha (${config.label} mode)...`}
+              style={{
+                flex: 1, padding: '12px 16px', backgroundColor: '#1a1a24',
+                border: `1px solid ${config.color}30`, borderRadius: 12,
+                color: '#e8e8e8', fontSize: 14, outline: 'none',
+              }}
+            />
+            <button
+              onClick={() => sendMessage(input)}
+              disabled={loading || !input.trim()}
+              style={{
+                width: 48, height: 48, borderRadius: 12, backgroundColor: config.color,
+                border: 'none', cursor: loading || !input.trim() ? 'not-allowed' : 'pointer',
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                opacity: loading || !input.trim() ? 0.5 : 1, flexShrink: 0,
+              }}
+            >
+              <Send size={18} color="#08080d" />
+            </button>
           </div>
-        )}
-
-        {/* Input Row */}
-        <div style={{ display: 'flex', gap: 8, paddingTop: 8 }}>
-          <button
-            onClick={toggleVoice}
-            style={{
-              width: 48, height: 48, borderRadius: 12, border: `1px solid ${listening ? '#f87171' : '#1e1e35'}`,
-              background: listening ? 'rgba(248,113,113,0.1)' : 'rgba(255,255,255,0.03)',
-              cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0,
-            }}
-          >
-            {listening ? <MicOff size={18} color="#f87171" /> : <Mic size={18} color="#555570" />}
-          </button>
-          <input
-            value={input}
-            onChange={e => setInput(e.target.value)}
-            onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(input); } }}
-            placeholder={`Ask Keisha (${config.label} mode)...`}
-            style={{
-              flex: 1, padding: '12px 16px', backgroundColor: '#1a1a24',
-              border: `1px solid ${config.color}30`, borderRadius: 12,
-              color: '#e8e8e8', fontSize: 14, outline: 'none',
-            }}
-          />
-          <button
-            onClick={() => sendMessage(input)}
-            disabled={loading || !input.trim()}
-            style={{
-              width: 48, height: 48, borderRadius: 12, backgroundColor: config.color,
-              border: 'none', cursor: loading || !input.trim() ? 'not-allowed' : 'pointer',
-              display: 'flex', alignItems: 'center', justifyContent: 'center',
-              opacity: loading || !input.trim() ? 0.5 : 1, flexShrink: 0,
-            }}
-          >
-            <Send size={18} color="#08080d" />
-          </button>
         </div>
       </div>
 

@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { getCached, setCache, TTL } from '@/lib/server-cache';
 
 const FMP_BASE = 'https://financialmodelingprep.com/stable';
 const FMP_KEY = process.env.FMP_API_KEY || '';
@@ -26,6 +27,10 @@ export async function GET() {
       return NextResponse.json({ tickers: [] });
     }
 
+    const cacheKey = 'market-ticker';
+    const cached = getCached<{ tickers: unknown[] }>(cacheKey);
+    if (cached) return NextResponse.json(cached);
+
     const results = await Promise.all(
       TICKER_SYMBOLS.map(async ({ symbol, label }) => {
         try {
@@ -50,7 +55,9 @@ export async function GET() {
       })
     );
 
-    return NextResponse.json({ tickers: results.filter(Boolean) });
+    const payload = { tickers: results.filter(Boolean) };
+    setCache(cacheKey, payload, TTL.REALTIME);
+    return NextResponse.json(payload);
   } catch (error) {
     console.error('Market ticker error:', error);
     return NextResponse.json({ tickers: [] });

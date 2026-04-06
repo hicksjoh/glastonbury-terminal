@@ -11,16 +11,67 @@ interface SearchResult {
 }
 
 const PAGES: SearchResult[] = [
+  // Core
   { type: 'page', label: 'Dashboard', sublabel: 'Home', href: '/' },
-  { type: 'page', label: 'News Feed', sublabel: 'Market news', href: '/news' },
+  { type: 'page', label: 'Wealth', sublabel: 'Net worth & assets', href: '/wealth' },
+  // Markets
+  { type: 'page', label: 'News', sublabel: 'Market news', href: '/news' },
   { type: 'page', label: 'Watchlist', sublabel: 'Tracked symbols', href: '/watchlist' },
-  { type: 'page', label: 'Trading', sublabel: 'Place orders', href: '/trading' },
-  { type: 'page', label: 'Strategies', sublabel: 'Automated strategies', href: '/strategies' },
   { type: 'page', label: 'Sectors', sublabel: 'Sector heatmap', href: '/sectors' },
-  { type: 'page', label: 'Economic Calendar', sublabel: 'Macro events', href: '/calendar' },
-  { type: 'page', label: 'Keisha AI', sublabel: 'AI advisor', href: '/keisha' },
+  { type: 'page', label: 'Calendar', sublabel: 'Economic calendar', href: '/calendar' },
+  // Trading
+  { type: 'page', label: 'Trading', sublabel: 'Place orders', href: '/trading' },
+  { type: 'page', label: 'Options Screener', sublabel: 'Screen options chains', href: '/trading/options/screener' },
+  { type: 'page', label: 'Stock Screener', sublabel: 'Filter stocks', href: '/screener' },
+  { type: 'page', label: 'Strategies', sublabel: 'Automated strategies', href: '/strategies' },
+  { type: 'page', label: 'Backtest', sublabel: 'Test strategies historically', href: '/backtest' },
+  { type: 'page', label: 'Journal', sublabel: 'Trade journal', href: '/journal' },
+  // Empire
+  { type: 'page', label: 'Territories', sublabel: 'CR3 territory map', href: '/territories' },
+  { type: 'page', label: 'Cash Flow', sublabel: 'Revenue & expenses', href: '/cashflow' },
+  { type: 'page', label: 'Tax Center', sublabel: 'Tax planning', href: '/tax' },
+  // Alpha Engine
+  { type: 'page', label: 'Signal Scanner', sublabel: 'Alpha signals', href: '/scanner' },
+  { type: 'page', label: 'Options Flow', sublabel: 'Unusual activity', href: '/flow' },
+  { type: 'page', label: 'Insider Tracker', sublabel: 'Insider transactions', href: '/insider' },
+  { type: 'page', label: 'Earnings Intel', sublabel: 'Earnings calendar', href: '/earnings' },
+  { type: 'page', label: 'P&L Simulator', sublabel: 'Simulate positions', href: '/simulator' },
+  // Quant Lab
+  { type: 'page', label: 'GEX Levels', sublabel: 'Gamma exposure', href: '/gex' },
+  { type: 'page', label: 'Vol Surface', sublabel: 'Volatility surface', href: '/vol-surface' },
+  { type: 'page', label: 'Pairs Trading', sublabel: 'Statistical pairs', href: '/pairs' },
+  { type: 'page', label: 'Drift Regime', sublabel: 'Market regime detection', href: '/drift' },
+  { type: 'page', label: 'Macro Regime', sublabel: 'Macro indicators', href: '/macro' },
+  { type: 'page', label: 'Optimizer', sublabel: 'Portfolio optimizer', href: '/optimizer' },
+  { type: 'page', label: 'Trading Crew', sublabel: 'Multi-agent crew', href: '/crew' },
+  { type: 'page', label: 'Auto-Pilot', sublabel: 'Automated trading', href: '/autopilot' },
+  // Intelligence
+  { type: 'page', label: 'Risk', sublabel: 'Risk dashboard', href: '/risk' },
   { type: 'page', label: 'Monte Carlo', sublabel: 'Simulations', href: '/monte-carlo' },
+  { type: 'page', label: 'Alerts', sublabel: 'Price & event alerts', href: '/alerts' },
+  { type: 'page', label: 'Keisha AI', sublabel: 'AI advisor', href: '/keisha' },
+  { type: 'page', label: 'Guard Test', sublabel: 'Risk guard testing', href: '/guard-test' },
+  // Settings
+  { type: 'page', label: 'Settings', sublabel: 'App settings', href: '/settings' },
 ];
+
+/** Simple fuzzy match: checks if all characters of the query appear in order within the target */
+function fuzzyMatch(query: string, target: string): { match: boolean; score: number } {
+  const q = query.toLowerCase();
+  const t = target.toLowerCase();
+
+  // Exact substring match gets highest score
+  if (t.includes(q)) return { match: true, score: 2 };
+
+  // Fuzzy: all query chars appear in order
+  let qi = 0;
+  for (let ti = 0; ti < t.length && qi < q.length; ti++) {
+    if (t[ti] === q[qi]) qi++;
+  }
+  if (qi === q.length) return { match: true, score: 1 };
+
+  return { match: false, score: 0 };
+}
 
 export default function CommandBar() {
   const [isOpen, setIsOpen] = useState(false);
@@ -85,11 +136,21 @@ export default function CommandBar() {
   }, [query]);
 
   const updateResults = useCallback(() => {
-    const q = query.toLowerCase();
-    const pageResults = q
-      ? PAGES.filter(p => p.label.toLowerCase().includes(q) || p.sublabel?.toLowerCase().includes(q))
-      : PAGES;
-    setResults([...stockResults, ...pageResults]);
+    if (!query) {
+      setResults([...stockResults, ...PAGES]);
+      setSelectedIdx(0);
+      return;
+    }
+    const scored = PAGES.map(p => {
+      const labelMatch = fuzzyMatch(query, p.label);
+      const subMatch = p.sublabel ? fuzzyMatch(query, p.sublabel) : { match: false, score: 0 };
+      const bestScore = Math.max(labelMatch.score, subMatch.score);
+      return { page: p, match: labelMatch.match || subMatch.match, score: bestScore };
+    })
+      .filter(r => r.match)
+      .sort((a, b) => b.score - a.score)
+      .map(r => r.page);
+    setResults([...stockResults, ...scored]);
     setSelectedIdx(0);
   }, [query, stockResults]);
 

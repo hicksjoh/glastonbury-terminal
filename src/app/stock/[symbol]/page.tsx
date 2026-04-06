@@ -40,7 +40,8 @@ interface StockData {
   news: { headline: string; source: string; url: string; created_at: string; symbols: string[] }[];
 }
 
-type TimeRange = '1D' | '1W' | '1M' | '3M' | '1Y' | '5Y';
+type TimeRange = '1D' | '1W' | '1M' | '3M' | '6M' | '1Y' | 'ALL';
+type ChartType = 'candlestick' | 'line' | 'area';
 
 export default function StockDetailPage() {
   const params = useParams();
@@ -49,6 +50,7 @@ export default function StockDetailPage() {
   const [data, setData] = useState<StockData | null>(null);
   const [loading, setLoading] = useState(true);
   const [timeRange, setTimeRange] = useState<TimeRange>('3M');
+  const [chartType, setChartType] = useState<ChartType>('candlestick');
 
   const fetchData = useCallback(async () => {
     try {
@@ -106,20 +108,12 @@ export default function StockDetailPage() {
         },
       });
 
-      if (timeRange === '1D') {
-        const areaSeries = chart.addSeries(mod.AreaSeries, {
-          lineColor: '#8a5cf6',
-          topColor: 'rgba(138, 92, 246, 0.3)',
-          bottomColor: 'rgba(138, 92, 246, 0.02)',
-          lineWidth: 2,
-        });
-        areaSeries.setData(
-          data!.historicalPrices.map(p => ({
-            time: parseInt(p.time) as unknown as string,
-            value: p.close,
-          }))
-        );
-      } else {
+      const isIntraday = timeRange === '1D';
+
+      // Determine which series type to render
+      const effectiveChartType = isIntraday && chartType === 'candlestick' ? 'area' : chartType;
+
+      if (effectiveChartType === 'candlestick') {
         const candleSeries = chart.addSeries(mod.CandlestickSeries, {
           upColor: '#4ade80',
           downColor: '#f87171',
@@ -137,8 +131,34 @@ export default function StockDetailPage() {
             close: p.close,
           }))
         );
+      } else if (effectiveChartType === 'line') {
+        const lineSeries = chart.addSeries(mod.LineSeries, {
+          color: '#8a5cf6',
+          lineWidth: 2,
+        });
+        lineSeries.setData(
+          data!.historicalPrices.map(p => ({
+            time: isIntraday ? (parseInt(p.time) as unknown as string) : p.time,
+            value: p.close,
+          }))
+        );
+      } else {
+        // area
+        const areaSeries = chart.addSeries(mod.AreaSeries, {
+          lineColor: '#8a5cf6',
+          topColor: 'rgba(138, 92, 246, 0.3)',
+          bottomColor: 'rgba(138, 92, 246, 0.02)',
+          lineWidth: 2,
+        });
+        areaSeries.setData(
+          data!.historicalPrices.map(p => ({
+            time: isIntraday ? (parseInt(p.time) as unknown as string) : p.time,
+            value: p.close,
+          }))
+        );
       }
 
+      // Volume bars - color coded green/red
       const volumeSeries = chart.addSeries(mod.HistogramSeries, {
         color: 'rgba(138, 92, 246, 0.2)',
         priceFormat: { type: 'volume' },
@@ -149,9 +169,9 @@ export default function StockDetailPage() {
       });
       volumeSeries.setData(
         data!.historicalPrices.map(p => ({
-          time: timeRange === '1D' ? (parseInt(p.time) as unknown as string) : p.time,
+          time: isIntraday ? (parseInt(p.time) as unknown as string) : p.time,
           value: p.volume,
-          color: p.close >= p.open ? 'rgba(74, 222, 128, 0.15)' : 'rgba(248, 113, 113, 0.15)',
+          color: p.close >= p.open ? 'rgba(74, 222, 128, 0.3)' : 'rgba(248, 113, 113, 0.3)',
         }))
       );
 
@@ -172,7 +192,7 @@ export default function StockDetailPage() {
     return () => {
       chart?.remove();
     };
-  }, [data, timeRange]);
+  }, [data, timeRange, chartType]);
 
   if (loading) {
     return (
@@ -211,7 +231,12 @@ export default function StockDetailPage() {
     </div>
   );
 
-  const timeRanges: TimeRange[] = ['1D', '1W', '1M', '3M', '1Y', '5Y'];
+  const timeRanges: TimeRange[] = ['1D', '1W', '1M', '3M', '6M', '1Y', 'ALL'];
+  const chartTypes: { key: ChartType; label: string }[] = [
+    { key: 'candlestick', label: 'Candle' },
+    { key: 'line', label: 'Line' },
+    { key: 'area', label: 'Area' },
+  ];
 
   return (
     <AppShell>
@@ -263,26 +288,51 @@ export default function StockDetailPage() {
           padding: 20,
           marginBottom: 24,
         }}>
-          <div style={{ display: 'flex', gap: 4, marginBottom: 16 }}>
-            {timeRanges.map(r => (
-              <button
-                key={r}
-                onClick={() => setTimeRange(r)}
-                style={{
-                  padding: '6px 14px',
-                  borderRadius: 6,
-                  border: timeRange === r ? '1px solid #8a5cf6' : '1px solid transparent',
-                  background: timeRange === r ? 'rgba(138, 92, 246, 0.15)' : 'transparent',
-                  color: timeRange === r ? '#c4a6ff' : '#666',
-                  fontSize: 12,
-                  fontWeight: 600,
-                  cursor: 'pointer',
-                  fontFamily: "'JetBrains Mono', monospace",
-                }}
-              >
-                {r}
-              </button>
-            ))}
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 }}>
+            <div style={{ display: 'flex', gap: 4 }}>
+              {timeRanges.map(r => (
+                <button
+                  key={r}
+                  onClick={() => setTimeRange(r)}
+                  style={{
+                    padding: '6px 14px',
+                    borderRadius: 20,
+                    border: timeRange === r ? '1px solid #8a5cf6' : '1px solid rgba(255,255,255,0.08)',
+                    background: timeRange === r ? 'rgba(138, 92, 246, 0.2)' : 'transparent',
+                    color: timeRange === r ? '#c4a6ff' : '#666',
+                    fontSize: 12,
+                    fontWeight: 600,
+                    cursor: 'pointer',
+                    fontFamily: "'JetBrains Mono', monospace",
+                    transition: 'all 0.15s ease',
+                  }}
+                >
+                  {r}
+                </button>
+              ))}
+            </div>
+            <div style={{ display: 'flex', gap: 2, background: 'rgba(255,255,255,0.03)', borderRadius: 8, padding: 2 }}>
+              {chartTypes.map(ct => (
+                <button
+                  key={ct.key}
+                  onClick={() => setChartType(ct.key)}
+                  style={{
+                    padding: '5px 10px',
+                    borderRadius: 6,
+                    border: 'none',
+                    background: chartType === ct.key ? 'rgba(138, 92, 246, 0.2)' : 'transparent',
+                    color: chartType === ct.key ? '#c4a6ff' : '#555',
+                    fontSize: 11,
+                    fontWeight: 600,
+                    cursor: 'pointer',
+                    fontFamily: "'JetBrains Mono', monospace",
+                    transition: 'all 0.15s ease',
+                  }}
+                >
+                  {ct.label}
+                </button>
+              ))}
+            </div>
           </div>
           <div ref={chartContainerRef} style={{ width: '100%', height: 400 }} />
         </div>

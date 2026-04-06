@@ -2,6 +2,7 @@
 import Link from 'next/link';
 import Image from 'next/image';
 import { usePathname } from 'next/navigation';
+import { useAlertBadge } from '@/contexts/NotificationProvider';
 import {
   LayoutDashboard, TrendingUp, BarChart3, MessageSquare, Zap, Newspaper,
   Star, Grid3X3, CalendarDays, ScanSearch, Filter, Shield, ShieldCheck, Bell, Settings,
@@ -81,6 +82,7 @@ const NAV_SECTIONS = [
 
 export function Sidebar() {
   const pathname = usePathname();
+  const alertBadge = useAlertBadge();
   return (
     <aside style={{
       width: 220,
@@ -127,6 +129,7 @@ export function Sidebar() {
             )}
             {section.items.map(({ href, label, icon: Icon }) => {
               const active = pathname === href;
+              const showBadge = href === '/alerts' && alertBadge > 0;
               return (
                 <Link
                   key={href}
@@ -144,10 +147,30 @@ export function Sidebar() {
                     transition: 'all 0.15s',
                     fontSize: 13,
                     fontWeight: active ? 600 : 400,
+                    position: 'relative',
                   }}
                 >
                   <Icon size={15} />
                   {label}
+                  {showBadge && (
+                    <span style={{
+                      marginLeft: 'auto',
+                      background: '#f87171',
+                      color: '#fff',
+                      fontSize: 9,
+                      fontWeight: 700,
+                      minWidth: 16,
+                      height: 16,
+                      borderRadius: 8,
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      padding: '0 4px',
+                      lineHeight: 1,
+                    }}>
+                      {alertBadge > 9 ? '9+' : alertBadge}
+                    </span>
+                  )}
                 </Link>
               );
             })}
@@ -172,13 +195,23 @@ export function Sidebar() {
       </nav>
       {/* Footer */}
       <div style={{ color: '#6b6b80', fontSize: 11, paddingLeft: 8, paddingTop: 8 }}>
-        <div style={{
-          display: 'inline-flex', alignItems: 'center', gap: 4,
-          background: 'rgba(138, 92, 246, 0.1)', border: '1px solid rgba(138, 92, 246, 0.2)',
-          borderRadius: 4, padding: '2px 8px', fontSize: 10, color: '#8a5cf6',
-          marginBottom: 6, cursor: 'default',
-        }}>
-          Cmd+K Search
+        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 6 }}>
+          <div style={{
+            display: 'inline-flex', alignItems: 'center', gap: 4,
+            background: 'rgba(138, 92, 246, 0.1)', border: '1px solid rgba(138, 92, 246, 0.2)',
+            borderRadius: 4, padding: '2px 8px', fontSize: 10, color: '#8a5cf6',
+            cursor: 'default',
+          }}>
+            Cmd+K Search
+          </div>
+          <div style={{
+            display: 'inline-flex', alignItems: 'center', gap: 4,
+            background: 'rgba(201, 168, 76, 0.1)', border: '1px solid rgba(201, 168, 76, 0.2)',
+            borderRadius: 4, padding: '2px 8px', fontSize: 10, color: '#c9a84c',
+            cursor: 'default',
+          }}>
+            ? Shortcuts
+          </div>
         </div>
         <div>Paper Trading Active</div>
         <div style={{ color: '#2a2a3a', fontSize: 10, marginTop: 4 }}>v3.0 &bull; 2026</div>

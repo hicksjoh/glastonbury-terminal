@@ -2,7 +2,8 @@
 
 import { useEffect, useState } from 'react';
 import { AppShell } from '@/components/layout/AppShell';
-import { Plus, Filter, ChevronDown, ChevronUp, TrendingUp, TrendingDown, Target, Award, BarChart3 } from 'lucide-react';
+import { Plus, Filter, ChevronDown, ChevronUp, TrendingUp, TrendingDown, Target, Award, BarChart3, Download } from 'lucide-react';
+import { exportToCSV, exportToPDF } from '@/lib/export';
 
 interface Trade {
   id: string;
@@ -114,16 +115,64 @@ export default function JournalPage() {
               </button>
             ))}
           </div>
-          <button
-            onClick={() => setShowAddForm(!showAddForm)}
-            style={{
-              display: 'flex', alignItems: 'center', gap: 6,
-              padding: '10px 18px', borderRadius: 10, cursor: 'pointer',
-              background: '#8a5cf6', border: 'none', color: '#fff', fontSize: 13, fontWeight: 600,
-            }}
-          >
-            <Plus size={16} /> New Trade
-          </button>
+          <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+            <button
+              onClick={() => {
+                if (trades.length === 0) return;
+                exportToCSV(trades.map(t => ({
+                  date: t.entry_date,
+                  symbol: t.ticker,
+                  direction: t.direction,
+                  entry_price: t.entry_price,
+                  exit_price: t.exit_price ?? '',
+                  pnl: t.pnl ?? '',
+                  notes: t.notes ?? '',
+                  tags: (t.tags || []).join('; '),
+                  strategy: t.strategy ?? '',
+                })), 'trade-journal');
+              }}
+              style={{
+                display: 'flex', alignItems: 'center', gap: 5,
+                padding: '7px 12px', borderRadius: 8, cursor: 'pointer',
+                background: 'transparent', border: '1px solid #333350', color: '#8888a8', fontSize: 11, fontWeight: 500,
+              }}
+            >
+              <Download size={12} /> CSV
+            </button>
+            <button
+              onClick={() => {
+                if (trades.length === 0) return;
+                const rows = trades.map(t =>
+                  `<tr>
+                    <td>${t.entry_date}</td><td>${t.ticker}</td><td>${t.direction}</td>
+                    <td>${t.strategy || '-'}</td><td>$${Number(t.entry_price).toFixed(2)}</td>
+                    <td>${t.exit_price ? '$' + Number(t.exit_price).toFixed(2) : 'Open'}</td>
+                    <td class="${(t.pnl || 0) >= 0 ? 'positive' : 'negative'}">${t.pnl != null ? (t.pnl >= 0 ? '+' : '') + '$' + Number(t.pnl).toFixed(2) : '-'}</td>
+                  </tr>`
+                ).join('');
+                exportToPDF('Trade Journal Report',
+                  `<table><thead><tr><th>Date</th><th>Symbol</th><th>Dir</th><th>Strategy</th><th>Entry</th><th>Exit</th><th>P&L</th></tr></thead><tbody>${rows}</tbody></table>`,
+                  'trade-journal');
+              }}
+              style={{
+                display: 'flex', alignItems: 'center', gap: 5,
+                padding: '7px 12px', borderRadius: 8, cursor: 'pointer',
+                background: 'transparent', border: '1px solid #333350', color: '#8888a8', fontSize: 11, fontWeight: 500,
+              }}
+            >
+              <Download size={12} /> PDF
+            </button>
+            <button
+              onClick={() => setShowAddForm(!showAddForm)}
+              style={{
+                display: 'flex', alignItems: 'center', gap: 6,
+                padding: '10px 18px', borderRadius: 10, cursor: 'pointer',
+                background: '#8a5cf6', border: 'none', color: '#fff', fontSize: 13, fontWeight: 600,
+              }}
+            >
+              <Plus size={16} /> New Trade
+            </button>
+          </div>
         </div>
 
         {tab === 'analytics' ? (

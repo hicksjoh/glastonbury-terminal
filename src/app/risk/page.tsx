@@ -35,6 +35,8 @@ export default function RiskPage() {
   const [mcSimulations, setMcSimulations] = useState(10000);
   const [mcHorizon, setMcHorizon] = useState(21);
 
+  useEffect(() => { document.title = 'Risk Dashboard | Glastonbury Terminal'; }, []);
+
   useEffect(() => {
     const fetchRisk = async () => {
       setLoading(true);

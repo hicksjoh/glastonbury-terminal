@@ -10,8 +10,8 @@ interface StrikeGEX {
 }
 
 interface ExpirationEntry {
-  expiry: string;
-  totalGEX: number;
+  expiration: string;
+  gex: number;
 }
 
 interface GEXData {
@@ -40,11 +40,26 @@ const colors = {
   cyan: '#22d3ee',
 };
 
-function formatNumber(n: number): string {
+function formatNumber(n: number | null | undefined): string {
+  if (n == null || isNaN(n)) return '—';
   if (Math.abs(n) >= 1_000_000_000) return `${(n / 1_000_000_000).toFixed(2)}B`;
   if (Math.abs(n) >= 1_000_000) return `${(n / 1_000_000).toFixed(2)}M`;
   if (Math.abs(n) >= 1_000) return `${(n / 1_000).toFixed(1)}K`;
   return n.toFixed(2);
+}
+
+/** Validate that the API response has the expected shape */
+function isValidGEXData(obj: unknown): obj is GEXData {
+  if (!obj || typeof obj !== 'object') return false;
+  const d = obj as Record<string, unknown>;
+  return (
+    typeof d.regime === 'string' &&
+    d.levels != null &&
+    typeof d.levels === 'object' &&
+    Array.isArray(d.byStrike) &&
+    typeof d.impact === 'string' &&
+    Array.isArray(d.expirationBreakdown)
+  );
 }
 
 function SkeletonCard({ height = 80 }: { height?: number }) {
@@ -65,14 +80,30 @@ export default function GEXPage() {
   const [symbol, setSymbol] = useState('SPY');
   const [data, setData] = useState<GEXData | null>(null);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
   const fetchGEX = useCallback(async () => {
     setLoading(true);
+    setError(null);
     try {
       const res = await fetch(`/api/gex?symbol=${symbol}`);
-      if (res.ok) setData(await res.json());
+      if (!res.ok) {
+        setError(`API returned ${res.status}`);
+        return;
+      }
+      const json = await res.json();
+      if (json.error) {
+        setError(json.error);
+        return;
+      }
+      if (!isValidGEXData(json)) {
+        setError('Unexpected data format from API');
+        return;
+      }
+      setData(json);
     } catch (err) {
       console.error('GEX fetch error:', err);
+      setError(err instanceof Error ? err.message : 'Failed to fetch GEX data');
     } finally {
       setLoading(false);
     }
@@ -84,11 +115,12 @@ export default function GEXPage() {
     return () => clearInterval(interval);
   }, [fetchGEX]);
 
-  const maxAbsGEX = data?.byStrike
-    ? Math.max(...data.byStrike.map((s) => Math.abs(s.gex)), 1)
-    : 1;
+  const maxAbsGEX =
+    data?.byStrike && data.byStrike.length > 0
+      ? Math.max(...data.byStrike.map((s) => Math.abs(s.gex ?? 0)), 1)
+      : 1;
 
-  const isPositiveRegime = data?.regime?.toLowerCase().includes('positive');
+  const isPositiveRegime = (data?.regime ?? '').toLowerCase().includes('positive');
 
   return (
     <AppShell>
@@ -205,7 +237,7 @@ export default function GEXPage() {
                       fontFamily: '"JetBrains Mono", monospace',
                     }}
                   >
-                    {card.value.toLocaleString()}
+                    {card.value != null ? card.value.toLocaleString() : '—'}
                   </div>
                 </div>
               ))}
@@ -234,7 +266,7 @@ export default function GEXPage() {
                     background: 'rgba(255,255,255,0.1)',
                   }}
                 />
-                {data.byStrike.map((item, idx) => {
+                {(data.byStrike ?? []).map((item, idx) => {
                   const pct = (item.gex / maxAbsGEX) * 50;
                   const isPositive = item.gex >= 0;
                   return (
@@ -328,25 +360,25 @@ export default function GEXPage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {data.expirationBreakdown.map((row, idx) => (
+                  {(data.expirationBreakdown ?? []).map((row, idx) => (
                     <tr
                       key={idx}
                       style={{ borderBottom: `1px solid ${colors.border}`, cursor: 'default' }}
                       onMouseEnter={(e) => (e.currentTarget.style.background = '#1a1a2e')}
                       onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
                     >
-                      <td style={{ padding: '10px 24px', color: '#ccc', fontSize: 13 }}>{row.expiry}</td>
+                      <td style={{ padding: '10px 24px', color: '#ccc', fontSize: 13 }}>{row.expiration}</td>
                       <td
                         style={{
                           padding: '10px 24px',
                           textAlign: 'right',
-                          color: row.totalGEX >= 0 ? colors.green : colors.red,
+                          color: (row.gex ?? 0) >= 0 ? colors.green : colors.red,
                           fontSize: 13,
                           fontFamily: '"JetBrains Mono", monospace',
                           fontWeight: 600,
                         }}
                       >
-                        {formatNumber(row.totalGEX)}
+                        {formatNumber(row.gex)}
                       </td>
                     </tr>
                   ))}
@@ -354,8 +386,26 @@ export default function GEXPage() {
               </table>
             </div>
           </div>
+        ) : error ? (
+          <div style={{ textAlign: 'center', padding: 40 }}>
+            <div style={{ color: colors.red, fontSize: 16, marginBottom: 16 }}>{error}</div>
+            <button
+              onClick={fetchGEX}
+              style={{
+                padding: '10px 24px',
+                borderRadius: 8,
+                border: `1px solid ${colors.border}`,
+                background: colors.surface,
+                color: '#fff',
+                fontSize: 14,
+                cursor: 'pointer',
+              }}
+            >
+              Retry
+            </button>
+          </div>
         ) : (
-          <div style={{ color: '#888', textAlign: 'center', padding: 40 }}>Failed to load GEX data.</div>
+          <div style={{ color: '#888', textAlign: 'center', padding: 40 }}>No data available.</div>
         )}
       </div>
     </AppShell>

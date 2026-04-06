@@ -1,6 +1,6 @@
 'use client';
 
-import { createContext, useContext, useState, useCallback, useEffect, ReactNode } from 'react';
+import { createContext, useContext, useState, useCallback, useEffect, useRef, ReactNode } from 'react';
 import { useRealtimeEvent } from './RealtimeProvider';
 
 export interface Notification {
@@ -17,6 +17,7 @@ export interface Notification {
 interface NotificationContextType {
   notifications: Notification[];
   unreadCount: number;
+  alertBadgeCount: number;
   markRead: (id: string) => void;
   markAllRead: () => void;
   addNotification: (n: Omit<Notification, 'id' | 'read' | 'created_at'>) => void;
@@ -25,6 +26,7 @@ interface NotificationContextType {
 const NotificationContext = createContext<NotificationContextType>({
   notifications: [],
   unreadCount: 0,
+  alertBadgeCount: 0,
   markRead: () => {},
   markAllRead: () => {},
   addNotification: () => {},
@@ -34,8 +36,29 @@ export function useNotifications() {
   return useContext(NotificationContext);
 }
 
+export function useAlertBadge() {
+  const { alertBadgeCount } = useContext(NotificationContext);
+  return alertBadgeCount;
+}
+
+const ALERT_CHECK_INTERVAL = 60_000; // 60 seconds
+
+// Simple check: is US market likely open? (weekday, 9:30am-4pm ET)
+function isMarketHours(): boolean {
+  const now = new Date();
+  const et = new Date(now.toLocaleString('en-US', { timeZone: 'America/New_York' }));
+  const day = et.getDay();
+  if (day === 0 || day === 6) return false; // weekend
+  const hours = et.getHours();
+  const minutes = et.getMinutes();
+  const totalMinutes = hours * 60 + minutes;
+  return totalMinutes >= 570 && totalMinutes <= 960; // 9:30 AM to 4:00 PM
+}
+
 export function NotificationProvider({ children }: { children: ReactNode }) {
   const [notifications, setNotifications] = useState<Notification[]>([]);
+  const [alertBadgeCount, setAlertBadgeCount] = useState(0);
+  const alertCheckTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   // Load notifications on mount
   useEffect(() => {
@@ -45,6 +68,74 @@ export function NotificationProvider({ children }: { children: ReactNode }) {
         if (d.success) setNotifications(d.data || []);
       })
       .catch(() => {});
+  }, []);
+
+  // Request browser notification permission on mount
+  useEffect(() => {
+    if (typeof window !== 'undefined' && 'Notification' in window && window.Notification.permission === 'default') {
+      window.Notification.requestPermission();
+    }
+  }, []);
+
+  // Periodic alert checking during market hours
+  useEffect(() => {
+    const checkAlerts = async () => {
+      // Check even outside market hours but less critical
+      try {
+        const res = await fetch('/api/alerts/check');
+        if (!res.ok) return;
+        const data = await res.json();
+
+        if (data.triggered && data.triggered.length > 0) {
+          setAlertBadgeCount(prev => prev + data.triggered.length);
+
+          for (const alert of data.triggered) {
+            // Add to in-app notifications
+            const newNotif: Notification = {
+              id: crypto.randomUUID(),
+              type: 'alert',
+              priority: 'P1',
+              title: `Alert: ${alert.name}`,
+              message: alert.conditions
+                .map((c: { symbol: string; metric: string; operator: string; value: number }) =>
+                  `${c.symbol} ${c.metric} ${c.operator} ${c.value}`
+                )
+                .join(' & '),
+              read: false,
+              link: '/alerts',
+              created_at: new Date().toISOString(),
+            };
+            setNotifications(prev => [newNotif, ...prev]);
+            showToast(newNotif);
+
+            // Browser push notification
+            if (typeof window !== 'undefined' && 'Notification' in window && window.Notification.permission === 'granted') {
+              new window.Notification(`Alert: ${alert.name}`, {
+                body: newNotif.message || '',
+                icon: '/glastonbury-logo.png',
+                tag: `alert-${alert.id}`,
+              });
+            }
+          }
+        }
+      } catch {
+        // silent fail
+      }
+    };
+
+    // Check immediately on mount if during market hours
+    if (isMarketHours()) {
+      checkAlerts();
+    }
+
+    alertCheckTimerRef.current = setInterval(() => {
+      // Always check, but the real value is during market hours
+      checkAlerts();
+    }, ALERT_CHECK_INTERVAL);
+
+    return () => {
+      if (alertCheckTimerRef.current) clearInterval(alertCheckTimerRef.current);
+    };
   }, []);
 
   // Listen for realtime notifications
@@ -58,8 +149,8 @@ export function NotificationProvider({ children }: { children: ReactNode }) {
     }
 
     // Browser push for P0
-    if (n.priority === 'P0' && Notification.permission === 'granted') {
-      new globalThis.Notification(n.title, { body: n.message || '' });
+    if (n.priority === 'P0' && typeof window !== 'undefined' && 'Notification' in window && window.Notification.permission === 'granted') {
+      new window.Notification(n.title, { body: n.message || '', icon: '/glastonbury-logo.png' });
     }
   }, []));
 
@@ -94,7 +185,7 @@ export function NotificationProvider({ children }: { children: ReactNode }) {
   }, []);
 
   return (
-    <NotificationContext.Provider value={{ notifications, unreadCount, markRead, markAllRead, addNotification }}>
+    <NotificationContext.Provider value={{ notifications, unreadCount, alertBadgeCount, markRead, markAllRead, addNotification }}>
       {children}
     </NotificationContext.Provider>
   );

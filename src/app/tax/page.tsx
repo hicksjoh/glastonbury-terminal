@@ -2,7 +2,8 @@
 
 import { useEffect, useState } from 'react';
 import { AppShell } from '@/components/layout/AppShell';
-import { Receipt, AlertTriangle, TrendingDown, TrendingUp, Shield, Calculator } from 'lucide-react';
+import { Receipt, AlertTriangle, TrendingDown, TrendingUp, Shield, Calculator, Download } from 'lucide-react';
+import { exportToCSV } from '@/lib/export';
 
 interface TaxData {
   ytd_short_term_gains: number;
@@ -44,8 +45,34 @@ export default function TaxPage() {
   return (
     <AppShell>
       <div>
-        <h1 style={{ fontSize: 28, fontWeight: 700, color: '#fff', margin: '0 0 4px' }}>Tax Command Center</h1>
-        <p style={{ color: '#8888a8', fontSize: 14, margin: '0 0 28px' }}>{currentYear} Tax Intelligence</p>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 28 }}>
+          <div>
+            <h1 style={{ fontSize: 28, fontWeight: 700, color: '#fff', margin: '0 0 4px' }}>Tax Command Center</h1>
+            <p style={{ color: '#8888a8', fontSize: 14, margin: 0 }}>{currentYear} Tax Intelligence</p>
+          </div>
+          <button
+            onClick={() => {
+              if (!data?.events?.length) return;
+              exportToCSV(data.events.map(e => ({
+                date: e.date,
+                symbol: e.ticker || '',
+                type: e.tax_character || '',
+                proceeds: '',
+                cost_basis: '',
+                gain_loss: e.amount,
+                wash_sale: e.wash_sale_flag ? 'Yes' : 'No',
+                description: e.description || '',
+              })), `tax-events-${currentYear}`);
+            }}
+            style={{
+              display: 'flex', alignItems: 'center', gap: 5,
+              padding: '7px 12px', borderRadius: 8, cursor: 'pointer',
+              background: 'transparent', border: '1px solid #333350', color: '#8888a8', fontSize: 11, fontWeight: 500,
+            }}
+          >
+            <Download size={12} /> Export for Tax Preparer
+          </button>
+        </div>
 
         {loading ? (
           <div style={{ textAlign: 'center', padding: 80, color: '#555570' }}>Loading tax data...</div>

@@ -3,8 +3,8 @@
   "configurations": [
     {
       "name": "dev",
-      "runtimeExecutable": "npm",
-      "runtimeArgs": ["run", "dev"],
+      "runtimeExecutable": "/Users/wesley/.nvm/versions/node/v20.20.2/bin/node",
+      "runtimeArgs": ["/Users/wesley/Projects/glastonbury-terminal/node_modules/.bin/next", "dev"],
       "port": 3000
     }
   ]

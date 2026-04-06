@@ -3,6 +3,16 @@
   "buildCommand": "npm run build",
   "installCommand": "npm install",
   "env": {
-    "NEXT_PUBLIC_APP_URL": "https://glastonbury-terminal.vercel.app"
-  }
+    "NEXT_PUBLIC_APP_URL": "https://terminal.johnwesleyhicks.com"
+  },
+  "crons": [
+    {
+      "path": "/api/briefing/scheduled",
+      "schedule": "30 10 * * 1-5"
+    },
+    {
+      "path": "/api/portfolio/snapshot",
+      "schedule": "0 22 * * 1-5"
+    }
+  ]
 }

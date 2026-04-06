@@ -1,8 +1,9 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { AppShell } from '@/components/layout/AppShell';
-import { Bell, Plus, Trash2, Zap, Eye, MessageSquare } from 'lucide-react';
+import { useNotifications } from '@/contexts/NotificationProvider';
+import { Bell, Plus, Trash2, Zap, Eye, MessageSquare, Volume2, VolumeX } from 'lucide-react';
 
 interface AlertCondition {
   symbol: string;
@@ -83,6 +84,23 @@ export default function AlertsPage() {
   ]);
   const [newLogic, setNewLogic] = useState<'AND' | 'OR'>('AND');
   const [newAction, setNewAction] = useState('notify');
+  const [notifPermission, setNotifPermission] = useState<NotificationPermission>('default');
+  const [recentlyTriggered, setRecentlyTriggered] = useState<Set<string>>(new Set());
+  const { addNotification } = useNotifications();
+
+  // Check notification permission
+  useEffect(() => {
+    if (typeof window !== 'undefined' && 'Notification' in window) {
+      setNotifPermission(window.Notification.permission);
+    }
+  }, []);
+
+  const requestNotifPermission = useCallback(async () => {
+    if (typeof window !== 'undefined' && 'Notification' in window) {
+      const perm = await window.Notification.requestPermission();
+      setNotifPermission(perm);
+    }
+  }, []);
 
   useEffect(() => {
     const fetchAlerts = async () => {
@@ -99,6 +117,32 @@ export default function AlertsPage() {
       }
     };
     fetchAlerts();
+  }, []);
+
+  // Poll alert checker every 60s for real-time trigger detection on this page
+  useEffect(() => {
+    const checkAlerts = async () => {
+      try {
+        const res = await fetch('/api/alerts/check');
+        if (!res.ok) return;
+        const data = await res.json();
+        if (data.triggered && data.triggered.length > 0) {
+          const ids = new Set<string>(data.triggered.map((t: { id: string }) => t.id));
+          setRecentlyTriggered(ids);
+          // Update last_triggered in local state
+          setAlerts(prev => prev.map(a =>
+            ids.has(a.id) ? { ...a, last_triggered: new Date().toISOString() } : a
+          ));
+          // Flash clears after 10 seconds
+          setTimeout(() => setRecentlyTriggered(new Set()), 10000);
+        }
+      } catch {
+        // silent
+      }
+    };
+
+    const interval = setInterval(checkAlerts, 60000);
+    return () => clearInterval(interval);
   }, []);
 
   const addCondition = () => {
@@ -190,6 +234,45 @@ export default function AlertsPage() {
             <Plus size={16} /> New Alert
           </button>
         </div>
+
+        {/* Browser Notification Permission Banner */}
+        {notifPermission !== 'granted' && (
+          <div style={{
+            display: 'flex', alignItems: 'center', gap: 12,
+            padding: '12px 20px', borderRadius: 10, marginBottom: 20,
+            background: 'rgba(138, 92, 246, 0.08)',
+            border: '1px solid rgba(138, 92, 246, 0.2)',
+          }}>
+            {notifPermission === 'denied' ? (
+              <>
+                <VolumeX size={18} color="#f87171" />
+                <div>
+                  <div style={{ fontSize: 13, color: '#e8e8e8', fontWeight: 600 }}>Push Notifications Blocked</div>
+                  <div style={{ fontSize: 11, color: '#666' }}>Enable notifications in your browser settings to get alert push notifications.</div>
+                </div>
+              </>
+            ) : (
+              <>
+                <Volume2 size={18} color="#c4a6ff" />
+                <div style={{ flex: 1 }}>
+                  <div style={{ fontSize: 13, color: '#e8e8e8', fontWeight: 600 }}>Enable Push Notifications</div>
+                  <div style={{ fontSize: 11, color: '#666' }}>Get browser alerts when your conditions are triggered during market hours.</div>
+                </div>
+                <button
+                  onClick={requestNotifPermission}
+                  style={{
+                    padding: '8px 16px', borderRadius: 8,
+                    background: 'rgba(138, 92, 246, 0.15)',
+                    border: '1px solid rgba(138, 92, 246, 0.3)',
+                    color: '#c4a6ff', fontSize: 12, fontWeight: 600, cursor: 'pointer',
+                  }}
+                >
+                  Allow Notifications
+                </button>
+              </>
+            )}
+          </div>
+        )}
 
         {/* Templates */}
         <div style={{ display: 'flex', gap: 8, marginBottom: 24, flexWrap: 'wrap' }}>
@@ -300,61 +383,86 @@ export default function AlertsPage() {
             No alerts configured yet. Create one above or use a template.
           </div>
         ) : (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-            {alerts.map(alert => (
-              <div key={alert.id} style={{
-                background: 'rgba(255,255,255,0.02)',
-                border: `1px solid ${alert.is_active ? 'rgba(255,255,255,0.08)' : 'rgba(255,255,255,0.04)'}`,
-                borderRadius: 10,
-                padding: '16px 20px',
-                opacity: alert.is_active ? 1 : 0.5,
-                transition: 'all 0.2s',
-              }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                    <span style={{ color: alert.is_active ? '#f0c674' : '#555' }}>{ACTION_ICONS[alert.action] || <Bell size={14} />}</span>
-                    <span style={{ fontSize: 15, fontWeight: 600, color: '#e8e8e8' }}>{alert.name}</span>
-                    <span style={{
-                      fontSize: 10, padding: '2px 8px', borderRadius: 4,
-                      background: alert.is_active ? 'rgba(34, 197, 94, 0.1)' : 'rgba(255,255,255,0.05)',
-                      color: alert.is_active ? '#4ade80' : '#555',
-                    }}>
-                      {alert.is_active ? 'Active' : 'Paused'}
-                    </span>
+          <>
+            <style>{`
+              @keyframes alertTriggerPulse {
+                0% { border-color: rgba(248, 113, 113, 0.8); box-shadow: 0 0 12px rgba(248, 113, 113, 0.3); }
+                50% { border-color: rgba(248, 113, 113, 0.3); box-shadow: 0 0 4px rgba(248, 113, 113, 0.1); }
+                100% { border-color: rgba(248, 113, 113, 0.8); box-shadow: 0 0 12px rgba(248, 113, 113, 0.3); }
+              }
+            `}</style>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+              {alerts.map(alert => {
+                const isTriggered = recentlyTriggered.has(alert.id);
+                return (
+                  <div key={alert.id} style={{
+                    background: isTriggered ? 'rgba(248, 113, 113, 0.05)' : 'rgba(255,255,255,0.02)',
+                    border: `1px solid ${isTriggered ? 'rgba(248, 113, 113, 0.5)' : alert.is_active ? 'rgba(255,255,255,0.08)' : 'rgba(255,255,255,0.04)'}`,
+                    borderRadius: 10,
+                    padding: '16px 20px',
+                    opacity: alert.is_active ? 1 : 0.5,
+                    transition: 'all 0.2s',
+                    animation: isTriggered ? 'alertTriggerPulse 2s ease-in-out infinite' : 'none',
+                  }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                        <span style={{ color: isTriggered ? '#f87171' : alert.is_active ? '#f0c674' : '#555' }}>
+                          {ACTION_ICONS[alert.action] || <Bell size={14} />}
+                        </span>
+                        <span style={{ fontSize: 15, fontWeight: 600, color: '#e8e8e8' }}>{alert.name}</span>
+                        {isTriggered ? (
+                          <span style={{
+                            fontSize: 10, padding: '2px 8px', borderRadius: 4,
+                            background: 'rgba(248, 113, 113, 0.15)',
+                            color: '#f87171', fontWeight: 700,
+                          }}>
+                            TRIGGERED
+                          </span>
+                        ) : (
+                          <span style={{
+                            fontSize: 10, padding: '2px 8px', borderRadius: 4,
+                            background: alert.is_active ? 'rgba(34, 197, 94, 0.1)' : 'rgba(255,255,255,0.05)',
+                            color: alert.is_active ? '#4ade80' : '#555',
+                          }}>
+                            {alert.is_active ? 'Active' : 'Paused'}
+                          </span>
+                        )}
+                      </div>
+                      <button
+                        onClick={() => toggleAlert(alert.id, !alert.is_active)}
+                        style={{
+                          padding: '4px 12px', borderRadius: 6, fontSize: 11, cursor: 'pointer',
+                          border: '1px solid rgba(255,255,255,0.1)',
+                          background: 'rgba(255,255,255,0.03)',
+                          color: '#888',
+                        }}
+                      >
+                        {alert.is_active ? 'Pause' : 'Enable'}
+                      </button>
+                    </div>
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 6 }}>
+                      {alert.conditions.map((c, i) => (
+                        <span key={i} style={{
+                          fontSize: 11, padding: '3px 10px', borderRadius: 4,
+                          background: 'rgba(138, 92, 246, 0.08)',
+                          border: '1px solid rgba(138, 92, 246, 0.15)',
+                          color: '#c4a6ff',
+                          fontFamily: "'JetBrains Mono', monospace",
+                        }}>
+                          {c.symbol} {c.metric} {c.operator} {c.value}
+                        </span>
+                      ))}
+                      <span style={{ fontSize: 10, color: '#555', alignSelf: 'center' }}>({alert.logic})</span>
+                    </div>
+                    <div style={{ fontSize: 11, color: '#555' }}>
+                      Created {timeAgo(alert.created_at)}
+                      {alert.last_triggered && <> &bull; Last triggered {timeAgo(alert.last_triggered)}</>}
+                    </div>
                   </div>
-                  <button
-                    onClick={() => toggleAlert(alert.id, !alert.is_active)}
-                    style={{
-                      padding: '4px 12px', borderRadius: 6, fontSize: 11, cursor: 'pointer',
-                      border: '1px solid rgba(255,255,255,0.1)',
-                      background: 'rgba(255,255,255,0.03)',
-                      color: '#888',
-                    }}
-                  >
-                    {alert.is_active ? 'Pause' : 'Enable'}
-                  </button>
-                </div>
-                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 6 }}>
-                  {alert.conditions.map((c, i) => (
-                    <span key={i} style={{
-                      fontSize: 11, padding: '3px 10px', borderRadius: 4,
-                      background: 'rgba(138, 92, 246, 0.08)',
-                      border: '1px solid rgba(138, 92, 246, 0.15)',
-                      color: '#c4a6ff',
-                      fontFamily: "'JetBrains Mono', monospace",
-                    }}>
-                      {c.symbol} {c.metric} {c.operator} {c.value}
-                    </span>
-                  ))}
-                  <span style={{ fontSize: 10, color: '#555', alignSelf: 'center' }}>({alert.logic})</span>
-                </div>
-                <div style={{ fontSize: 11, color: '#555' }}>
-                  Created {timeAgo(alert.created_at)}
-                  {alert.last_triggered && <> &bull; Last triggered {timeAgo(alert.last_triggered)}</>}
-                </div>
-              </div>
-            ))}
-          </div>
+                );
+              })}
+            </div>
+          </>
         )}
       </div>
     </AppShell>

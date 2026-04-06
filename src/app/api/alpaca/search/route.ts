@@ -1,9 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { searchAssets, getSnapshot } from '@/lib/alpaca';
+import { sanitizeSymbol } from '@/lib/sanitize';
 
 export async function GET(req: NextRequest) {
   try {
-    const query = req.nextUrl.searchParams.get('q');
+    const rawQuery = req.nextUrl.searchParams.get('q');
+    const query = rawQuery ? sanitizeSymbol(rawQuery) : null;
     const limit = parseInt(req.nextUrl.searchParams.get('limit') || '8');
 
     if (!query || query.length < 1) {

@@ -24,6 +24,15 @@ function percentile(arr: number[], p: number) {
   return sorted[Math.min(idx, sorted.length - 1)];
 }
 
+interface PortfolioData {
+  cr3Value: number;
+  anthropicRSUs: number;
+  investmentPortfolio: number;
+  propertyValue: number;
+  totalNetWorth: number;
+  loading: boolean;
+}
+
 interface MonteCarloParams {
   cr3Factor: number;
   ipoValuation: number;
@@ -32,23 +41,23 @@ interface MonteCarloParams {
   exitMultiple: number;
 }
 
-function runMonteCarlo(params: MonteCarloParams) {
-  const N = 500;
+function runMonteCarlo(params: MonteCarloParams, portfolio: PortfolioData) {
+  const N = 1000;
   const years = [2026, 2027, 2028, 2029, 2030, 2031, 2032];
   const sims: number[][] = Array.from({ length: N }, () => Array(years.length).fill(0));
 
   for (let s = 0; s < N; s++) {
     for (let y = 0; y < years.length; y++) {
       const yr = years[y];
-      const cr3 = 1_720_000 * params.cr3Factor * Math.max(0, 1 + normal(0, 0.15)) * (yr - 2025);
+      const cr3 = portfolio.cr3Value * params.cr3Factor * Math.max(0, 1 + normal(0, 0.15)) * (yr - 2025);
       const anthropic =
         yr >= 2027
-          ? 5749 * 259.14 * (params.ipoValuation / 40) * Math.max(0, 1 + normal(0, 0.2))
+          ? portfolio.anthropicRSUs * (params.ipoValuation / 40) * Math.max(0, 1 + normal(0, 0.2))
           : 0;
       const investments =
-        100_000 * Math.pow(1 + params.investmentReturn + normal(0, 0.06), yr - 2026);
+        portfolio.investmentPortfolio * Math.pow(1 + params.investmentReturn + normal(0, 0.06), yr - 2026);
       const exitBonus = yr === params.cr3ExitYear ? cr3 * params.exitMultiple : 0;
-      sims[s][y] = Math.max(0, cr3 + anthropic + investments + 580_000 + exitBonus);
+      sims[s][y] = Math.max(0, cr3 + anthropic + investments + portfolio.propertyValue + exitBonus);
     }
   }
 
@@ -81,11 +90,60 @@ const DEFAULT_PARAMS: MonteCarloParams = {
 
 export default function MonteCarloPage() {
   const [params, setParams] = useState<MonteCarloParams>(DEFAULT_PARAMS);
-  const [result, setResult] = useState(() => runMonteCarlo(DEFAULT_PARAMS));
+  const [portfolioData, setPortfolioData] = useState<PortfolioData>({
+    cr3Value: 720000,
+    anthropicRSUs: 82000,
+    investmentPortfolio: 100000,
+    propertyValue: 580000,
+    totalNetWorth: 1482000,
+    loading: true,
+  });
+  const [result, setResult] = useState(() => runMonteCarlo(DEFAULT_PARAMS, {
+    cr3Value: 720000,
+    anthropicRSUs: 82000,
+    investmentPortfolio: 100000,
+    propertyValue: 580000,
+    totalNetWorth: 1482000,
+    loading: true,
+  }));
 
+  // Fetch real portfolio data on mount
   useEffect(() => {
-    setResult(runMonteCarlo(params));
-  }, [params]);
+    async function fetchPortfolio() {
+      try {
+        const [wealthRes, alpacaRes] = await Promise.all([
+          fetch('/api/wealth').then(r => r.json()).catch(() => null),
+          fetch('/api/alpaca/account').then(r => r.json()).catch(() => null),
+        ]);
+
+        const breakdown = wealthRes?.data?.breakdown;
+        const investmentValue = alpacaRes?.equity
+          ? parseFloat(alpacaRes.equity)
+          : breakdown?.investments?.value ?? 100000;
+
+        const newPortfolio: PortfolioData = {
+          cr3Value: breakdown?.franchise?.value ?? 720000,
+          anthropicRSUs: breakdown?.rsus?.value ?? 82000,
+          investmentPortfolio: investmentValue,
+          propertyValue: breakdown?.real_estate?.value ?? 580000,
+          totalNetWorth: wealthRes?.data?.total_net_worth ?? 1482000,
+          loading: false,
+        };
+
+        setPortfolioData(newPortfolio);
+      } catch {
+        setPortfolioData(prev => ({ ...prev, loading: false }));
+      }
+    }
+    fetchPortfolio();
+  }, []);
+
+  // Re-run simulation when params or portfolio data change
+  useEffect(() => {
+    if (!portfolioData.loading) {
+      setResult(runMonteCarlo(params, portfolioData));
+    }
+  }, [params, portfolioData]);
 
   const sliders = [
     {
@@ -130,13 +188,45 @@ export default function MonteCarloPage() {
     },
   ];
 
+  const fmtCurrency = (v: number) =>
+    v >= 1_000_000
+      ? `$${(v / 1_000_000).toFixed(2)}M`
+      : `$${(v / 1_000).toFixed(0)}K`;
+
   return (
     <AppShell>
       <div style={{ marginBottom: 32 }}>
         <h1 style={{ fontSize: 24, fontWeight: 700, margin: 0 }}>Monte Carlo Modeler</h1>
         <p style={{ color: '#6b6b80', fontSize: 13, marginTop: 4 }}>
-          500-simulation $50M wealth roadmap probability model
+          1,000-simulation $50M wealth roadmap probability model
+          {portfolioData.loading ? ' — loading portfolio...' : ' — seeded with live portfolio data'}
         </p>
+      </div>
+
+      {/* Current Portfolio Card */}
+      <div className="terminal-card" style={{ marginBottom: 24, border: '1px solid rgba(129,140,248,0.3)' }}>
+        <div style={{ fontSize: 12, color: '#6b6b80', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 16, display: 'flex', alignItems: 'center', gap: 8 }}>
+          Current Portfolio (Simulation Inputs)
+          {portfolioData.loading && (
+            <span style={{ color: '#c9a84c', fontSize: 11, fontStyle: 'italic' }}>fetching live data...</span>
+          )}
+        </div>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: 16 }}>
+          {[
+            { label: 'CR3 Franchise', value: portfolioData.cr3Value, color: '#c9a84c' },
+            { label: 'Anthropic RSUs', value: portfolioData.anthropicRSUs, color: '#818cf8' },
+            { label: 'Investments', value: portfolioData.investmentPortfolio, color: '#22c55e' },
+            { label: 'Real Estate', value: portfolioData.propertyValue, color: '#f97316' },
+            { label: 'Total Net Worth', value: portfolioData.totalNetWorth, color: '#e8e8e8' },
+          ].map(({ label, value, color }) => (
+            <div key={label} style={{ textAlign: 'center' }}>
+              <div style={{ fontSize: 20, fontWeight: 700, color, opacity: portfolioData.loading ? 0.4 : 1 }}>
+                {fmtCurrency(value)}
+              </div>
+              <div style={{ fontSize: 11, color: '#6b6b80', marginTop: 4 }}>{label}</div>
+            </div>
+          ))}
+        </div>
       </div>
 
       {/* Key Metrics */}
@@ -154,7 +244,7 @@ export default function MonteCarloPage() {
           <div style={{ fontSize: 13, color: '#6b6b80' }}>Median 2032 Outcome</div>
         </div>
         <div className="terminal-card" style={{ textAlign: 'center' }}>
-          <div style={{ fontSize: 32, fontWeight: 800, color: '#818cf8' }}>500</div>
+          <div style={{ fontSize: 32, fontWeight: 800, color: '#818cf8' }}>1,000</div>
           <div style={{ fontSize: 13, color: '#6b6b80' }}>Simulations Run</div>
         </div>
       </div>

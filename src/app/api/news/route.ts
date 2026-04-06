@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { getCached, setCache, TTL } from '@/lib/server-cache';
 
 const ALPACA_DATA_URL = 'https://data.alpaca.markets';
 
@@ -6,6 +7,10 @@ export async function GET(req: NextRequest) {
   try {
     const limit = req.nextUrl.searchParams.get('limit') || '20';
     const symbols = req.nextUrl.searchParams.get('symbols') || '';
+
+    const cacheKey = `news:${limit}:${symbols}`;
+    const cached = getCached<{ articles: unknown[] }>(cacheKey);
+    if (cached) return NextResponse.json(cached);
 
     const params = new URLSearchParams({
       limit,
@@ -38,7 +43,9 @@ export async function GET(req: NextRequest) {
       image: (n.images as Array<{ url: string }> | undefined)?.[0]?.url || null,
     }));
 
-    return NextResponse.json({ articles });
+    const payload = { articles };
+    setCache(cacheKey, payload, TTL.MEDIUM);
+    return NextResponse.json(payload);
   } catch (error) {
     console.error('News error:', error);
     return NextResponse.json({ articles: [] });

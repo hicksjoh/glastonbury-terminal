@@ -178,10 +178,10 @@ export default function DashboardPage() {
   const [positionCount, setPositionCount] = useState(0);
   const [totalInvested, setTotalInvested] = useState(0);
 
-  // Net worth
-  const cr3 = 720000;
-  const rsus = 82000;
-  const miami = 580000;
+  // Net worth (fetched from /api/wealth)
+  const [cr3, setCr3] = useState(720000);
+  const [rsus, setRsus] = useState(82000);
+  const [miami, setMiami] = useState(580000);
   const totalNetWorth = equity + cr3 + rsus + miami;
 
   // Briefing
@@ -209,6 +209,18 @@ export default function DashboardPage() {
   // Audit
   const [auditLog, setAuditLog] = useState<AuditLogEntry[]>(MOCK_AUDIT_LOG);
 
+  // Connection health (dynamic)
+  const [connectionStatus, setConnectionStatus] = useState<Record<string, 'connected' | 'error' | 'checking'>>({
+    'Alpaca': 'checking', 'FMP': 'checking', 'Supabase': 'checking', 'Claude AI': 'checking',
+  });
+
+  // Strategies count (dynamic)
+  const [strategyCount, setStrategyCount] = useState(0);
+  const [strategyPaused, setStrategyPaused] = useState(0);
+
+  // Dynamic insight chips
+  const [insightChips, setInsightChips] = useState(INSIGHT_CHIPS);
+
   // Count-up animated values
   const animatedNetWorth = useCountUp(totalNetWorth, 1200, !loading);
   const animatedCash = useCountUp(cash, 1000, !loading);
@@ -224,6 +236,15 @@ export default function DashboardPage() {
       fetch('/api/portfolio-history?period=1M').then(r => r.ok ? r.json() : null).catch(() => null),
       fetch('/api/audit-log').then(r => r.ok ? r.json() : null).catch(() => null),
     ]);
+
+    // Track connection statuses based on API results
+    const connStatus: Record<string, 'connected' | 'error' | 'checking'> = {
+      'Alpaca': accountRes && !accountRes.error ? 'connected' : 'error',
+      'FMP': moversRes && (moversRes.gainers?.length > 0 || moversRes.losers?.length > 0) ? 'connected' : 'error',
+      'Supabase': Array.isArray(auditRes) && auditRes.length > 0 ? 'connected' : 'error',
+      'Claude AI': 'checking', // will be set after briefing loads
+    };
+    setConnectionStatus(connStatus);
 
     if (accountRes && !accountRes.error) {
       const eq = parseFloat(accountRes.equity) || PORTFOLIO_SUMMARY.alpacaEquity;
@@ -287,17 +308,66 @@ export default function DashboardPage() {
       }
     } catch { /* alerts optional */ }
 
+    // Fetch wealth data for net worth components
+    let wealthRes: { success?: boolean; data?: { breakdown?: Record<string, { value?: number }> } } | null = null;
+    try {
+      wealthRes = await fetch('/api/wealth').then(r => r.ok ? r.json() : null).catch(() => null);
+      if (wealthRes?.success && wealthRes.data) {
+        const d = wealthRes.data.breakdown;
+        if (d?.franchise?.value) setCr3(d.franchise.value);
+        if (d?.rsus?.value) setRsus(d.rsus.value);
+        if (d?.real_estate?.value) setMiami(d.real_estate.value);
+      }
+    } catch { /* wealth data optional */ }
+
+    // Fetch strategies count
+    try {
+      const stratRes = await fetch('/api/strategies').then(r => r.ok ? r.json() : null).catch(() => null);
+      if (Array.isArray(stratRes)) {
+        const active = stratRes.filter((s: { status: string }) => s.status === 'active').length;
+        const paused = stratRes.filter((s: { status: string }) => s.status === 'paused').length;
+        setStrategyCount(active);
+        setStrategyPaused(paused);
+      }
+    } catch { /* strategies optional */ }
+
+    // Build dynamic insight chips from real data
+    const chips: Array<{ icon: string; text: string }> = [];
+    if (accountRes && !accountRes.error) {
+      const eq = parseFloat(accountRes.equity) || 0;
+      const ca = parseFloat(accountRes.cash) || 0;
+      if (ca > 0) chips.push({ icon: '💰', text: `$${Math.round(ca / 1000)}K cash ready to deploy` });
+      if (eq > 0) chips.push({ icon: '📈', text: `Portfolio: ${fmtMoney(eq, true)}` });
+    }
+    chips.push({ icon: '📋', text: '23 CR3 territories signed' });
+    // Use freshly fetched real estate value if available
+    const freshMiami = wealthRes?.success ? (wealthRes.data?.breakdown?.real_estate?.value || 580000) : 580000;
+    chips.push({ icon: '🏠', text: `Miami Shores: ${fmtMoney(freshMiami, true)} equity` });
+    chips.push({ icon: '🎯', text: '2026 Foundation Year — building base' });
+    if (chips.length > 0) setInsightChips(chips);
+
     setLoading(false);
   }, []);
 
   const fetchBriefing = useCallback(async () => {
     setBriefingLoading(true);
     try {
+      // Check Supabase for today's pre-generated briefing first
+      const cachedRes = await fetch('/api/briefing/today').then(r => r.ok ? r.json() : null).catch(() => null);
+      if (cachedRes?.briefing) {
+        setBriefing(cachedRes.briefing);
+        setConnectionStatus(prev => ({ ...prev, 'Claude AI': 'connected' }));
+        setBriefingLoading(false);
+        return;
+      }
+      // No cached briefing — generate fresh
       const res = await fetch('/api/briefing');
       const data = await res.json();
       setBriefing(data.briefing || 'Unable to generate briefing.');
+      setConnectionStatus(prev => ({ ...prev, 'Claude AI': data.briefing ? 'connected' : 'error' }));
     } catch {
       setBriefing('Briefing service unavailable.');
+      setConnectionStatus(prev => ({ ...prev, 'Claude AI': 'error' }));
     }
     setBriefingLoading(false);
   }, []);
@@ -492,8 +562,8 @@ export default function DashboardPage() {
           {/* Active Strategies */}
           <GlassCard style={{ flex: '1 1 150px', padding: '16px 18px' }}>
             <div style={{ fontSize: 10, color: '#888', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 6 }}>Active Strategies</div>
-            <div style={{ fontSize: 20, fontWeight: 700, color: '#c4a6ff', fontFamily: "'JetBrains Mono', monospace" }}>3</div>
-            <div style={{ fontSize: 11, color: '#555', marginTop: 4 }}>1 paused</div>
+            <div style={{ fontSize: 20, fontWeight: 700, color: '#c4a6ff', fontFamily: "'JetBrains Mono', monospace" }}>{strategyCount}</div>
+            <div style={{ fontSize: 11, color: '#555', marginTop: 4 }}>{strategyPaused > 0 ? `${strategyPaused} paused` : 'All running'}</div>
           </GlassCard>
 
           {/* Options P&L */}
@@ -702,16 +772,17 @@ export default function DashboardPage() {
               <div style={{ fontSize: 11, fontWeight: 600, color: '#888', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 10 }}>
                 Connections
               </div>
-              {[
-                { name: 'Alpaca', status: 'Connected' },
-                { name: 'FMP', status: 'Connected' },
-                { name: 'Supabase', status: 'Connected' },
-                { name: 'Claude AI', status: 'Connected' },
-              ].map(c => (
-                <div key={c.name} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '3px 0' }}>
-                  <div style={{ width: 6, height: 6, borderRadius: '50%', background: '#4ade80' }} />
-                  <span style={{ fontSize: 12, color: '#888' }}>{c.name}</span>
-                  <span style={{ fontSize: 10, color: '#555', marginLeft: 'auto' }}>{c.status}</span>
+              {Object.entries(connectionStatus).map(([name, status]) => (
+                <div key={name} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '3px 0' }}>
+                  <div style={{
+                    width: 6, height: 6, borderRadius: '50%',
+                    background: status === 'connected' ? '#4ade80' : status === 'error' ? '#f87171' : '#f0c674',
+                    animation: status === 'checking' ? 'pulse 1.5s ease-in-out infinite' : 'none',
+                  }} />
+                  <span style={{ fontSize: 12, color: '#888' }}>{name}</span>
+                  <span style={{ fontSize: 10, color: status === 'connected' ? '#555' : status === 'error' ? '#f87171' : '#f0c674', marginLeft: 'auto' }}>
+                    {status === 'connected' ? 'Connected' : status === 'error' ? 'Error' : 'Checking...'}
+                  </span>
                 </div>
               ))}
             </GlassCard>
@@ -845,7 +916,7 @@ export default function DashboardPage() {
           display: 'flex', gap: 10, overflowX: 'auto', paddingBottom: 8,
           scrollbarWidth: 'none', marginBottom: 20,
         }}>
-          {INSIGHT_CHIPS.map((chip, i) => (
+          {insightChips.map((chip, i) => (
             <div key={i} style={{
               flexShrink: 0,
               padding: '8px 16px',

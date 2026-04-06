@@ -2,7 +2,8 @@
 
 import { useEffect, useState } from 'react';
 import { AppShell } from '@/components/layout/AppShell';
-import { AlertTriangle, TrendingUp, TrendingDown, Wallet, Clock } from 'lucide-react';
+import { AlertTriangle, TrendingUp, TrendingDown, Wallet, Clock, Download } from 'lucide-react';
+import { exportToCSV } from '@/lib/export';
 
 interface MonthData {
   month: string;
@@ -64,8 +65,31 @@ export default function CashflowPage() {
   return (
     <AppShell>
       <div>
-        <h1 style={{ fontSize: 28, fontWeight: 700, color: '#fff', margin: '0 0 4px' }}>Cash Flow Forecaster</h1>
-        <p style={{ color: '#8888a8', fontSize: 14, margin: '0 0 28px' }}>12-month forward projection</p>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 28 }}>
+          <div>
+            <h1 style={{ fontSize: 28, fontWeight: 700, color: '#fff', margin: '0 0 4px' }}>Cash Flow Forecaster</h1>
+            <p style={{ color: '#8888a8', fontSize: 14, margin: 0 }}>12-month forward projection</p>
+          </div>
+          <button
+            onClick={() => {
+              if (!balanceMonths.length) return;
+              exportToCSV(balanceMonths.map(m => ({
+                month: m.month,
+                inflows: m.inflows.toFixed(2),
+                outflows: m.outflows.toFixed(2),
+                net: m.net.toFixed(2),
+                balance: m.balance.toFixed(2),
+              })), 'cashflow-forecast');
+            }}
+            style={{
+              display: 'flex', alignItems: 'center', gap: 5,
+              padding: '7px 12px', borderRadius: 8, cursor: 'pointer',
+              background: 'transparent', border: '1px solid #333350', color: '#8888a8', fontSize: 11, fontWeight: 500,
+            }}
+          >
+            <Download size={12} /> Export CSV
+          </button>
+        </div>
 
         {loading ? (
           <div style={{ textAlign: 'center', padding: 80, color: '#555570' }}>Loading cash flow data...</div>

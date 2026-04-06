@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import { generateAnalysis } from '@/lib/claude';
 import { createServiceClient } from '@/lib/supabase';
 import { buildMarketContext } from '@/lib/market-intel';
+import { rateLimit } from '@/lib/rate-limit';
+import { sanitizeInput } from '@/lib/sanitize';
 
 // ── Common words to exclude from symbol detection ────────────────────────────
 const COMMON_WORDS = new Set([
@@ -556,10 +558,48 @@ async function logConversation(
 // ═════════════════════════════════════════════════════════════════════════════
 
 export async function POST(req: NextRequest) {
+  const { allowed } = rateLimit('keisha', 20, 60000);
+  if (!allowed) return NextResponse.json({ error: 'Too many requests' }, { status: 429 });
+
   try {
-    const { messages } = await req.json();
-    const userMessage = messages[messages.length - 1]?.content || '';
+    const { messages, domain, conversationId } = await req.json();
+    const userMessage = sanitizeInput(messages[messages.length - 1]?.content || '');
     const supabase = createServiceClient();
+
+    // ── Memory context: last 3 conversations for this persona ──────────
+    let memoryPreamble = '';
+    if (domain) {
+      try {
+        const { data: recentSessions } = await supabase
+          .from('keisha_chat_sessions')
+          .select('messages_json, updated_at')
+          .eq('persona', domain)
+          .order('updated_at', { ascending: false })
+          .limit(4); // fetch 4 in case current convo is in the list
+
+        if (recentSessions && recentSessions.length > 0) {
+          const summaries = recentSessions
+            .filter((s: any) => s.id !== conversationId) // exclude current
+            .slice(0, 3)
+            .map((s: any) => {
+              const msgs = s.messages_json || [];
+              const lastUserMsg = [...msgs].reverse().find((m: any) => m.role === 'user');
+              const lastAssistantMsg = [...msgs].reverse().find((m: any) => m.role === 'assistant');
+              const date = new Date(s.updated_at).toLocaleDateString();
+              const userPreview = lastUserMsg?.content?.slice(0, 120) || 'N/A';
+              const assistantPreview = lastAssistantMsg?.content?.slice(0, 120) || 'N/A';
+              return `- [${date}]: User asked: "${userPreview}" / You said: "${assistantPreview}"`;
+            })
+            .filter((s: string) => s.length > 30);
+
+          if (summaries.length > 0) {
+            memoryPreamble = `\nPREVIOUS CONVERSATION SUMMARIES (${domain} mode):\n${summaries.join('\n')}\nUse these for continuity — reference past discussions naturally.\n`;
+          }
+        }
+      } catch {
+        // Non-critical — memory context is optional
+      }
+    }
 
     // ── Extract symbols from user message for memory + contrarian ────────
     const mentionedSymbols = extractSymbols(userMessage);
@@ -639,7 +679,7 @@ export async function POST(req: NextRequest) {
     ]);
 
     // ── Build enriched portfolio context ────────────────────────────────
-    const portfolioContext = `\nALPACA BROKERAGE (LIVE):\n${alpacaContext}\n\nMARKET INTELLIGENCE (LIVE):\n${marketContext}${gexContext}${macroContext}${driftContext}\n\nGLASTONBURY TERMINAL DATABASE:\n${supabaseContext}\n\nSTATIC HOLDINGS (not in brokerage):\n  - CR3 American Exteriors equity: ~$720,000 (23 territories)\n  - Anthropic RSUs: 5,749 shares @ $259.14 grant (quarterly vesting, 4 years)\n  - Miami Shores property: ~$580,000\n${trackRecord}${conversationMemory}${calibration}${contrarian}${behavioralAlerts}${personalityMode}`;
+    const portfolioContext = `\nALPACA BROKERAGE (LIVE):\n${alpacaContext}\n\nMARKET INTELLIGENCE (LIVE):\n${marketContext}${gexContext}${macroContext}${driftContext}\n\nGLASTONBURY TERMINAL DATABASE:\n${supabaseContext}\n\nSTATIC HOLDINGS (not in brokerage):\n  - CR3 American Exteriors equity: ~$720,000 (23 territories)\n  - Anthropic RSUs: 5,749 shares @ $259.14 grant (quarterly vesting, 4 years)\n  - Miami Shores property: ~$580,000\n${trackRecord}${conversationMemory}${calibration}${contrarian}${behavioralAlerts}${personalityMode}${memoryPreamble}`;
 
     // ── Generate response ───────────────────────────────────────────────
     let content = await generateAnalysis(

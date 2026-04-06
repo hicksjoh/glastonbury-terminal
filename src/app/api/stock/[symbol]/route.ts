@@ -41,8 +41,10 @@ export async function GET(
       '1W': { timeframe: '1Hour', start: getStartDate(7), feed: 'iex' },
       '1M': { timeframe: '1Day', start: getStartDate(30), feed: 'sip' },
       '3M': { timeframe: '1Day', start: getStartDate(90), feed: 'sip' },
+      '6M': { timeframe: '1Day', start: getStartDate(180), feed: 'sip' },
       '1Y': { timeframe: '1Day', start: getStartDate(365), feed: 'sip' },
       '5Y': { timeframe: '1Week', start: getStartDate(365 * 5), feed: 'sip' },
+      'ALL': { timeframe: '1Week', start: getStartDate(365 * 20), feed: 'sip' },
     };
 
     const config = rangeConfig[range] || rangeConfig['3M'];

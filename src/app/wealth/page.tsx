@@ -56,6 +56,8 @@ export default function WealthPage() {
   const [data, setData] = useState<WealthData | null>(null);
   const [loading, setLoading] = useState(true);
 
+  useEffect(() => { document.title = 'Wealth | Glastonbury Terminal'; }, []);
+
   useEffect(() => {
     fetch('/api/wealth')
       .then(r => r.json())

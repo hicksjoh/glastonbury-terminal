@@ -1,21 +1,15 @@
 {
   "name": "Glastonbury Terminal",
-  "short_name": "GT",
-  "description": "Personal wealth command center — The Glastonbury Group",
+  "short_name": "Terminal",
+  "description": "Private wealth command center — The Glastonbury Group",
   "start_url": "/",
   "display": "standalone",
-  "background_color": "#0a0a1a",
-  "theme_color": "#0a0a1a",
+  "background_color": "#08080d",
+  "theme_color": "#8a5cf6",
+  "orientation": "any",
   "icons": [
-    {
-      "src": "/glastonbury-logo.png",
-      "sizes": "192x192",
-      "type": "image/png"
-    },
-    {
-      "src": "/glastonbury-logo.png",
-      "sizes": "512x512",
-      "type": "image/png"
-    }
+    { "src": "/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any maskable" },
+    { "src": "/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" },
+    { "src": "/icon.svg", "sizes": "any", "type": "image/svg+xml" }
   ]
 }

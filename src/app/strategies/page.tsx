@@ -1,10 +1,9 @@
 'use client';
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { AppShell } from '@/components/layout/AppShell';
-import { MOCK_STRATEGIES, MOCK_AUDIT_LOG } from '@/lib/data';
 import { Strategy, AuditLogEntry } from '@/types';
 import { formatDistanceToNow } from 'date-fns';
-import { AlertTriangle, Settings } from 'lucide-react';
+import { AlertTriangle, Settings, Plus, X } from 'lucide-react';
 import WheelTracker from '@/components/options/WheelTracker';
 import WheelSettings from '@/components/options/WheelSettings';
 import { StrategyBenchmarkChart } from '@/components/StrategyBenchmarkChart';
@@ -21,6 +20,203 @@ const TYPE_LABELS: Record<string, string> = {
   auto_rebalance: 'Auto Rebalance',
   rsu_diversification: 'RSU Diversification',
 };
+
+function StrategyCardSkeleton() {
+  return (
+    <div className="terminal-card" style={{ opacity: 0.5 }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 16 }}>
+        <div>
+          <div style={{ width: 160, height: 16, backgroundColor: '#1a1a24', borderRadius: 4, marginBottom: 6 }} />
+          <div style={{ width: 100, height: 14, backgroundColor: '#1a1a24', borderRadius: 4 }} />
+        </div>
+        <div style={{ width: 60, height: 24, backgroundColor: '#1a1a24', borderRadius: 20 }} />
+      </div>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 16 }}>
+        <div>
+          <div style={{ width: 70, height: 10, backgroundColor: '#1a1a24', borderRadius: 4, marginBottom: 6 }} />
+          <div style={{ width: 120, height: 18, backgroundColor: '#1a1a24', borderRadius: 4 }} />
+        </div>
+        <div>
+          <div style={{ width: 70, height: 10, backgroundColor: '#1a1a24', borderRadius: 4, marginBottom: 6 }} />
+          <div style={{ width: 40, height: 18, backgroundColor: '#1a1a24', borderRadius: 4 }} />
+        </div>
+      </div>
+      <div style={{ width: '100%', height: 36, backgroundColor: '#1a1a24', borderRadius: 8 }} />
+    </div>
+  );
+}
+
+function AuditLogSkeleton() {
+  return (
+    <>
+      {[1, 2, 3, 4].map(i => (
+        <tr key={i} style={{ borderBottom: '1px solid #1a1a24' }}>
+          {[80, 60, 140, 100, 50].map((w, j) => (
+            <td key={j} style={{ padding: '10px 12px' }}>
+              <div style={{ width: w, height: 12, backgroundColor: '#1a1a24', borderRadius: 4, opacity: 0.5 }} />
+            </td>
+          ))}
+        </tr>
+      ))}
+    </>
+  );
+}
+
+const STRATEGY_TYPES = [
+  { value: 'covered_call_wheel', label: 'Covered Call Wheel' },
+  { value: 'tax_loss_harvest', label: 'Tax-Loss Harvest' },
+  { value: 'auto_rebalance', label: 'Auto Rebalance' },
+  { value: 'rsu_diversification', label: 'RSU Diversification' },
+] as const;
+
+const STATUS_OPTIONS = [
+  { value: 'active', label: 'Active' },
+  { value: 'paper', label: 'Paper' },
+  { value: 'paused', label: 'Paused' },
+] as const;
+
+function CreateStrategyModal({ onClose, onCreated }: { onClose: () => void; onCreated: (s: Strategy) => void }) {
+  const [name, setName] = useState('');
+  const [type, setType] = useState<Strategy['type']>('covered_call_wheel');
+  const [status, setStatus] = useState<Strategy['status']>('paper');
+  const [notes, setNotes] = useState('');
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    if (!name.trim()) { setError('Strategy name is required.'); return; }
+    setSubmitting(true);
+    setError(null);
+    try {
+      const res = await fetch('/api/strategies', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: name.trim(), type, status, notes }),
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body.error || `Failed to create strategy (${res.status})`);
+      }
+      const created = await res.json();
+      onCreated(created);
+      onClose();
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : 'Failed to create strategy');
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  const inputStyle: React.CSSProperties = {
+    width: '100%',
+    padding: '10px 12px',
+    backgroundColor: '#0d0d14',
+    border: '1px solid #2a2a3a',
+    borderRadius: 8,
+    color: '#e8e8e8',
+    fontSize: 13,
+    outline: 'none',
+  };
+
+  const labelStyle: React.CSSProperties = {
+    fontSize: 11,
+    color: '#6b6b80',
+    textTransform: 'uppercase',
+    letterSpacing: '0.05em',
+    marginBottom: 6,
+    display: 'block',
+  };
+
+  return (
+    <div
+      style={{
+        position: 'fixed', inset: 0, zIndex: 1000,
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
+        backgroundColor: 'rgba(0,0,0,0.7)', backdropFilter: 'blur(4px)',
+      }}
+      onClick={onClose}
+    >
+      <div
+        className="terminal-card"
+        style={{ width: '100%', maxWidth: 480, position: 'relative' }}
+        onClick={e => e.stopPropagation()}
+      >
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 24 }}>
+          <div style={{ fontSize: 16, fontWeight: 700, color: '#e8e8e8' }}>Create Strategy</div>
+          <button
+            onClick={onClose}
+            style={{ background: 'none', border: 'none', color: '#6b6b80', cursor: 'pointer', padding: 4 }}
+          >
+            <X size={18} />
+          </button>
+        </div>
+        <form onSubmit={handleSubmit}>
+          <div style={{ marginBottom: 16 }}>
+            <label style={labelStyle}>Strategy Name</label>
+            <input
+              type="text"
+              value={name}
+              onChange={e => setName(e.target.value)}
+              placeholder="e.g. AAPL Wheel Income"
+              style={inputStyle}
+              autoFocus
+            />
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 16 }}>
+            <div>
+              <label style={labelStyle}>Type</label>
+              <select value={type} onChange={e => setType(e.target.value as Strategy['type'])} style={inputStyle}>
+                {STRATEGY_TYPES.map(t => (
+                  <option key={t.value} value={t.value}>{t.label}</option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label style={labelStyle}>Status</label>
+              <select value={status} onChange={e => setStatus(e.target.value as Strategy['status'])} style={inputStyle}>
+                {STATUS_OPTIONS.map(s => (
+                  <option key={s.value} value={s.value}>{s.label}</option>
+                ))}
+              </select>
+            </div>
+          </div>
+          <div style={{ marginBottom: 20 }}>
+            <label style={labelStyle}>Description / Notes</label>
+            <textarea
+              value={notes}
+              onChange={e => setNotes(e.target.value)}
+              placeholder="Optional notes about this strategy..."
+              rows={3}
+              style={{ ...inputStyle, resize: 'vertical' }}
+            />
+          </div>
+          {error && (
+            <div style={{
+              marginBottom: 16, padding: '8px 12px', borderRadius: 8,
+              backgroundColor: '#ef444420', color: '#ef4444', fontSize: 12,
+            }}>
+              {error}
+            </div>
+          )}
+          <button
+            type="submit"
+            disabled={submitting}
+            style={{
+              width: '100%', padding: '10px 0',
+              backgroundColor: submitting ? '#c9a84c40' : '#c9a84c20',
+              color: '#c9a84c', border: '1px solid #c9a84c33',
+              borderRadius: 8, cursor: submitting ? 'not-allowed' : 'pointer',
+              fontSize: 13, fontWeight: 700,
+            }}
+          >
+            {submitting ? 'Creating...' : 'Create Strategy'}
+          </button>
+        </form>
+      </div>
+    </div>
+  );
+}
 
 function StrategyCard({ strategy, onToggle }: { strategy: Strategy; onToggle: (id: string) => void }) {
   return (
@@ -112,34 +308,37 @@ function AuditRow({ entry }: { entry: AuditLogEntry }) {
 }
 
 export default function StrategiesPage() {
-  const [strategies, setStrategies] = useState<Strategy[]>(MOCK_STRATEGIES);
-  const [auditEntries, setAuditEntries] = useState<AuditLogEntry[]>(MOCK_AUDIT_LOG);
+  const [strategies, setStrategies] = useState<Strategy[]>([]);
+  const [auditEntries, setAuditEntries] = useState<AuditLogEntry[]>([]);
   const [killSwitchActive, setKillSwitchActive] = useState(false);
   const [showWheelSettings, setShowWheelSettings] = useState(false);
+  const [showCreateModal, setShowCreateModal] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [fetchError, setFetchError] = useState<string | null>(null);
 
-  useEffect(() => {
-    async function fetchData() {
-      try {
-        const [stratRes, auditRes] = await Promise.all([
-          fetch('/api/strategies'),
-          fetch('/api/audit-log'),
-        ]);
-        if (stratRes.ok) {
-          const data = await stratRes.json();
-          if (Array.isArray(data) && data.length > 0) setStrategies(data);
-        }
-        if (auditRes.ok) {
-          const data = await auditRes.json();
-          if (Array.isArray(data) && data.length > 0) setAuditEntries(data);
-        }
-      } catch {
-        // Fall back to mock data
+  const fetchData = useCallback(async () => {
+    setLoading(true);
+    setFetchError(null);
+    try {
+      const [stratRes, auditRes] = await Promise.all([
+        fetch('/api/strategies'),
+        fetch('/api/audit-log'),
+      ]);
+      if (stratRes.ok) {
+        const data = await stratRes.json();
+        setStrategies(Array.isArray(data) ? data : []);
       }
-      setLoading(false);
+      if (auditRes.ok) {
+        const data = await auditRes.json();
+        setAuditEntries(Array.isArray(data) ? data : []);
+      }
+    } catch {
+      setFetchError('Could not reach the API. Check your connection and try again.');
     }
-    fetchData();
+    setLoading(false);
   }, []);
+
+  useEffect(() => { fetchData(); }, [fetchData]);
 
   function handleToggle(id: string) {
     setStrategies(prev =>
@@ -167,33 +366,81 @@ export default function StrategiesPage() {
             {loading && <span style={{ marginLeft: 8, color: '#c9a84c' }}>&#8226; Loading...</span>}
           </p>
         </div>
-        <button
-          onClick={handleKillSwitch}
-          style={{
-            display: 'flex',
-            alignItems: 'center',
-            gap: 8,
-            padding: '10px 20px',
-            backgroundColor: killSwitchActive ? '#ef444420' : '#ef444410',
-            color: '#ef4444',
-            border: '1px solid #ef444440',
-            borderRadius: 8,
-            cursor: 'pointer',
-            fontWeight: 700,
-            fontSize: 13,
-          }}
-        >
-          <AlertTriangle size={14} />
-          {killSwitchActive ? 'All Strategies Paused' : 'Kill Switch — Pause All'}
-        </button>
+        <div style={{ display: 'flex', gap: 10 }}>
+          <button
+            onClick={() => setShowCreateModal(true)}
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 8,
+              padding: '10px 20px',
+              backgroundColor: '#c9a84c15',
+              color: '#c9a84c',
+              border: '1px solid #c9a84c33',
+              borderRadius: 8,
+              cursor: 'pointer',
+              fontWeight: 700,
+              fontSize: 13,
+            }}
+          >
+            <Plus size={14} />
+            Create Strategy
+          </button>
+          <button
+            onClick={handleKillSwitch}
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 8,
+              padding: '10px 20px',
+              backgroundColor: killSwitchActive ? '#ef444420' : '#ef444410',
+              color: '#ef4444',
+              border: '1px solid #ef444440',
+              borderRadius: 8,
+              cursor: 'pointer',
+              fontWeight: 700,
+              fontSize: 13,
+            }}
+          >
+            <AlertTriangle size={14} />
+            {killSwitchActive ? 'All Strategies Paused' : 'Kill Switch — Pause All'}
+          </button>
+        </div>
       </div>
 
       {/* Strategy Cards Grid */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 20, marginBottom: 40 }}>
-        {strategies.map(s => (
-          <StrategyCard key={s.id} strategy={s} onToggle={handleToggle} />
-        ))}
-      </div>
+      {loading ? (
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 20, marginBottom: 40 }}>
+          <StrategyCardSkeleton />
+          <StrategyCardSkeleton />
+          <StrategyCardSkeleton />
+          <StrategyCardSkeleton />
+        </div>
+      ) : strategies.length === 0 ? (
+        <div className="terminal-card" style={{ textAlign: 'center', padding: '48px 24px', marginBottom: 40 }}>
+          <div style={{ fontSize: 15, color: '#6b6b80', marginBottom: 8 }}>
+            {fetchError || 'No strategies configured yet. Create one to get started.'}
+          </div>
+          <button
+            onClick={() => setShowCreateModal(true)}
+            style={{
+              display: 'inline-flex', alignItems: 'center', gap: 6, marginTop: 12,
+              padding: '10px 20px', backgroundColor: '#c9a84c15', color: '#c9a84c',
+              border: '1px solid #c9a84c33', borderRadius: 8, cursor: 'pointer',
+              fontWeight: 700, fontSize: 13,
+            }}
+          >
+            <Plus size={14} />
+            Create Strategy
+          </button>
+        </div>
+      ) : (
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 20, marginBottom: 40 }}>
+          {strategies.map(s => (
+            <StrategyCard key={s.id} strategy={s} onToggle={handleToggle} />
+          ))}
+        </div>
+      )}
 
       {/* Covered Call Wheel Section */}
       <div style={{ marginBottom: 40 }}>
@@ -251,13 +498,29 @@ export default function StrategiesPage() {
               </tr>
             </thead>
             <tbody>
-              {auditEntries.map(entry => (
-                <AuditRow key={entry.id} entry={entry} />
-              ))}
+              {loading ? (
+                <AuditLogSkeleton />
+              ) : auditEntries.length === 0 ? (
+                <tr>
+                  <td colSpan={5} style={{ padding: '32px 12px', textAlign: 'center', color: '#6b6b80', fontSize: 13 }}>
+                    No recent activity
+                  </td>
+                </tr>
+              ) : (
+                auditEntries.map(entry => (
+                  <AuditRow key={entry.id} entry={entry} />
+                ))
+              )}
             </tbody>
           </table>
         </div>
       </div>
+      {showCreateModal && (
+        <CreateStrategyModal
+          onClose={() => setShowCreateModal(false)}
+          onCreated={(created) => setStrategies(prev => [...prev, created])}
+        />
+      )}
     </AppShell>
   );
 }

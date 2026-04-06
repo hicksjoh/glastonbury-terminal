@@ -1,9 +1,16 @@
+'use client';
+import dynamic from 'next/dynamic';
 import { Sidebar } from './Sidebar';
-import MarketTickerBar from '@/components/MarketTickerBar';
 import { NotificationBell } from '@/components/NotificationBell';
 import { RegimeBadge } from '@/components/RegimeBadge';
+import { ShortcutsHelp } from '@/components/ShortcutsHelp';
+import { useKeyboardShortcuts } from '@/hooks/useKeyboardShortcuts';
+
+const MarketTickerBar = dynamic(() => import('@/components/MarketTickerBar'), { ssr: false });
 
 export function AppShell({ children }: { children: React.ReactNode }) {
+  useKeyboardShortcuts();
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', minHeight: '100vh', backgroundColor: '#08080d' }}>
       <MarketTickerBar />
@@ -23,6 +30,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           </div>
         </main>
       </div>
+      <ShortcutsHelp />
     </div>
   );
 }
