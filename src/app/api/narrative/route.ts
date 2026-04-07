@@ -99,10 +99,50 @@ export async function GET(): Promise<NextResponse> {
       }
     }
 
+    // ── Fallback: if no live price data, return a calm "markets closed" response ──
+    const hasMarketData = marketLines.length > 0;
+    const hasSectorData = sectors !== 'Sector data unavailable' && sectors !== 'No sector data';
+
+    if (!hasMarketData) {
+      // Determine if it's likely outside market hours (ET: M-F 9:30-16:00)
+      const now = new Date();
+      const et = new Date(now.toLocaleString('en-US', { timeZone: 'America/New_York' }));
+      const hour = et.getHours();
+      const minute = et.getMinutes();
+      const day = et.getDay(); // 0=Sun, 6=Sat
+      const isWeekend = day === 0 || day === 6;
+      const isBeforeOpen = hour < 9 || (hour === 9 && minute < 30);
+      const isAfterClose = hour >= 16;
+      const isMarketHours = !isWeekend && !isBeforeOpen && !isAfterClose;
+
+      let fallbackNarrative: string;
+      if (isWeekend) {
+        fallbackNarrative = 'Markets are closed for the weekend. Trading resumes Monday at 9:30 AM ET. Use this time to review your portfolio positioning and plan your week ahead.';
+      } else if (isBeforeOpen) {
+        fallbackNarrative = 'Markets have not yet opened for today\'s session. Pre-market trading begins at 4:00 AM ET, with the regular session opening at 9:30 AM ET. Check back after the open for live market analysis.';
+      } else if (isAfterClose) {
+        fallbackNarrative = 'Regular market hours have ended for today. After-hours trading continues until 8:00 PM ET. Full market analysis will resume with tomorrow\'s session.';
+      } else if (isMarketHours) {
+        fallbackNarrative = 'Live market data is temporarily unavailable. Price feeds may be delayed — this is usually resolved within a few minutes. Your portfolio data and trade history remain accessible.';
+      } else {
+        fallbackNarrative = 'Market data feeds are currently offline. This typically occurs outside regular trading hours (M-F 9:30 AM – 4:00 PM ET). Check back during market hours for live analysis.';
+      }
+
+      const fallbackResponse: NarrativeResponse = {
+        narrative: fallbackNarrative,
+        timestamp: new Date().toISOString(),
+        regime: regimeData.regime !== 'unknown' ? regimeData.regime : 'neutral',
+        sentiment: 'neutral',
+        keyLevels: [],
+      };
+      setCache(CACHE_KEY, fallbackResponse, TTL.SHORT);
+      return NextResponse.json({ ...fallbackResponse, cached: false });
+    }
+
     const contextBlock = [
-      `Current prices: ${marketLines.join(' | ') || 'Market data unavailable'}`,
+      `Current prices: ${marketLines.join(' | ')}`,
       `Regime: ${regimeData.regime} (VIX: ${regimeData.vix.toFixed(1)}, confidence: ${(regimeData.confidence * 100).toFixed(0)}%)`,
-      `Sectors: ${sectors}`,
+      `Sectors: ${hasSectorData ? sectors : 'Sector breakdown not available for this session'}`,
     ].join('\n');
 
     // Generate narrative via Claude
@@ -116,6 +156,8 @@ export async function GET(): Promise<NextResponse> {
           content: `You are a real-time market analyst for the Glastonbury Terminal. Generate a 3-5 sentence narrative explaining WHAT is happening in the market right now and WHY. Include specific prices and levels. Explain causality — don't just describe, explain the mechanism.
 
 Be concise, authoritative, insightful. Bloomberg anchor style.
+
+IMPORTANT: Only reference data that is actually provided below. If any data is missing or shows as unavailable, simply omit it from your analysis. Do NOT speculate about data outages, blackouts, or system failures. Focus only on the data you have.
 
 Also return:
 - sentiment: "bullish", "bearish", or "neutral"

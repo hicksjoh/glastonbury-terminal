@@ -7,3 +7,6 @@ export { default as GuardCard } from './GuardCard';
 export { default as GEXCard } from './GEXCard';
 export { default as InsiderCard } from './InsiderCard';
 export { default as ToolLoadingSkeleton } from './ToolLoadingSkeleton';
+export { default as WashSaleCard } from './WashSaleCard';
+export { default as TaxLotCard } from './TaxLotCard';
+export { default as TaxLossCard } from './TaxLossCard';

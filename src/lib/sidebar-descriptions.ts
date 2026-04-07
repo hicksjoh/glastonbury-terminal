@@ -45,7 +45,7 @@ export const PAGE_DESCRIPTIONS: Record<string, SidebarDescription> = {
   '/journal': { title: 'Journal', description: 'Trade journal with AI analysis. Log trades, track emotions, and let Keisha spot patterns in your wins and losses.' },
   '/territories': { title: 'Territories', description: 'CR3 franchise territory map. Track all 23 territories across Seacoast FL and West Coast FL agreements.' },
   '/cashflow': { title: 'Cash Flow', description: 'Revenue tracking — franchise fees, AR royalties, equity, and events. Money in and money out.' },
-  '/tax': { title: 'Tax Center', description: 'Tax-loss harvesting, capital gains tracking, estimated liability, and wash sale monitoring.' },
+  '/tax': { title: 'Tax Center', description: 'Real-time capital gains tracking, wash sale monitoring, tax-loss harvesting, bracket visualizer, estimated quarterly tax calculations, and Section 1256 optimizer.' },
   '/scanner': { title: 'Signal Scanner', description: 'Real-time signal detection combining technicals, flow, and sentiment. Signals scored by strength.' },
   '/flow': { title: 'Options Flow', description: 'Live unusual options activity. See what smart money is betting on — large sweeps, blocks, and aggressive orders.' },
   '/insider': { title: 'Insider Tracker', description: 'SEC Form 4 insider buys and sells. Cluster buys (3+ insiders) are the strongest bullish signal in the market.' },

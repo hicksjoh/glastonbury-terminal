@@ -3,7 +3,9 @@
  * Detect common behavioral biases and alert without blocking
  */
 
-export type BiasType = 'panic_sell' | 'performance_chase' | 'disposition_effect' | 'overtrading';
+import { getWashSalePreview, type TradeRecord } from './wash-sale-detector';
+
+export type BiasType = 'panic_sell' | 'performance_chase' | 'disposition_effect' | 'overtrading' | 'wash_sale_risk';
 
 export interface BehavioralAlert {
   type: BiasType;
@@ -93,11 +95,37 @@ function checkDispositionEffect(trade: TradeContext, portfolio: PortfolioContext
 }
 
 /**
+ * Wash Sale Risk: Check if this trade would trigger a wash sale (IRS §1091)
+ */
+function checkWashSaleRisk(trade: TradeContext, tradeHistory?: TradeRecord[]): BehavioralAlert | null {
+  if (!tradeHistory || tradeHistory.length === 0) return null;
+
+  const preview = getWashSalePreview(trade.ticker, trade.action, tradeHistory);
+  if (!preview) return null;
+
+  return {
+    type: 'wash_sale_risk',
+    severity: preview.severity === 'critical' ? 'critical' : 'warning',
+    title: 'Wash Sale Risk Detected',
+    message: preview.message,
+    data: {
+      conflictingDate: preview.details.conflictingTrade?.date,
+      disallowedLoss: preview.details.disallowedLoss,
+      windowEnd: preview.details.windowEnd,
+    },
+    recommendation: preview.details.windowEnd
+      ? `Consider waiting until ${preview.details.windowEnd} (wash sale window close) before trading ${trade.ticker} to preserve your tax loss deduction.`
+      : `Review IRS §1091 wash sale rules before proceeding with this trade on ${trade.ticker}.`,
+  };
+}
+
+/**
  * Main guard function — checks all behavioral patterns
  */
 export function checkBehavioralGuards(
   trade: TradeContext,
   portfolio: PortfolioContext,
+  tradeHistory?: TradeRecord[],
 ): BehavioralAlert[] {
   const alerts: BehavioralAlert[] = [];
 
@@ -109,6 +137,9 @@ export function checkBehavioralGuards(
 
   const disposition = checkDispositionEffect(trade, portfolio);
   if (disposition) alerts.push(disposition);
+
+  const washSale = checkWashSaleRisk(trade, tradeHistory);
+  if (washSale) alerts.push(washSale);
 
   return alerts;
 }
