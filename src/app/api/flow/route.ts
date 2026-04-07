@@ -175,28 +175,18 @@ export async function GET(req: NextRequest) {
     const typeFilter = req.nextUrl.searchParams.get('type') || '';
     const symbol = req.nextUrl.searchParams.get('symbol') || 'SPY';
 
-    const hasPolygon = !!process.env.POLYGON_API_KEY;
+    // Note: Polygon options snapshots require paid tier
+    // Using FMP-derived flow signals (tagged in _meta)
     let flows: FlowEntry[];
     let meta: ApiMeta;
 
-    if (hasPolygon) {
-      // Primary: Polygon real options flow
-      const result = await fetchPolygonFlow(symbol);
-      flows = result.data
-        .filter(f => f.premium >= minPremium && f.volOiRatio >= minVolOI)
-        .filter(f => !typeFilter || f.flowType === typeFilter);
-      meta = result._meta;
-    } else {
-      // Fallback: FMP-derived signals (tagged as not fully live)
-      const { flows: fmpFlows, metas } = await fetchFmpFlowSignals(minPremium, minVolOI, typeFilter);
-      flows = fmpFlows;
-      meta = buildMeta({
-        source: 'fmp:derived',
-        live: metas.every(m => m.live),
-        cached: metas.some(m => m.cached),
-        error: 'Options flow derived from stock activity — not real options data',
-      });
-    }
+    const { flows: fmpFlows, metas } = await fetchFmpFlowSignals(minPremium, minVolOI, typeFilter);
+    flows = fmpFlows;
+    meta = buildMeta({
+      source: 'fmp:derived',
+      live: metas.every(m => m.live),
+      cached: metas.some(m => m.cached),
+    });
 
     flows.sort((a, b) => b.premium - a.premium);
 

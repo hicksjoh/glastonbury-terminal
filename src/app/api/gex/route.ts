@@ -226,26 +226,16 @@ async function fetchSpotPrice(symbol: string): Promise<ApiResult<number>> {
 export async function GET(request: NextRequest) {
   try {
     const symbol = (request.nextUrl.searchParams.get('symbol') ?? 'SPY').toUpperCase();
-    const hasPolygon = !!process.env.POLYGON_API_KEY;
-
     const spotResult = await fetchSpotPrice(symbol);
     const spotPrice = spotResult.data;
 
-    // Priority: Polygon → Alpaca → Synthetic
+    // Priority: Alpaca → Synthetic
+    // Note: Polygon options snapshots require paid tier — skip on free plan
     let chain: OptionsChainItem[] | null = null;
     let dataSource = 'synthetic';
     let chainMeta: ApiMeta;
 
-    if (hasPolygon) {
-      const polyResult = await fetchPolygonChain(symbol);
-      if (polyResult.data) {
-        chain = polyResult.data;
-        dataSource = 'polygon';
-        chainMeta = polyResult._meta;
-      }
-    }
-
-    if (!chain) {
+    {
       const alpacaResult = await fetchAlpacaChain(symbol);
       if (alpacaResult.data) {
         chain = alpacaResult.data;
