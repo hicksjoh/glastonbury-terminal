@@ -1033,6 +1033,33 @@ export default function KeishaPage() {
 
   const config = DOMAIN_CONFIG[domain];
 
+  // ── Keyboard shortcuts ─────────────────────────────────────────────────
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      // Cmd/Ctrl+Shift+N = new conversation
+      if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key === 'n') {
+        e.preventDefault();
+        startNewConversation();
+      }
+      // Cmd/Ctrl+B = toggle sidebar
+      if ((e.metaKey || e.ctrlKey) && e.key === 'b') {
+        e.preventDefault();
+        setSidebarOpen(prev => !prev);
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [startNewConversation]);
+
+  // ── Mobile auto-collapse sidebar ──────────────────────────────────────
+  useEffect(() => {
+    const mq = window.matchMedia('(max-width: 768px)');
+    const handler = (e: MediaQueryListEvent) => { if (e.matches) setSidebarOpen(false); };
+    if (mq.matches) setSidebarOpen(false);
+    mq.addEventListener('change', handler);
+    return () => mq.removeEventListener('change', handler);
+  }, []);
+
   // Format date for sidebar
   const formatDate = (dateStr: string) => {
     const d = new Date(dateStr);
@@ -1045,6 +1072,40 @@ export default function KeishaPage() {
     if (diffHrs < 48) return 'Yesterday';
     return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
   };
+
+  // Group conversations by date category
+  const groupConversations = useCallback((convos: ConversationSummary[]) => {
+    const groups: { label: string; items: ConversationSummary[] }[] = [];
+    const now = new Date();
+    const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+    const yesterdayStart = todayStart - 86400000;
+    const weekStart = todayStart - 7 * 86400000;
+
+    const today: ConversationSummary[] = [];
+    const yesterday: ConversationSummary[] = [];
+    const thisWeek: ConversationSummary[] = [];
+    const older: ConversationSummary[] = [];
+
+    for (const c of convos) {
+      const t = new Date(c.updated_at).getTime();
+      if (t >= todayStart) today.push(c);
+      else if (t >= yesterdayStart) yesterday.push(c);
+      else if (t >= weekStart) thisWeek.push(c);
+      else older.push(c);
+    }
+
+    if (today.length > 0) groups.push({ label: 'Today', items: today });
+    if (yesterday.length > 0) groups.push({ label: 'Yesterday', items: yesterday });
+    if (thisWeek.length > 0) groups.push({ label: 'This Week', items: thisWeek });
+    if (older.length > 0) groups.push({ label: 'Older', items: older });
+
+    return groups;
+  }, []);
+
+  const convoGroups = useMemo(
+    () => groupConversations(searchQuery.trim() ? searchResults : conversations),
+    [groupConversations, searchQuery, searchResults, conversations],
+  );
 
   return (
     <AppShell>
@@ -1177,71 +1238,99 @@ export default function KeishaPage() {
             </div>
           </div>
 
-          {/* Conversation List */}
+          {/* Conversation List — grouped by date */}
           <div style={{ flex: 1, overflowY: 'auto', padding: '4px 0' }}>
             {loadingConvos && (
               <div style={{ padding: '12px 14px', color: '#555', fontSize: 12 }}>Loading...</div>
             )}
             {!loadingConvos && conversations.length === 0 && (
-              <div style={{ padding: '16px 14px', color: '#444', fontSize: 12, textAlign: 'center' }}>
-                No conversations yet.
-                <br />Start chatting to save history.
+              <div style={{ padding: '20px 14px', color: '#444', fontSize: 12, textAlign: 'center' }}>
+                <div style={{ fontSize: 20, marginBottom: 8 }}>No conversations yet</div>
+                <div style={{ color: '#555', lineHeight: 1.5 }}>
+                  Start chatting to save history.
+                  <br /><span style={{ fontSize: 10, color: '#3a3a4a' }}>Tip: Cmd+Shift+N for new chat</span>
+                </div>
               </div>
             )}
-            {(searchQuery.trim() ? searchResults : conversations).map(convo => (
-              <div
-                key={convo.id}
-                onClick={() => loadConversation(convo.id)}
-                style={{
-                  padding: '10px 14px',
-                  cursor: 'pointer',
-                  background: activeConvoId === convo.id ? `${config.color}10` : 'transparent',
-                  borderLeft: activeConvoId === convo.id ? `2px solid ${config.color}` : '2px solid transparent',
-                  transition: 'all 0.15s',
-                  display: 'flex',
-                  flexDirection: 'column',
-                  gap: 4,
-                }}
-                onMouseEnter={e => {
-                  if (activeConvoId !== convo.id) e.currentTarget.style.background = 'rgba(255,255,255,0.02)';
-                }}
-                onMouseLeave={e => {
-                  if (activeConvoId !== convo.id) e.currentTarget.style.background = 'transparent';
-                }}
-              >
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-                  <div style={{
-                    fontSize: 13, color: activeConvoId === convo.id ? '#e8e8e8' : '#aaa',
-                    fontWeight: activeConvoId === convo.id ? 600 : 400,
-                    overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-                    flex: 1, marginRight: 8,
-                  }}>
-                    {convo.title || 'Untitled'}
-                  </div>
-                  <button
-                    onClick={(e) => { e.stopPropagation(); deleteConversation(convo.id); }}
+            {convoGroups.map(group => (
+              <div key={group.label}>
+                {/* Group Label */}
+                <div style={{
+                  padding: '8px 14px 4px',
+                  fontSize: 10,
+                  fontWeight: 600,
+                  color: '#4a4a5a',
+                  textTransform: 'uppercase',
+                  letterSpacing: 0.8,
+                }}>
+                  {group.label}
+                </div>
+                {group.items.map(convo => (
+                  <div
+                    key={convo.id}
+                    onClick={() => loadConversation(convo.id)}
                     style={{
-                      padding: '2px 4px', borderRadius: 4, border: 'none',
-                      background: 'transparent', color: '#555', cursor: 'pointer',
-                      opacity: 0.5, flexShrink: 0,
+                      padding: '10px 14px',
+                      cursor: 'pointer',
+                      background: activeConvoId === convo.id ? `${config.color}10` : 'transparent',
+                      borderLeft: activeConvoId === convo.id ? `2px solid ${config.color}` : '2px solid transparent',
+                      transition: 'all 0.15s',
+                      display: 'flex',
+                      flexDirection: 'column',
+                      gap: 4,
                     }}
-                    onMouseEnter={e => { e.currentTarget.style.opacity = '1'; e.currentTarget.style.color = '#f87171'; }}
-                    onMouseLeave={e => { e.currentTarget.style.opacity = '0.5'; e.currentTarget.style.color = '#555'; }}
+                    onMouseEnter={e => {
+                      if (activeConvoId !== convo.id) e.currentTarget.style.background = 'rgba(255,255,255,0.02)';
+                    }}
+                    onMouseLeave={e => {
+                      if (activeConvoId !== convo.id) e.currentTarget.style.background = 'transparent';
+                    }}
                   >
-                    <Trash2 size={11} />
-                  </button>
-                </div>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                  <span style={{ fontSize: 11, color: '#555', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }}>
-                    {convo.preview || 'Empty conversation'}
-                  </span>
-                  <span style={{ fontSize: 10, color: '#444', flexShrink: 0, marginLeft: 6 }}>
-                    {formatDate(convo.updated_at)}
-                  </span>
-                </div>
-                <div style={{ fontSize: 10, color: '#444' }}>
-                  {convo.messageCount} message{convo.messageCount !== 1 ? 's' : ''}
-                </div>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                      <div style={{
+                        fontSize: 13, color: activeConvoId === convo.id ? '#e8e8e8' : '#aaa',
+                        fontWeight: activeConvoId === convo.id ? 600 : 400,
+                        overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                        flex: 1, marginRight: 8,
+                      }}>
+                        {convo.title || 'Untitled'}
+                      </div>
+                      <button
+                        onClick={(e) => { e.stopPropagation(); deleteConversation(convo.id); }}
+                        style={{
+                          padding: '2px 4px', borderRadius: 4, border: 'none',
+                          background: 'transparent', color: '#555', cursor: 'pointer',
+                          opacity: 0.5, flexShrink: 0,
+                        }}
+                        onMouseEnter={e => { e.currentTarget.style.opacity = '1'; e.currentTarget.style.color = '#f87171'; }}
+                        onMouseLeave={e => { e.currentTarget.style.opacity = '0.5'; e.currentTarget.style.color = '#555'; }}
+                      >
+                        <Trash2 size={11} />
+                      </button>
+                    </div>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <span style={{ fontSize: 11, color: '#555', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }}>
+                        {convo.preview || 'Empty conversation'}
+                      </span>
+                      <span style={{ fontSize: 10, color: '#444', flexShrink: 0, marginLeft: 6 }}>
+                        {formatDate(convo.updated_at)}
+                      </span>
+                    </div>
+                    <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                      <span style={{
+                        fontSize: 9, padding: '1px 5px', borderRadius: 4,
+                        background: `${DOMAIN_CONFIG[convo.persona as Domain]?.color || config.color}15`,
+                        color: DOMAIN_CONFIG[convo.persona as Domain]?.color || config.color,
+                        fontWeight: 600, textTransform: 'uppercase',
+                      }}>
+                        {DOMAIN_CONFIG[convo.persona as Domain]?.label || convo.persona}
+                      </span>
+                      <span style={{ fontSize: 10, color: '#444' }}>
+                        {convo.messageCount} msg{convo.messageCount !== 1 ? 's' : ''}
+                      </span>
+                    </div>
+                  </div>
+                ))}
               </div>
             ))}
           </div>
@@ -1260,7 +1349,8 @@ export default function KeishaPage() {
               }}
             >
               {sidebarOpen ? <PanelLeftClose size={14} /> : <PanelLeft size={14} />}
-              {sidebarOpen ? 'Hide history' : 'Show history'}
+              {sidebarOpen ? 'Hide' : 'History'}
+              <span style={{ fontSize: 9, color: '#4a4a5a', marginLeft: 2 }}>&#8984;B</span>
             </button>
             {messages.length > 1 && (
               <button
