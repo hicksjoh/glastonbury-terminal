@@ -10,7 +10,7 @@ import { parseSlashCommand, getMatchingCommands, SLASH_COMMANDS } from '@/lib/sl
 import SparklineChart from '@/components/SparklineChart';
 import { ExplainButton } from '@/components/keisha/ExplainButton';
 import { GlossaryTerm } from '@/components/keisha/GlossaryTerm';
-import { TradeCard, PortfolioSnapshotCard, OptionsCard, GuardCard, GEXCard, InsiderCard } from '@/components/keisha';
+import { TradeCard, PortfolioSnapshotCard, OptionsCard, GuardCard, GEXCard, InsiderCard, ToolLoadingSkeleton } from '@/components/keisha';
 import { GLOSSARY, getGlossaryKeys } from '@/lib/glossary';
 import type { RenderCard, TradeCardData, PortfolioCardData, OptionsCardData, GuardCardData, GEXCardData, InsiderCardData } from '@/types/keisha';
 
@@ -219,6 +219,7 @@ export default function KeishaPage() {
   const [actionButtons, setActionButtons] = useState<Array<{label: string; action: string; params: Record<string, unknown>}>>([]);
   const [sparklineData, setSparklineData] = useState<Record<string, number[]>>({});
   const [messageCards, setMessageCards] = useState<Record<string, RenderCard[]>>({});
+  const [toolsLoadingMsg, setToolsLoadingMsg] = useState<string | null>(null);
   const imageInputRef = useRef<HTMLInputElement>(null);
 
   // ── Explanation level (Plain Talk mode) ─────────────────────────────────
@@ -894,21 +895,18 @@ export default function KeishaPage() {
                 setMessages(prev => prev.map(m => m.id === assistantId ? { ...m, content: fullText } : m));
               }
               if (data.toolsRunning) {
-                // Keisha is chaining tools — show thinking indicator
-                if (!fullText.endsWith('\n\n')) fullText += '\n\n';
-                fullText += '_Pulling live data..._\n\n';
-                setMessages(prev => prev.map(m => m.id === assistantId ? { ...m, content: fullText } : m));
+                // Show skeleton loading card instead of text placeholder
+                setToolsLoadingMsg(assistantId);
               }
               if (data.suggestions) {
                 setSuggestions(data.suggestions);
               }
               if (data.action) {
-                // Tool was executed by Keisha — show result inline
+                // Tool was executed — clear skeleton and show result
+                setToolsLoadingMsg(null);
                 const a = data.action;
                 const statusIcon = a.success ? '\u2705' : '\u274c';
                 const statusMsg = a.result?.message || a.result?.error || `${a.type} completed`;
-                // Remove the "Pulling live data..." placeholder if present
-                fullText = fullText.replace(/_Pulling live data\.\.\._\n\n$/, '');
                 fullText += `\n\n${statusIcon} **${a.type}:** ${statusMsg}`;
                 setMessages(prev => prev.map(m => m.id === assistantId ? { ...m, content: fullText } : m));
 
@@ -949,7 +947,10 @@ export default function KeishaPage() {
                   guardCheck: tradeInfo.guardCheck || 'N/A',
                 });
               }
-              if (data.done) break;
+              if (data.done) {
+                setToolsLoadingMsg(null);
+                break;
+              }
             } catch {
               // Skip malformed SSE lines
             }
@@ -1412,6 +1413,10 @@ export default function KeishaPage() {
                         return null;
                     }
                   })}
+                  {/* Tool Loading Skeleton */}
+                  {msg.role === 'assistant' && toolsLoadingMsg === msg.id && (
+                    <ToolLoadingSkeleton />
+                  )}
                   {/* Sparklines for symbols with bar data */}
                   {msg.role === 'assistant' && Object.keys(sparklineData).length > 0 && msgIdx === messages.length - 1 && (
                     <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12, marginTop: 8 }}>

@@ -72,6 +72,27 @@ body {
   100% { background-position: -200% 0; }
 }
 
+/* Keisha chat message animations */
+@keyframes msgSlideIn {
+  from { opacity: 0; transform: translateY(12px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.msg-bubble {
+  animation: msgSlideIn 200ms ease-out forwards;
+}
+
+.msg-bubble:hover .msg-actions {
+  opacity: 1 !important;
+}
+
+/* Suggestion pill hover */
+@keyframes pillPop {
+  0% { transform: scale(1); }
+  50% { transform: scale(1.03); }
+  100% { transform: scale(1); }
+}
+
 .skip-to-content {
   position: absolute;
   width: 1px;
