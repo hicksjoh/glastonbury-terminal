@@ -1,48 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { scoreSignal } from '@/lib/signal-scorer';
-
-const FMP_KEY = process.env.FMP_API_KEY;
-
-export async function GET(req: NextRequest) {
-  try {
-    if (!FMP_KEY) {
-      return NextResponse.json({ error: 'FMP_API_KEY not configured' }, { status: 500 });
-    }
-
-    const preset = req.nextUrl.searchParams.get('preset') || 'confluence';
-
-    let signals: SignalResult[] = [];
-
-    switch (preset) {
-      case 'momentum':
-        signals = await scanMomentum();
-        break;
-      case 'value':
-        signals = await scanValue();
-        break;
-      case 'income':
-        signals = await scanIncome();
-        break;
-      case 'confluence':
-      default:
-        signals = await scanConfluence();
-        break;
-    }
-
-    // Get market regime from gainers/losers ratio
-    const regime = await getMarketRegime();
-
-    return NextResponse.json({
-      signals: signals.slice(0, 15),
-      preset,
-      timestamp: new Date().toISOString(),
-      marketRegime: regime,
-    });
-  } catch (error) {
-    const msg = error instanceof Error ? error.message : 'Unknown error';
-    return NextResponse.json({ error: msg }, { status: 500 });
-  }
-}
+import { apiFetchWithFallback, type ApiResult } from '@/lib/api-client';
+import { buildMeta, type ApiMeta } from '@/lib/api-meta';
 
 interface SignalResult {
   symbol: string;
@@ -54,14 +13,116 @@ interface SignalResult {
   regime_fit: boolean;
 }
 
-async function scanMomentum(): Promise<SignalResult[]> {
-  const res = await fetch(`https://financialmodelingprep.com/api/v3/stock_market/gainers?apikey=${FMP_KEY}`);
-  const gainers = res.ok ? await res.json() : [];
-  if (!Array.isArray(gainers)) return [];
+interface StockQuote {
+  symbol: string;
+  name?: string;
+  companyName?: string;
+  price: number;
+  changesPercentage?: number;
+  change?: number;
+  volume?: number;
+  pe?: number;
+  [key: string]: unknown;
+}
 
-  return gainers.slice(0, 15).map((g: Record<string, unknown>) => {
+interface InsiderTrade {
+  symbol: string;
+  acquistionOrDisposition?: string;
+  [key: string]: unknown;
+}
+
+interface DividendEntry {
+  symbol: string;
+  yield?: number;
+  date?: string;
+  adjDividend?: number;
+  [key: string]: unknown;
+}
+
+// Shared FMP fetchers using centralized client
+async function fetchGainers(): Promise<ApiResult<StockQuote[]>> {
+  return apiFetchWithFallback<StockQuote[]>(
+    'fmp', '/v3/stock_market/gainers', {}, [],
+    { cacheTtlMs: 5 * 60 * 1000 },
+  );
+}
+
+async function fetchActives(): Promise<ApiResult<StockQuote[]>> {
+  return apiFetchWithFallback<StockQuote[]>(
+    'fmp', '/v3/stock_market/actives', {}, [],
+    { cacheTtlMs: 5 * 60 * 1000 },
+  );
+}
+
+async function fetchLosers(): Promise<ApiResult<StockQuote[]>> {
+  return apiFetchWithFallback<StockQuote[]>(
+    'fmp', '/v3/stock_market/losers', {}, [],
+    { cacheTtlMs: 5 * 60 * 1000 },
+  );
+}
+
+async function fetchInsiderFeed(): Promise<ApiResult<InsiderTrade[]>> {
+  return apiFetchWithFallback<InsiderTrade[]>(
+    'fmp', '/v4/insider-trading-rss-feed', { limit: '50' }, [],
+    { cacheTtlMs: 15 * 60 * 1000 },
+  );
+}
+
+export async function GET(req: NextRequest) {
+  try {
+    const preset = req.nextUrl.searchParams.get('preset') || 'confluence';
+    let signals: SignalResult[] = [];
+    let metas: ApiMeta[] = [];
+
+    switch (preset) {
+      case 'momentum':
+        ({ signals, metas } = await scanMomentum());
+        break;
+      case 'value':
+        ({ signals, metas } = await scanValue());
+        break;
+      case 'income':
+        ({ signals, metas } = await scanIncome());
+        break;
+      case 'confluence':
+      default:
+        ({ signals, metas } = await scanConfluence());
+        break;
+    }
+
+    const { regime, regimeMeta } = await getMarketRegime();
+    metas.push(regimeMeta);
+
+    const allLive = metas.every(m => m.live);
+
+    return NextResponse.json({
+      signals: signals.slice(0, 15),
+      preset,
+      timestamp: new Date().toISOString(),
+      marketRegime: regime,
+      _meta: buildMeta({
+        source: 'fmp',
+        live: allLive,
+        cached: metas.some(m => m.cached),
+        stale: metas.some(m => m.stale),
+      }),
+    });
+  } catch (error) {
+    const msg = error instanceof Error ? error.message : 'Unknown error';
+    return NextResponse.json({
+      error: msg,
+      _meta: buildMeta({ source: 'error', live: false, error: msg }),
+    }, { status: 500 });
+  }
+}
+
+async function scanMomentum(): Promise<{ signals: SignalResult[]; metas: ApiMeta[] }> {
+  const result = await fetchGainers();
+  const gainers = Array.isArray(result.data) ? result.data : [];
+
+  const signals = gainers.slice(0, 15).map(g => {
     const change = Number(g.changesPercentage || 0);
-    const result = scoreSignal({
+    const scored = scoreSignal({
       above50DMA: change > 5,
       bullishFlow: change > 8,
       regimeFit: true,
@@ -73,30 +134,34 @@ async function scanMomentum(): Promise<SignalResult[]> {
     return {
       symbol: String(g.symbol || ''),
       company: String(g.name || g.symbol || ''),
-      score: result.score,
-      sources: [...result.sources, 'momentum'],
-      kellySizing: result.kellySizing,
+      score: scored.score,
+      sources: [...scored.sources, 'momentum'],
+      kellySizing: scored.kellySizing,
       thesis: `Up ${change.toFixed(1)}% — momentum breakout with strong volume`,
       regime_fit: true,
     };
   });
+
+  return { signals, metas: [result._meta] };
 }
 
-async function scanValue(): Promise<SignalResult[]> {
-  const res = await fetch(
-    `https://financialmodelingprep.com/api/v3/stock-screener?marketCapMoreThan=1000000000&priceMoreThan=5&volumeMoreThan=500000&apikey=${FMP_KEY}`
+async function scanValue(): Promise<{ signals: SignalResult[]; metas: ApiMeta[] }> {
+  const result = await apiFetchWithFallback<StockQuote[]>(
+    'fmp', '/v3/stock-screener',
+    { marketCapMoreThan: '1000000000', priceMoreThan: '5', volumeMoreThan: '500000' },
+    [],
+    { cacheTtlMs: 10 * 60 * 1000 },
   );
-  const stocks = res.ok ? await res.json() : [];
-  if (!Array.isArray(stocks)) return [];
+  const stocks = Array.isArray(result.data) ? result.data : [];
 
-  return stocks
-    .filter((s: Record<string, unknown>) => {
+  const signals = stocks
+    .filter(s => {
       const pe = Number(s.pe || 999);
       return pe > 0 && pe < 15;
     })
     .slice(0, 15)
-    .map((s: Record<string, unknown>) => {
-      const result = scoreSignal({
+    .map(s => {
+      const scored = scoreSignal({
         sentimentScore: 7,
         regimeFit: true,
         winRate: 0.6,
@@ -107,31 +172,33 @@ async function scanValue(): Promise<SignalResult[]> {
       return {
         symbol: String(s.symbol || ''),
         company: String(s.companyName || s.symbol || ''),
-        score: result.score,
-        sources: [...result.sources, 'value_screen'],
-        kellySizing: result.kellySizing,
+        score: scored.score,
+        sources: [...scored.sources, 'value_screen'],
+        kellySizing: scored.kellySizing,
         thesis: `P/E ${Number(s.pe || 0).toFixed(1)} — undervalued relative to sector`,
         regime_fit: true,
       };
     });
+
+  return { signals, metas: [result._meta] };
 }
 
-async function scanIncome(): Promise<SignalResult[]> {
+async function scanIncome(): Promise<{ signals: SignalResult[]; metas: ApiMeta[] }> {
   const from = new Date().toISOString().split('T')[0];
   const to = new Date(Date.now() + 30 * 86400000).toISOString().split('T')[0];
 
-  const res = await fetch(
-    `https://financialmodelingprep.com/api/v3/stock_dividend_calendar?from=${from}&to=${to}&apikey=${FMP_KEY}`
+  const result = await apiFetchWithFallback<DividendEntry[]>(
+    'fmp', '/v3/stock_dividend_calendar', { from, to }, [],
+    { cacheTtlMs: 60 * 60 * 1000 },
   );
-  const dividends = res.ok ? await res.json() : [];
-  if (!Array.isArray(dividends)) return [];
+  const dividends = Array.isArray(result.data) ? result.data : [];
 
-  return dividends
-    .filter((d: Record<string, unknown>) => Number(d.yield || 0) > 3)
+  const signals = dividends
+    .filter(d => Number(d.yield || 0) > 3)
     .slice(0, 15)
-    .map((d: Record<string, unknown>) => {
+    .map(d => {
       const yld = Number(d.yield || 0);
-      const result = scoreSignal({
+      const scored = scoreSignal({
         sentimentScore: 7,
         regimeFit: true,
         winRate: 0.65,
@@ -142,73 +209,66 @@ async function scanIncome(): Promise<SignalResult[]> {
       return {
         symbol: String(d.symbol || ''),
         company: String(d.symbol || ''),
-        score: Math.min(100, result.score + Math.round(yld * 3)),
-        sources: [...result.sources, 'dividend_income'],
-        kellySizing: result.kellySizing,
+        score: Math.min(100, scored.score + Math.round(yld * 3)),
+        sources: [...scored.sources, 'dividend_income'],
+        kellySizing: scored.kellySizing,
         thesis: `${yld.toFixed(1)}% yield — ex-div ${d.date || 'upcoming'}`,
         regime_fit: true,
       };
     });
+
+  return { signals, metas: [result._meta] };
 }
 
-async function scanConfluence(): Promise<SignalResult[]> {
-  // Cross-reference multiple signal sources
+async function scanConfluence(): Promise<{ signals: SignalResult[]; metas: ApiMeta[] }> {
   const [gainersRes, activesRes, insiderRes] = await Promise.all([
-    fetch(`https://financialmodelingprep.com/api/v3/stock_market/gainers?apikey=${FMP_KEY}`),
-    fetch(`https://financialmodelingprep.com/api/v3/stock_market/actives?apikey=${FMP_KEY}`),
-    fetch(`https://financialmodelingprep.com/api/v4/insider-trading-rss-feed?limit=50&apikey=${FMP_KEY}`).catch(() => null),
+    fetchGainers(),
+    fetchActives(),
+    fetchInsiderFeed(),
   ]);
 
-  const gainers = gainersRes.ok ? await gainersRes.json() : [];
-  const actives = activesRes.ok ? await activesRes.json() : [];
-  const insiders = insiderRes?.ok ? await insiderRes.json() : [];
+  const gainers = Array.isArray(gainersRes.data) ? gainersRes.data : [];
+  const actives = Array.isArray(activesRes.data) ? activesRes.data : [];
+  const insiders = Array.isArray(insiderRes.data) ? insiderRes.data : [];
 
-  // Build symbol map
   const symbolData: Record<string, {
     price: number; change: number; volume: number;
     isGainer: boolean; isActive: boolean; hasInsider: boolean; insiderBuy: boolean;
   }> = {};
 
-  if (Array.isArray(gainers)) {
-    for (const g of gainers.slice(0, 20)) {
-      symbolData[g.symbol] = {
-        price: g.price || 0, change: g.changesPercentage || 0,
-        volume: g.volume || 0, isGainer: true, isActive: false,
+  for (const g of gainers.slice(0, 20)) {
+    symbolData[g.symbol] = {
+      price: g.price || 0, change: Number(g.changesPercentage || 0),
+      volume: Number(g.volume || 0), isGainer: true, isActive: false,
+      hasInsider: false, insiderBuy: false,
+    };
+  }
+
+  for (const a of actives.slice(0, 20)) {
+    if (symbolData[a.symbol]) {
+      symbolData[a.symbol].isActive = true;
+    } else {
+      symbolData[a.symbol] = {
+        price: a.price || 0, change: Number(a.changesPercentage || 0),
+        volume: Number(a.volume || 0), isGainer: false, isActive: true,
         hasInsider: false, insiderBuy: false,
       };
     }
   }
 
-  if (Array.isArray(actives)) {
-    for (const a of actives.slice(0, 20)) {
-      if (symbolData[a.symbol]) {
-        symbolData[a.symbol].isActive = true;
-      } else {
-        symbolData[a.symbol] = {
-          price: a.price || 0, change: a.changesPercentage || 0,
-          volume: a.volume || 0, isGainer: false, isActive: true,
-          hasInsider: false, insiderBuy: false,
-        };
+  for (const ins of insiders) {
+    const sym = ins.symbol;
+    if (sym && symbolData[sym]) {
+      symbolData[sym].hasInsider = true;
+      if (String(ins.acquistionOrDisposition || '').toLowerCase() === 'a') {
+        symbolData[sym].insiderBuy = true;
       }
     }
   }
 
-  if (Array.isArray(insiders)) {
-    for (const ins of insiders) {
-      const sym = ins.symbol;
-      if (sym && symbolData[sym]) {
-        symbolData[sym].hasInsider = true;
-        if (String(ins.acquistionOrDisposition || '').toLowerCase() === 'a') {
-          symbolData[sym].insiderBuy = true;
-        }
-      }
-    }
-  }
-
-  // Score each symbol
   const results: SignalResult[] = [];
   for (const [symbol, data] of Object.entries(symbolData)) {
-    const result = scoreSignal({
+    const scored = scoreSignal({
       insiderClusterBuy: data.insiderBuy,
       bullishFlow: data.isGainer && data.change > 5,
       sentimentScore: data.change > 3 ? 8 : data.change > 0 ? 6 : 4,
@@ -219,26 +279,29 @@ async function scanConfluence(): Promise<SignalResult[]> {
       avgLoss: 0.05,
     }, 100000, data.price);
 
-    if (result.score >= 20) {
+    if (scored.score >= 20) {
       results.push({
         symbol,
         company: symbol,
-        score: result.score,
-        sources: result.sources,
-        kellySizing: result.kellySizing,
-        thesis: generateThesis(symbol, data, result.sources),
+        score: scored.score,
+        sources: scored.sources,
+        kellySizing: scored.kellySizing,
+        thesis: generateThesis(symbol, data, scored.sources),
         regime_fit: true,
       });
     }
   }
 
-  return results.sort((a, b) => b.score - a.score).slice(0, 15);
+  return {
+    signals: results.sort((a, b) => b.score - a.score).slice(0, 15),
+    metas: [gainersRes._meta, activesRes._meta, insiderRes._meta],
+  };
 }
 
 function generateThesis(
   symbol: string,
   data: { change: number; isGainer: boolean; isActive: boolean; insiderBuy: boolean },
-  sources: string[]
+  sources: string[],
 ): string {
   const parts = [];
   if (data.isGainer) parts.push(`+${data.change.toFixed(1)}% today`);
@@ -248,21 +311,26 @@ function generateThesis(
   return `${symbol}: ${parts.join(', ')}. ${sources.length} confluence signals detected.`;
 }
 
-async function getMarketRegime(): Promise<string> {
+async function getMarketRegime(): Promise<{ regime: string; regimeMeta: ApiMeta }> {
   try {
-    const res = await fetch(`https://financialmodelingprep.com/api/v3/stock_market/gainers?apikey=${FMP_KEY}`);
-    const gainers = res.ok ? await res.json() : [];
-    const losersRes = await fetch(`https://financialmodelingprep.com/api/v3/stock_market/losers?apikey=${FMP_KEY}`);
-    const losers = losersRes.ok ? await losersRes.json() : [];
+    const [gainersRes, losersRes] = await Promise.all([fetchGainers(), fetchLosers()]);
+    const gLen = Array.isArray(gainersRes.data) ? gainersRes.data.length : 0;
+    const lLen = Array.isArray(losersRes.data) ? losersRes.data.length : 0;
 
-    const gLen = Array.isArray(gainers) ? gainers.length : 0;
-    const lLen = Array.isArray(losers) ? losers.length : 0;
+    let regime: string;
+    if (gLen > lLen * 1.5) regime = 'bull_low_vol';
+    else if (gLen > lLen) regime = 'bull_high_vol';
+    else if (lLen > gLen * 1.5) regime = 'bear_high_vol';
+    else regime = 'bear_low_vol';
 
-    if (gLen > lLen * 1.5) return 'bull_low_vol';
-    if (gLen > lLen) return 'bull_high_vol';
-    if (lLen > gLen * 1.5) return 'bear_high_vol';
-    return 'bear_low_vol';
+    return {
+      regime,
+      regimeMeta: buildMeta({ source: 'fmp', live: gainersRes._meta.live && losersRes._meta.live }),
+    };
   } catch {
-    return 'unknown';
+    return {
+      regime: 'unknown',
+      regimeMeta: buildMeta({ source: 'fallback:fmp', live: false, error: 'regime fetch failed' }),
+    };
   }
 }
