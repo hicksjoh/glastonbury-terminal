@@ -10,9 +10,9 @@ import { parseSlashCommand, getMatchingCommands, SLASH_COMMANDS } from '@/lib/sl
 import SparklineChart from '@/components/SparklineChart';
 import { ExplainButton } from '@/components/keisha/ExplainButton';
 import { GlossaryTerm } from '@/components/keisha/GlossaryTerm';
-import { TradeCard, PortfolioSnapshotCard, OptionsCard } from '@/components/keisha';
+import { TradeCard, PortfolioSnapshotCard, OptionsCard, GuardCard } from '@/components/keisha';
 import { GLOSSARY, getGlossaryKeys } from '@/lib/glossary';
-import type { RenderCard, TradeCardData, PortfolioCardData, OptionsCardData } from '@/types/keisha';
+import type { RenderCard, TradeCardData, PortfolioCardData, OptionsCardData, GuardCardData } from '@/types/keisha';
 
 type Domain = 'general' | 'cfo' | 'tax' | 'quant' | 'wealth' | 'strategy';
 
@@ -1312,6 +1312,8 @@ export default function KeishaPage() {
                         return <PortfolioSnapshotCard key={`card-${cardIdx}`} data={card.data as PortfolioCardData} />;
                       case 'options':
                         return <OptionsCard key={`card-${cardIdx}`} data={card.data as OptionsCardData} />;
+                      case 'guard':
+                        return <GuardCard key={`card-${cardIdx}`} data={card.data as GuardCardData} />;
                       default:
                         return null;
                     }

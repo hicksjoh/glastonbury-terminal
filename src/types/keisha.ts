@@ -9,11 +9,11 @@ export interface KeishaSettings {
   explanationLevel?: ExplanationLevel;
 }
 
-export type CardType = 'trade' | 'portfolio' | 'options' | 'alert' | 'signal';
+export type CardType = 'trade' | 'portfolio' | 'options' | 'guard' | 'alert' | 'signal';
 
 export interface RenderCard {
   type: CardType;
-  data: TradeCardData | PortfolioCardData | OptionsCardData;
+  data: TradeCardData | PortfolioCardData | OptionsCardData | GuardCardData;
 }
 
 export interface TradeCardData {
@@ -44,4 +44,36 @@ export interface OptionsCardData {
   iv: number;
   greeks: { delta: number; gamma: number; theta: number; vega: number };
   breakeven: number;
+}
+
+export interface GuardCardData {
+  verdict: 'CLEAR' | 'CAUTION' | 'STOP';
+  verdictMessage: string;
+  symbol: string;
+  side: 'buy' | 'sell';
+  behavioralAlerts: Array<{
+    type: string;
+    severity: string;
+    title: string;
+    message: string;
+    recommendation: string;
+  }>;
+  kellySizing: {
+    proposedShares: number;
+    proposedPct: string;
+    halfKellyShares: number;
+    halfKellyPct: string;
+    regimeAdjustedShares: number;
+    verdict: string;
+    verdictMessage: string;
+  };
+  regime: {
+    label: string;
+    advice: string;
+    regimeMultiplier: number;
+  };
+  concentration?: {
+    concentrationPct: string;
+    warning: string | null;
+  };
 }

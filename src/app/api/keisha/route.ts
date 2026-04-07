@@ -108,6 +108,9 @@ TOOL USAGE RULES:
 - Chain multiple lookups when comparing stocks or building a thesis
 - Always call suggest_followups at the END of your response with 3 relevant follow-up questions
 - For orders (place_order), ONLY use the tool when Wes explicitly asks to buy or sell
+- ALWAYS call check_trade_guard BEFORE suggesting or placing any order — show the guard results to Wes
+- If check_trade_guard returns STOP, strongly advise against the trade and explain why
+- If check_trade_guard returns CAUTION, present the warnings clearly and let Wes decide
 - For non-destructive tools (lookups, watchlist, alerts), execute immediately when relevant${buildPreferencesBlock(settings)}`;
 
     // ── Build conversation history ─────────────────────────────────────
