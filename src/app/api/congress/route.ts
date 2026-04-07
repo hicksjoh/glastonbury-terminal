@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createServiceClient } from '@/lib/supabase';
 import { rateLimit } from '@/lib/rate-limit';
 import { getCached, setCache, TTL } from '@/lib/server-cache';
+import { buildMeta } from '@/lib/api-meta';
 
 const FMP_BASE = 'https://financialmodelingprep.com/stable';
 
@@ -89,8 +90,10 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
   const cached = getCached<CongressTrade[]>(cacheKey);
 
   let trades: CongressTrade[];
+  let dataSource = 'fmp';
   if (cached) {
     trades = cached;
+    dataSource = 'cache';
   } else {
     // Try Supabase first
     const supabase = createServiceClient();
@@ -102,6 +105,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
 
     if (dbTrades && dbTrades.length > 0) {
       trades = dbTrades as CongressTrade[];
+      dataSource = 'supabase';
     } else {
       // Fallback: fetch from FMP
       trades = await fetchFromFMP();
@@ -142,5 +146,13 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
   if (txType) filtered = filtered.filter(t => t.transaction_type === txType);
   if (ticker) filtered = filtered.filter(t => t.ticker.includes(ticker.toUpperCase()));
 
-  return NextResponse.json({ trades: filtered, total: filtered.length });
+  return NextResponse.json({
+    trades: filtered,
+    total: filtered.length,
+    _meta: buildMeta({
+      source: dataSource,
+      live: trades.length > 0,
+      cached: dataSource === 'cache',
+    }),
+  });
 }

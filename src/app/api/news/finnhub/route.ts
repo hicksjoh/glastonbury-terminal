@@ -1,51 +1,51 @@
 import { NextResponse } from 'next/server';
+import { apiFetchWithFallback } from '@/lib/api-client';
+import { buildMeta } from '@/lib/api-meta';
 
-const FINNHUB_KEY = process.env.FINNHUB_API_KEY || '';
-
-// Simple in-memory cache
-let cachedArticles: unknown[] = [];
-let cacheTime = 0;
-const CACHE_TTL = 120000; // 2 minutes
+interface FinnhubNewsItem {
+  headline?: string;
+  summary?: string;
+  source?: string;
+  url?: string;
+  related?: string;
+  datetime?: number;
+  image?: string;
+  [k: string]: unknown;
+}
 
 export async function GET() {
   try {
-    if (!FINNHUB_KEY) {
-      return NextResponse.json({ articles: [] });
+    if (!process.env.FINNHUB_API_KEY) {
+      return NextResponse.json({
+        articles: [],
+        _meta: buildMeta({ source: 'finnhub', live: false, error: 'FINNHUB_API_KEY not set' }),
+      });
     }
 
-    // Return cached if fresh
-    if (Date.now() - cacheTime < CACHE_TTL && cachedArticles.length > 0) {
-      return NextResponse.json({ articles: cachedArticles });
-    }
-
-    const res = await fetch(
-      `https://finnhub.io/api/v1/news?category=general&token=${FINNHUB_KEY}`,
-      { next: { revalidate: 120 } }
+    const result = await apiFetchWithFallback<FinnhubNewsItem[]>(
+      'finnhub', '/news', { category: 'general' }, [],
+      { cacheTtlMs: 5 * 60 * 1000 },
     );
 
-    if (!res.ok) {
-      console.error('Finnhub news error:', res.status);
-      return NextResponse.json({ articles: cachedArticles });
-    }
+    const articles = (Array.isArray(result.data) ? result.data : [])
+      .slice(0, 20)
+      .map(n => ({
+        headline: n.headline || '',
+        summary: n.summary || '',
+        source: n.source || 'Finnhub',
+        url: n.url || '',
+        symbols: n.related ? String(n.related).split(',').filter(Boolean) : [],
+        created_at: n.datetime ? new Date(n.datetime * 1000).toISOString() : new Date().toISOString(),
+        image: n.image || null,
+        newsSource: 'finnhub',
+      }));
 
-    const data = await res.json();
-    const articles = (Array.isArray(data) ? data : []).slice(0, 20).map((n: Record<string, unknown>) => ({
-      headline: n.headline || '',
-      summary: n.summary || '',
-      source: n.source || 'Finnhub',
-      url: n.url || '',
-      symbols: n.related ? String(n.related).split(',').filter(Boolean) : [],
-      created_at: n.datetime ? new Date((n.datetime as number) * 1000).toISOString() : new Date().toISOString(),
-      image: n.image || null,
-      newsSource: 'finnhub',
-    }));
-
-    cachedArticles = articles;
-    cacheTime = Date.now();
-
-    return NextResponse.json({ articles });
+    return NextResponse.json({ articles, _meta: result._meta });
   } catch (error) {
-    console.error('Finnhub error:', error);
-    return NextResponse.json({ articles: cachedArticles.length > 0 ? cachedArticles : [] });
+    console.error('Finnhub news error:', error);
+    return NextResponse.json({
+      articles: [],
+      _meta: buildMeta({ source: 'finnhub', live: false, error: String(error) }),
+    });
   }
 }

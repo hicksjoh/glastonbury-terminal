@@ -1,19 +1,30 @@
 import { NextResponse } from 'next/server';
+import { checkEnvironment, getEnvStatus } from '@/lib/env-check';
+import { getAllRateLimitStats } from '@/lib/rate-limiter';
+import { getAllCircuitStats } from '@/lib/circuit-breaker';
 
 export async function GET() {
-  const vars: Record<string, boolean> = {
-    ALPACA_API_KEY: !!process.env.ALPACA_API_KEY,
-    ALPACA_SECRET_KEY: !!process.env.ALPACA_SECRET_KEY,
-    ALPACA_PAPER: !!process.env.ALPACA_PAPER,
-    FMP_API_KEY: !!process.env.FMP_API_KEY,
-    SUPABASE_URL: !!(process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL),
-    SUPABASE_SERVICE_KEY: !!(process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SERVICE_KEY),
-    ANTHROPIC_API_KEY: !!process.env.ANTHROPIC_API_KEY,
-    FINNHUB_API_KEY: !!process.env.FINNHUB_API_KEY,
-  };
+  const envCheck = checkEnvironment();
+  const envStatus = getEnvStatus();
+  const rateLimits = getAllRateLimitStats();
+  const circuits = getAllCircuitStats();
 
   const isPaper = process.env.ALPACA_PAPER === 'true' ||
-    (process.env.ALPACA_API_URL || '').includes('paper');
+    (process.env.ALPACA_BASE_URL || '').includes('paper');
 
-  return NextResponse.json({ vars, isPaper });
+  return NextResponse.json({
+    valid: envCheck.valid,
+    vars: envStatus,
+    isPaper,
+    missing: envCheck.missing,
+    warnings: envCheck.warnings,
+    rateLimits,
+    circuits,
+    summary: {
+      totalVars: Object.keys(envStatus).length,
+      setVars: Object.values(envStatus).filter(v => v.set).length,
+      missingRequired: envCheck.missing.filter(m => m.required).length,
+      missingOptional: envCheck.missing.filter(m => !m.required).length,
+    },
+  });
 }

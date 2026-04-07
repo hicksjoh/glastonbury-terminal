@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getCached, setCache, TTL } from '@/lib/server-cache';
+import { buildMeta } from '@/lib/api-meta';
 
 const ALPACA_DATA_URL = 'https://data.alpaca.markets';
 
@@ -10,15 +11,15 @@ export async function GET(req: NextRequest) {
 
     const cacheKey = `news:${limit}:${symbols}`;
     const cached = getCached<{ articles: unknown[] }>(cacheKey);
-    if (cached) return NextResponse.json(cached);
-
-    const params = new URLSearchParams({
-      limit,
-      sort: 'desc',
-    });
-    if (symbols) {
-      params.set('symbols', symbols);
+    if (cached) {
+      return NextResponse.json({
+        ...cached,
+        _meta: buildMeta({ source: 'alpaca', live: true, cached: true }),
+      });
     }
+
+    const params = new URLSearchParams({ limit, sort: 'desc' });
+    if (symbols) params.set('symbols', symbols);
 
     const res = await fetch(`${ALPACA_DATA_URL}/v1beta1/news?${params}`, {
       headers: {
@@ -29,7 +30,10 @@ export async function GET(req: NextRequest) {
 
     if (!res.ok) {
       console.error('Alpaca news error:', res.status);
-      return NextResponse.json({ articles: [] });
+      return NextResponse.json({
+        articles: [],
+        _meta: buildMeta({ source: 'alpaca', live: false, error: `HTTP ${res.status}` }),
+      });
     }
 
     const data = await res.json();
@@ -45,9 +49,16 @@ export async function GET(req: NextRequest) {
 
     const payload = { articles };
     setCache(cacheKey, payload, TTL.MEDIUM);
-    return NextResponse.json(payload);
+
+    return NextResponse.json({
+      ...payload,
+      _meta: buildMeta({ source: 'alpaca', live: true }),
+    });
   } catch (error) {
     console.error('News error:', error);
-    return NextResponse.json({ articles: [] });
+    return NextResponse.json({
+      articles: [],
+      _meta: buildMeta({ source: 'alpaca', live: false, error: String(error) }),
+    });
   }
 }
