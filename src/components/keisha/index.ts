@@ -5,3 +5,4 @@ export { default as PortfolioSnapshotCard } from './PortfolioSnapshotCard';
 export { default as OptionsCard } from './OptionsCard';
 export { default as GuardCard } from './GuardCard';
 export { default as GEXCard } from './GEXCard';
+export { default as InsiderCard } from './InsiderCard';

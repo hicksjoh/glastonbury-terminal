@@ -9,11 +9,11 @@ export interface KeishaSettings {
   explanationLevel?: ExplanationLevel;
 }
 
-export type CardType = 'trade' | 'portfolio' | 'options' | 'guard' | 'gex' | 'alert' | 'signal';
+export type CardType = 'trade' | 'portfolio' | 'options' | 'guard' | 'gex' | 'insider' | 'alert' | 'signal';
 
 export interface RenderCard {
   type: CardType;
-  data: TradeCardData | PortfolioCardData | OptionsCardData | GuardCardData | GEXCardData;
+  data: TradeCardData | PortfolioCardData | OptionsCardData | GuardCardData | GEXCardData | InsiderCardData;
 }
 
 export interface TradeCardData {
@@ -75,6 +75,36 @@ export interface GuardCardData {
   concentration?: {
     concentrationPct: string;
     warning: string | null;
+  };
+}
+
+export interface InsiderCardData {
+  symbol: string;
+  insiderTrades: Array<{
+    name: string;
+    title: string;
+    transactionType: 'buy' | 'sell';
+    shares: number;
+    totalValue: number;
+    date: string;
+  }>;
+  congressTrades: Array<{
+    representative: string;
+    party: string;
+    transactionType: string;
+    amount: string;
+    date: string;
+  }>;
+  signals: Array<{
+    type: string;
+    description: string;
+    confidence: number;
+  }>;
+  summary: {
+    insiderBuys: number;
+    insiderSells: number;
+    congressBuys: number;
+    congressSells: number;
   };
 }
 
