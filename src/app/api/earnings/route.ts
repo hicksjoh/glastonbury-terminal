@@ -1,87 +1,91 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { apiFetchWithFallback } from '@/lib/api-client';
+import { buildMeta, type ApiMeta } from '@/lib/api-meta';
 
-const FMP_KEY = process.env.FMP_API_KEY;
+interface EarningsCalendarEntry {
+  symbol?: string;
+  companyName?: string;
+  date?: string;
+  time?: string;
+  epsEstimated?: number;
+  revenueEstimated?: number;
+  [k: string]: unknown;
+}
+
+interface SurpriseEntry {
+  actualEarningResult?: number;
+  estimatedEarning?: number;
+  [k: string]: unknown;
+}
 
 export async function GET(req: NextRequest) {
   try {
-    if (!FMP_KEY) {
-      return NextResponse.json({ error: 'FMP_API_KEY not configured' }, { status: 500 });
-    }
-
     const range = req.nextUrl.searchParams.get('range') || 'this_week';
     const detailSymbol = req.nextUrl.searchParams.get('symbol');
 
-    // If requesting detail for a specific symbol
     if (detailSymbol) {
       return handleDetail(detailSymbol);
     }
 
-    // Date range
     const now = new Date();
     const from = new Date(now);
     const to = new Date(now);
 
     if (range === 'this_week') {
-      from.setDate(now.getDate() - now.getDay()); // Sunday
-      to.setDate(from.getDate() + 6); // Saturday
+      from.setDate(now.getDate() - now.getDay());
+      to.setDate(from.getDate() + 6);
     } else if (range === 'next_week') {
       from.setDate(now.getDate() + (7 - now.getDay()));
       to.setDate(from.getDate() + 6);
     } else {
-      // Default: next 14 days
       to.setDate(now.getDate() + 14);
     }
 
     const fromStr = from.toISOString().split('T')[0];
     const toStr = to.toISOString().split('T')[0];
 
-    const calRes = await fetch(
-      `https://financialmodelingprep.com/api/v3/earning_calendar?from=${fromStr}&to=${toStr}&apikey=${FMP_KEY}`
+    const calResult = await apiFetchWithFallback<EarningsCalendarEntry[]>(
+      'fmp', '/v3/earning_calendar', { from: fromStr, to: toStr }, [],
+      { cacheTtlMs: 60 * 60 * 1000 },
     );
 
-    const calendar = calRes.ok ? await calRes.json() : [];
-    if (!Array.isArray(calendar)) {
-      return NextResponse.json({ upcoming: [], thisWeek: 0, highImpact: [] });
+    const calendar = Array.isArray(calResult.data) ? calResult.data : [];
+    if (calendar.length === 0) {
+      return NextResponse.json({
+        upcoming: [], thisWeek: 0, highImpact: [],
+        _meta: calResult._meta,
+      });
     }
 
-    // Build upcoming list with surprise history
+    // Limit surprise fetches to top 20 to conserve FMP budget
     const upcoming = [];
     const highImpact = [];
 
-    for (const entry of calendar.slice(0, 50)) {
+    for (const entry of calendar.slice(0, 20)) {
       const sym = entry.symbol;
       if (!sym) continue;
 
-      // Fetch historical surprises
-      let beatRate = 0;
-      let avgSurprise = 0;
-      let avgMove = 0;
+      let beatRate = 0, avgSurprise = 0, avgMove = 0;
 
       try {
-        const surpriseRes = await fetch(
-          `https://financialmodelingprep.com/api/v3/earnings-surprises/${sym}?apikey=${FMP_KEY}`
+        const surpriseResult = await apiFetchWithFallback<SurpriseEntry[]>(
+          'fmp', `/v3/earnings-surprises/${encodeURIComponent(sym)}`, {}, [],
+          { cacheTtlMs: 24 * 60 * 60 * 1000 }, // 24hr cache — historical data
         );
-        if (surpriseRes.ok) {
-          const surprises = await surpriseRes.json();
-          if (Array.isArray(surprises) && surprises.length > 0) {
-            const recent = surprises.slice(0, 8);
-            const beats = recent.filter((s: { actualEarningResult?: number; estimatedEarning?: number }) =>
-              (s.actualEarningResult || 0) > (s.estimatedEarning || 0)
-            ).length;
-            beatRate = Math.round((beats / recent.length) * 100);
-            avgSurprise = recent.reduce((sum: number, s: { actualEarningResult?: number; estimatedEarning?: number }) => {
-              const actual = s.actualEarningResult || 0;
-              const est = s.estimatedEarning || 1;
-              return sum + ((actual - est) / Math.abs(est || 1)) * 100;
-            }, 0) / recent.length;
-          }
+        const surprises = Array.isArray(surpriseResult.data) ? surpriseResult.data : [];
+        if (surprises.length > 0) {
+          const recent = surprises.slice(0, 8);
+          const beats = recent.filter(s => (s.actualEarningResult || 0) > (s.estimatedEarning || 0)).length;
+          beatRate = Math.round((beats / recent.length) * 100);
+          avgSurprise = recent.reduce((sum, s) => {
+            const actual = s.actualEarningResult || 0;
+            const est = s.estimatedEarning || 1;
+            return sum + ((actual - est) / Math.abs(est || 1)) * 100;
+          }, 0) / recent.length;
         }
-      } catch {
-        // Skip surprise history
-      }
+      } catch { /* skip surprise history */ }
 
-      // Estimate average earnings day move (simplified: use surprise magnitude)
-      avgMove = Math.abs(avgSurprise) * 0.5 + 3; // baseline 3% + scaled surprise
+      avgMove = Math.abs(avgSurprise) * 0.5 + 3;
 
       const item = {
         symbol: sym,
@@ -112,28 +116,32 @@ export async function GET(req: NextRequest) {
       upcoming,
       thisWeek: upcoming.length,
       highImpact,
+      _meta: calResult._meta,
     });
   } catch (error) {
     const msg = error instanceof Error ? error.message : 'Unknown error';
-    return NextResponse.json({ error: msg }, { status: 500 });
+    return NextResponse.json({
+      error: msg,
+      _meta: buildMeta({ source: 'error', live: false, error: msg }),
+    }, { status: 500 });
   }
 }
 
 async function handleDetail(symbol: string) {
-  const FMP = process.env.FMP_API_KEY;
-
   const [surpriseRes, historicalRes] = await Promise.all([
-    fetch(`https://financialmodelingprep.com/api/v3/earnings-surprises/${symbol}?apikey=${FMP}`),
-    fetch(`https://financialmodelingprep.com/api/v3/historical/earning_calendar/${symbol}?limit=20&apikey=${FMP}`),
+    apiFetchWithFallback<unknown[]>('fmp', `/v3/earnings-surprises/${encodeURIComponent(symbol)}`, {}, [], { cacheTtlMs: 24 * 60 * 60 * 1000 }),
+    apiFetchWithFallback<unknown[]>('fmp', `/v3/historical/earning_calendar/${encodeURIComponent(symbol)}`, { limit: '20' }, [], { cacheTtlMs: 24 * 60 * 60 * 1000 }),
   ]);
-
-  const surprises = surpriseRes.ok ? await surpriseRes.json() : [];
-  const historical = historicalRes.ok ? await historicalRes.json() : [];
 
   return NextResponse.json({
     symbol,
-    surprises: Array.isArray(surprises) ? surprises.slice(0, 12) : [],
-    historical: Array.isArray(historical) ? historical.slice(0, 20) : [],
+    surprises: Array.isArray(surpriseRes.data) ? surpriseRes.data.slice(0, 12) : [],
+    historical: Array.isArray(historicalRes.data) ? historicalRes.data.slice(0, 20) : [],
+    _meta: buildMeta({
+      source: 'fmp',
+      live: surpriseRes._meta.live && historicalRes._meta.live,
+      cached: surpriseRes._meta.cached || historicalRes._meta.cached,
+    }),
   });
 }
 
