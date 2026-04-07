@@ -235,6 +235,56 @@ export default function MarkdownRenderer({ content, compact = false, enableGloss
               margin: compact ? '8px 0' : '16px 0',
             }} />
           ),
+          pre: ({ children }) => (
+            <pre style={{
+              margin: '8px 0',
+              padding: 0,
+              background: 'transparent',
+              overflow: 'hidden',
+              whiteSpace: 'pre-wrap' as const,
+              wordBreak: 'break-word' as const,
+            }}>
+              {children}
+            </pre>
+          ),
+          table: ({ children }) => (
+            <div style={{ overflowX: 'auto', maxWidth: '100%', marginTop: 8, marginBottom: 8 }}>
+              <table style={{
+                width: '100%',
+                borderCollapse: 'collapse',
+                fontSize: compact ? 12 : 13,
+                fontFamily: "'JetBrains Mono', monospace",
+              }}>
+                {children}
+              </table>
+            </div>
+          ),
+          thead: ({ children }) => (
+            <thead style={{ borderBottom: '1px solid rgba(138, 92, 246, 0.3)' }}>
+              {children}
+            </thead>
+          ),
+          th: ({ children }) => (
+            <th style={{
+              padding: '6px 10px',
+              textAlign: 'left',
+              color: '#f0c674',
+              fontWeight: 600,
+              fontSize: compact ? 11 : 12,
+              whiteSpace: 'nowrap',
+            }}>
+              {wrapChildren(children)}
+            </th>
+          ),
+          td: ({ children }) => (
+            <td style={{
+              padding: '5px 10px',
+              color: '#d0d0e0',
+              borderBottom: '1px solid rgba(255,255,255,0.04)',
+            }}>
+              {wrapChildren(children)}
+            </td>
+          ),
           a: ({ href, children }) => (
             <a
               href={href}

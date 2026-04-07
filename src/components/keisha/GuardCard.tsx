@@ -18,7 +18,7 @@ const containerBase: React.CSSProperties = {
   padding: 16,
   marginTop: 12,
   marginBottom: 4,
-  maxWidth: 480,
+  maxWidth: '100%',
   transition: 'transform 150ms ease, box-shadow 150ms ease',
   animation: 'guardCardIn 200ms ease forwards',
 };

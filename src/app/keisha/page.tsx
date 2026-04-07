@@ -1390,6 +1390,9 @@ export default function KeishaPage() {
                     color: msg.role === 'user' ? '#08080d' : '#e8e8e8',
                     fontSize: 14, lineHeight: 1.6,
                     border: msg.role === 'user' ? 'none' : '1px solid #2a2a3a',
+                    overflowX: 'hidden' as const,
+                    overflowWrap: 'break-word' as const,
+                    wordBreak: 'break-word' as const,
                     ...(msg.role === 'user' ? { whiteSpace: 'pre-wrap' as const } : {}),
                   }}
                 >

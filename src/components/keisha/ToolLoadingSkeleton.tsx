@@ -57,7 +57,7 @@ export default function ToolLoadingSkeleton() {
       border: '1px solid rgba(138,92,246,0.1)',
       borderLeft: '4px solid rgba(138,92,246,0.3)',
       borderRadius: 12,
-      maxWidth: 480,
+      maxWidth: '100%',
       animation: 'toolPulse 2s ease-in-out infinite',
     }}>
       {/* Header shimmer */}
