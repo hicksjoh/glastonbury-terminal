@@ -9,11 +9,11 @@ export interface KeishaSettings {
   explanationLevel?: ExplanationLevel;
 }
 
-export type CardType = 'trade' | 'portfolio' | 'options' | 'guard' | 'alert' | 'signal';
+export type CardType = 'trade' | 'portfolio' | 'options' | 'guard' | 'gex' | 'alert' | 'signal';
 
 export interface RenderCard {
   type: CardType;
-  data: TradeCardData | PortfolioCardData | OptionsCardData | GuardCardData;
+  data: TradeCardData | PortfolioCardData | OptionsCardData | GuardCardData | GEXCardData;
 }
 
 export interface TradeCardData {
@@ -76,4 +76,20 @@ export interface GuardCardData {
     concentrationPct: string;
     warning: string | null;
   };
+}
+
+export interface GEXCardData {
+  symbol: string;
+  spotPrice: number;
+  netGEX: number;
+  regime: 'positive' | 'negative';
+  impact: string;
+  levels: {
+    putWall: number;
+    callWall: number;
+    hvl: number;
+    gammaFlip: number;
+    pinStrikes: number[];
+  };
+  dataSource: string;
 }

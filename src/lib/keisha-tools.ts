@@ -1,8 +1,9 @@
 import type { Tool } from '@anthropic-ai/sdk/resources/messages';
 import { createServiceClient } from '@/lib/supabase';
 import { sanitizeSymbol } from '@/lib/sanitize';
-import type { RenderCard, TradeCardData, PortfolioCardData, OptionsCardData, GuardCardData } from '@/types/keisha';
+import type { RenderCard, TradeCardData, PortfolioCardData, OptionsCardData, GuardCardData, GEXCardData } from '@/types/keisha';
 import { runTradeGuard } from '@/lib/trade-guard-engine';
+import { runGEXAnalysis } from '@/lib/gex-engine';
 
 // =============================================================================
 //  Keisha Native Tool Definitions -- replaces XML tag parsing
@@ -174,6 +175,17 @@ export const KEISHA_TOOLS: Tool[] = [
         price: { type: 'number', description: 'Current or target price per share (0 to auto-fetch)' },
       },
       required: ['symbol', 'side', 'quantity'],
+    },
+  },
+  {
+    name: 'check_gex',
+    description: 'Check gamma exposure (GEX) levels and volatility regime for a symbol. Shows put wall, call wall, gamma flip point, high-volume level, net GEX, and whether dealers are suppressing or amplifying volatility. Use when Wes asks about GEX, gamma, dealer positioning, volatility expectations, or when analyzing options strategies.',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        symbol: { type: 'string', description: 'Stock or ETF ticker symbol (e.g., SPY, AAPL, QQQ)' },
+      },
+      required: ['symbol'],
     },
   },
   {
@@ -863,6 +875,14 @@ export async function executeToolCall(
         return { result: guardResult, success: true };
       }
 
+      case 'check_gex': {
+        const symbol = sanitizeSymbol(String(toolInput.symbol || 'SPY'));
+        if (!symbol) return { result: { error: 'Missing symbol' }, success: false };
+
+        const gexResult = await runGEXAnalysis(symbol);
+        return { result: gexResult, success: true };
+      }
+
       case 'pin_memory': {
         const content = String(toolInput.content || '').trim();
         if (!content) return { result: { error: 'Missing content' }, success: false };
@@ -1043,6 +1063,28 @@ export function buildRenderCard(
             ? Number(contract.strike) + premium
             : Number(contract.strike) - premium,
         } as OptionsCardData,
+      };
+    }
+
+    case 'check_gex': {
+      if (!r.regime) return null;
+      return {
+        type: 'gex',
+        data: {
+          symbol: String(r.symbol || toolInput.symbol || 'SPY'),
+          spotPrice: Number(r.spotPrice || 0),
+          netGEX: Number(r.netGEX || 0),
+          regime: String(r.regime) as 'positive' | 'negative',
+          impact: String(r.impact || ''),
+          levels: {
+            putWall: Number((r.levels as Record<string, unknown>)?.putWall || 0),
+            callWall: Number((r.levels as Record<string, unknown>)?.callWall || 0),
+            hvl: Number((r.levels as Record<string, unknown>)?.hvl || 0),
+            gammaFlip: Number((r.levels as Record<string, unknown>)?.gammaFlip || 0),
+            pinStrikes: ((r.levels as Record<string, unknown>)?.pinStrikes as number[]) || [],
+          },
+          dataSource: String(r.dataSource || 'synthetic'),
+        } as GEXCardData,
       };
     }
 
