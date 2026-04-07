@@ -6,6 +6,10 @@ import { AppShell } from '@/components/layout/AppShell';
 import { ErrorBoundary } from '@/components/ErrorBoundary';
 import Image from 'next/image';
 import MarkdownRenderer from '@/components/MarkdownRenderer';
+import { MarketNarrative } from '@/components/dashboard/MarketNarrative';
+import { MorningBriefing } from '@/components/dashboard/MorningBriefing';
+import { getRegimeUIConfig, mapApiRegime } from '@/lib/ui-regime-adapter';
+import type { RegimeUIConfig } from '@/lib/ui-regime-adapter';
 // NOTE: MOCK_AUDIT_LOG and PORTFOLIO_SUMMARY removed — dashboard uses live data only
 import { formatCurrency, formatPL } from '@/lib/format';
 import { AuditLogEntry } from '@/types';
@@ -215,6 +219,9 @@ export default function DashboardPage() {
   const [strategyCount, setStrategyCount] = useState(0);
   const [strategyPaused, setStrategyPaused] = useState(0);
 
+  // Regime-aware UI
+  const [regimeConfig, setRegimeConfig] = useState<RegimeUIConfig | null>(null);
+
   // Dynamic insight chips
   const [insightChips, setInsightChips] = useState(INSIGHT_CHIPS);
 
@@ -388,10 +395,24 @@ export default function DashboardPage() {
     setBriefingLoading(false);
   }, []);
 
+  // Fetch regime config
+  const fetchRegime = useCallback(async () => {
+    try {
+      const res = await fetch('/api/regime', { signal: AbortSignal.timeout(10000) });
+      if (res.ok) {
+        const data = await res.json();
+        if (data.regime) {
+          setRegimeConfig(getRegimeUIConfig(mapApiRegime(data.regime)));
+        }
+      }
+    } catch { /* silent */ }
+  }, []);
+
   useEffect(() => {
     fetchDashboardData();
     fetchBriefing();
-  }, [fetchDashboardData, fetchBriefing]);
+    fetchRegime();
+  }, [fetchDashboardData, fetchBriefing, fetchRegime]);
 
   // Update briefing relative timestamp every 30s
   useEffect(() => {
@@ -521,6 +542,56 @@ export default function DashboardPage() {
                   {alert.message.slice(0, 120)}{alert.message.length > 120 ? '...' : ''}
                 </div>
               </div>
+            ))}
+          </div>
+        )}
+
+        {/* ═══ Morning Briefing ═══ */}
+        <ErrorBoundary label="morning-briefing">
+          <MorningBriefing />
+        </ErrorBoundary>
+
+        {/* ═══ Regime Warning Banner ═══ */}
+        {regimeConfig?.warningMessage && (
+          <div style={{
+            padding: '10px 16px', marginBottom: 12, borderRadius: 10,
+            background: 'rgba(251,191,36,0.06)', border: '1px solid rgba(251,191,36,0.2)',
+            display: 'flex', alignItems: 'center', gap: 10, fontSize: 13, color: '#fbbf24',
+          }}>
+            <span style={{ fontSize: 16 }}>&#9888;</span>
+            <span>{regimeConfig.warningMessage}</span>
+            {regimeConfig.positionSizeMultiplier !== 1.0 && (
+              <span style={{
+                marginLeft: 'auto', fontSize: 11, padding: '2px 8px', borderRadius: 4,
+                background: 'rgba(251,191,36,0.1)', fontFamily: "'JetBrains Mono', monospace",
+              }}>
+                {regimeConfig.positionSizeMultiplier}x sizing
+              </span>
+            )}
+          </div>
+        )}
+
+        {/* ═══ Market Narrative ═══ */}
+        <ErrorBoundary label="market-narrative">
+          <div style={{ marginBottom: 20 }}>
+            <MarketNarrative />
+          </div>
+        </ErrorBoundary>
+
+        {/* ═══ Regime Strategies ═══ */}
+        {regimeConfig && regimeConfig.suggestedStrategies.length > 0 && (
+          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 16 }}>
+            <span style={{ fontSize: 10, color: '#666', textTransform: 'uppercase', fontWeight: 600, letterSpacing: '0.05em', alignSelf: 'center', marginRight: 4 }}>
+              Regime plays:
+            </span>
+            {regimeConfig.suggestedStrategies.map((s, i) => (
+              <span key={i} style={{
+                fontSize: 11, padding: '3px 10px', borderRadius: 6,
+                background: 'rgba(138,92,246,0.06)', border: '1px solid rgba(138,92,246,0.12)',
+                color: '#8a5cf6',
+              }}>
+                {s}
+              </span>
             ))}
           </div>
         )}

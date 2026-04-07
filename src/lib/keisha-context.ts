@@ -1,5 +1,6 @@
 import { createServiceClient } from '@/lib/supabase';
 import { buildMarketContext } from '@/lib/market-intel';
+import { getRegimeUIConfig, mapApiRegime, regimeContextString } from '@/lib/ui-regime-adapter';
 
 // ── Common words to exclude from symbol detection ────────────────────────────
 export const COMMON_WORDS = new Set([
@@ -924,6 +925,20 @@ export async function buildFullPortfolioContext(opts: {
   if (behavioralAlerts) contextParts.push(behavioralAlerts);
   if (personalityMode) contextParts.push(personalityMode);
   if (memoryPreamble) contextParts.push(memoryPreamble);
+
+  // Regime-aware UI config for Keisha
+  if (gexRes) {
+    try {
+      const regimeRes = await fetch(`${baseUrl}/api/regime`, { signal: AbortSignal.timeout(5000) }).catch(() => null);
+      if (regimeRes && 'ok' in regimeRes && regimeRes.ok) {
+        const regimeJson = await regimeRes.json();
+        if (regimeJson.regime) {
+          const uiConfig = getRegimeUIConfig(mapApiRegime(regimeJson.regime));
+          contextParts.push(`\nREGIME-AWARE TRADING GUIDANCE:\n${regimeContextString(uiConfig)}\nAdapt your suggestions to this regime. Mention the regime when relevant.`);
+        }
+      }
+    } catch { /* non-critical */ }
+  }
 
   // ── Memory Pins Auto-Load ────────────────────────────────────────────
   try {

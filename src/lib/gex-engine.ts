@@ -299,3 +299,74 @@ export function gexImpact(netGEX: number, spotPrice: number): string {
   }
   return 'Moderate negative gamma: dealer hedging adds fuel to directional moves. Elevated vol and trending conditions likely.';
 }
+
+// ─── Vanna & Charm ──────────────────────────────────────────────────────────
+
+/**
+ * Aggregate vanna exposure: sensitivity of delta to implied vol changes.
+ * Positive vanna = dealers get longer delta when vol rises.
+ */
+export function calculateVannaExposure(chain: OptionsChainItem[], spotPrice: number): number {
+  if (!chain.length || !spotPrice) return 0;
+  let totalVanna = 0;
+  for (const item of chain) {
+    const moneyness = spotPrice / item.strike;
+    // Approximate vanna as gamma * log(moneyness) / sigma
+    const sigma = 0.2;
+    const logM = Math.log(moneyness);
+    const callVanna = item.callOI * 100 * item.callGamma * (-logM / sigma) * spotPrice;
+    const putVanna = item.putOI * 100 * item.putGamma * (-logM / sigma) * spotPrice;
+    totalVanna += callVanna - putVanna;
+  }
+  return totalVanna;
+}
+
+/**
+ * Aggregate charm exposure: sensitivity of delta to time decay.
+ * Accelerates near expiration.
+ */
+export function calculateCharmExposure(chain: OptionsChainItem[], spotPrice: number): number {
+  if (!chain.length || !spotPrice) return 0;
+  let totalCharm = 0;
+  const now = Date.now();
+  for (const item of chain) {
+    const exp = new Date(item.expiration).getTime();
+    const dte = Math.max((exp - now) / (1000 * 60 * 60 * 24), 0.1);
+    // Charm accelerates as DTE shrinks
+    const charmFactor = 1 / (dte * Math.sqrt(dte));
+    const callCharm = item.callOI * 100 * item.callGamma * charmFactor * spotPrice * 0.01;
+    const putCharm = item.putOI * 100 * item.putGamma * charmFactor * spotPrice * 0.01;
+    totalCharm += callCharm - putCharm;
+  }
+  return totalCharm;
+}
+
+/**
+ * Detect regime transition between two GEX measurements.
+ */
+export function detectRegimeTransition(
+  currentGex: number,
+  prevGex: number,
+): 'flip_positive' | 'flip_negative' | null {
+  if (prevGex >= 0 && currentGex < 0) return 'flip_negative';
+  if (prevGex < 0 && currentGex >= 0) return 'flip_positive';
+  return null;
+}
+
+/**
+ * Interpolate the exact price where net GEX crosses zero.
+ */
+export function calculateGammaFlipLevel(gexByStrike: Array<{ strike: number; gex: number }>): number | null {
+  const sorted = [...gexByStrike].sort((a, b) => a.strike - b.strike);
+  for (let i = 1; i < sorted.length; i++) {
+    const prev = sorted[i - 1];
+    const curr = sorted[i];
+    if ((prev.gex > 0 && curr.gex <= 0) || (prev.gex <= 0 && curr.gex > 0)) {
+      // Linear interpolation
+      const range = curr.strike - prev.strike;
+      const ratio = Math.abs(prev.gex) / (Math.abs(prev.gex) + Math.abs(curr.gex));
+      return prev.strike + range * ratio;
+    }
+  }
+  return null;
+}

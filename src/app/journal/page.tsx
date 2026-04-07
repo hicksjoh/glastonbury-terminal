@@ -6,6 +6,7 @@ import { ErrorBoundary } from '@/components/ErrorBoundary';
 import { LoadingState } from '@/components/LoadingState';
 import { Plus, Filter, ChevronDown, ChevronUp, TrendingUp, TrendingDown, Target, Award, BarChart3, Download } from 'lucide-react';
 import { exportToCSV, exportToPDF } from '@/lib/export';
+import { TradeReplayCard } from '@/components/journal/TradeReplayCard';
 
 interface Trade {
   id: string;
@@ -441,6 +442,10 @@ export default function JournalPage() {
                                   </div>
                                 )}
                               </div>
+                              {/* AI Trade Replay */}
+                              {t.exit_price != null && (
+                                <TradeReplayCard tradeId={t.id} exitPrice={Number(t.exit_price)} />
+                              )}
                             </td>
                           </tr>
                         )}
