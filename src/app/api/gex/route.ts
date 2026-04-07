@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { calculateGEX, gexImpact, OptionsChainItem } from '@/lib/gex-engine';
+import { calculateGEX, gexImpact, OptionsChainItem, calculateVannaExposure, calculateCharmExposure, calculateGammaFlipLevel } from '@/lib/gex-engine';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -247,6 +247,14 @@ export async function GET(request: NextRequest) {
     const result = calculateGEX(chain, spotPrice);
     const impact = gexImpact(result.levels.netGEX, spotPrice);
 
+    // Vanna & Charm exposures
+    const vannaExposure = roundTo(calculateVannaExposure(chain, spotPrice), 2);
+    const charmExposure = roundTo(calculateCharmExposure(chain, spotPrice), 2);
+
+    // Precise gamma flip via linear interpolation
+    const gexArray = Array.from(result.byStrike.entries()).map(([strike, gex]) => ({ strike, gex }));
+    const preciseFlip = calculateGammaFlipLevel(gexArray);
+
     // Convert byStrike Map to array for JSON serialization
     const byStrike = Array.from(result.byStrike.entries())
       .map(([strike, gex]) => ({ strike, gex: roundTo(gex, 2) }))
@@ -274,8 +282,11 @@ export async function GET(request: NextRequest) {
         callWall: result.levels.callWall,
         hvl: result.levels.hvl,
         gammaFlip: result.levels.gammaFlip,
+        gammaFlipPrecise: preciseFlip ? roundTo(preciseFlip, 2) : null,
         pinStrikes: result.levels.pinStrikes,
       },
+      vannaExposure,
+      charmExposure,
       impact,
       byStrike,
       expirationBreakdown,

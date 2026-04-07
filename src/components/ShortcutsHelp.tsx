@@ -24,6 +24,7 @@ const SHORTCUT_GROUPS = [
     title: 'Global',
     shortcuts: [
       { keys: 'Cmd K', label: 'Command Bar' },
+      { keys: 'Cmd B', label: 'Toggle Compact Sidebar' },
       { keys: '?', label: 'Show Shortcuts' },
       { keys: 'Esc', label: 'Close Modals' },
     ],

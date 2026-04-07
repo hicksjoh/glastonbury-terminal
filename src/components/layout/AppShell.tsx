@@ -1,5 +1,5 @@
 'use client';
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import dynamic from 'next/dynamic';
 import { Sidebar } from './Sidebar';
 import { NotificationBell } from '@/components/NotificationBell';
@@ -9,11 +9,23 @@ import { useKeyboardShortcuts } from '@/hooks/useKeyboardShortcuts';
 
 const MarketTickerBar = dynamic(() => import('@/components/MarketTickerBar'), { ssr: false });
 
+const SIDEBAR_FULL = 220;
+const SIDEBAR_COMPACT = 52;
+
 export function AppShell({ children }: { children: React.ReactNode }) {
   useKeyboardShortcuts();
 
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [isMobile, setIsMobile] = useState(false);
+  const [compact, setCompact] = useState(false);
+
+  // Load compact preference
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem('sidebar-compact');
+      if (saved === 'true') setCompact(true);
+    } catch { /* ignore */ }
+  }, []);
 
   useEffect(() => {
     const check = () => setIsMobile(window.innerWidth < 1024);
@@ -21,6 +33,28 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     window.addEventListener('resize', check);
     return () => window.removeEventListener('resize', check);
   }, []);
+
+  // Cmd+B toggle compact mode
+  const toggleCompact = useCallback(() => {
+    setCompact(prev => {
+      const next = !prev;
+      try { localStorage.setItem('sidebar-compact', String(next)); } catch { /* ignore */ }
+      return next;
+    });
+  }, []);
+
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key === 'b') {
+        e.preventDefault();
+        if (!isMobile) toggleCompact();
+      }
+    };
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+  }, [isMobile, toggleCompact]);
+
+  const sidebarWidth = compact ? SIDEBAR_COMPACT : SIDEBAR_FULL;
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', minHeight: '100vh', backgroundColor: '#08080d' }}>
@@ -51,8 +85,8 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             }}
           />
         )}
-        <Sidebar isOpen={sidebarOpen} isMobile={isMobile} onClose={() => setSidebarOpen(false)} />
-        <main id="main-content" tabIndex={-1} role="main" style={{ flex: 1, marginLeft: isMobile ? 0 : 220, overflowY: 'auto' }}>
+        <Sidebar isOpen={sidebarOpen} isMobile={isMobile} onClose={() => setSidebarOpen(false)} compact={compact} onToggleCompact={toggleCompact} />
+        <main id="main-content" tabIndex={-1} role="main" style={{ flex: 1, marginLeft: isMobile ? 0 : sidebarWidth, overflowY: 'auto', transition: 'margin-left 200ms ease' }}>
           {/* Top bar with regime badge and notifications */}
           <div style={{
             display: 'flex', justifyContent: 'flex-end', alignItems: 'center', gap: 12,
