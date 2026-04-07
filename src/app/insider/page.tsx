@@ -2,6 +2,8 @@
 
 import { useState, useEffect } from 'react';
 import { AppShell } from '@/components/layout/AppShell';
+import { ErrorBoundary } from '@/components/ErrorBoundary';
+import { LoadingState } from '@/components/LoadingState';
 import { Users, ArrowUpRight, ArrowDownRight, AlertTriangle } from 'lucide-react';
 
 interface InsiderTrade {
@@ -46,6 +48,7 @@ export default function InsiderPage() {
 
   return (
     <AppShell>
+      <ErrorBoundary label="Insider">
       <div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 4 }}>
           <Users size={24} color="#c9a84c" />
@@ -83,7 +86,7 @@ export default function InsiderPage() {
           {/* Main Content */}
           <div>
             {loading ? (
-              <div style={{ textAlign: 'center', padding: 60, color: '#555' }}>Loading trades...</div>
+              <LoadingState />
             ) : tab === 'insider' ? (
               /* Insider Trades Table */
               <div style={{ background: 'rgba(255,255,255,0.02)', borderRadius: 12, border: '1px solid #1e1e35', overflow: 'hidden' }}>
@@ -221,6 +224,7 @@ export default function InsiderPage() {
           </div>
         </div>
       </div>
+      </ErrorBoundary>
     </AppShell>
   );
 }

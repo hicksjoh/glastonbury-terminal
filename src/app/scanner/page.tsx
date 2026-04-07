@@ -2,6 +2,8 @@
 
 import { useState, useEffect } from 'react';
 import { AppShell } from '@/components/layout/AppShell';
+import { ErrorBoundary } from '@/components/ErrorBoundary';
+import { LoadingState } from '@/components/LoadingState';
 import { Radar, RefreshCw, ChevronDown, ChevronUp, ExternalLink, Check, AlertTriangle } from 'lucide-react';
 
 interface Signal {
@@ -383,6 +385,7 @@ export default function ScannerPage() {
 
   return (
     <AppShell>
+      <ErrorBoundary label="Scanner">
       <div>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
@@ -427,7 +430,7 @@ export default function ScannerPage() {
         </div>
 
         {loading ? (
-          <div style={{ textAlign: 'center', padding: 80, color: '#555570' }}>Scanning for signals...</div>
+          <LoadingState />
         ) : preset === 'drift' ? (
           renderDriftCards()
         ) : preset === 'statarb' ? (
@@ -436,6 +439,7 @@ export default function ScannerPage() {
           renderSignalCards()
         )}
       </div>
+      </ErrorBoundary>
     </AppShell>
   );
 }

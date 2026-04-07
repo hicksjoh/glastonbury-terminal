@@ -6,7 +6,7 @@ import { AppShell } from '@/components/layout/AppShell';
 import { ErrorBoundary } from '@/components/ErrorBoundary';
 import Image from 'next/image';
 import MarkdownRenderer from '@/components/MarkdownRenderer';
-import { MOCK_AUDIT_LOG, PORTFOLIO_SUMMARY } from '@/lib/data';
+// NOTE: MOCK_AUDIT_LOG and PORTFOLIO_SUMMARY removed — dashboard uses live data only
 import { formatCurrency, formatPL } from '@/lib/format';
 import { AuditLogEntry } from '@/types';
 
@@ -166,17 +166,17 @@ export default function DashboardPage() {
   const [loading, setLoading] = useState(true);
 
   // Portfolio / account
-  const [equity, setEquity] = useState(PORTFOLIO_SUMMARY.alpacaEquity);
+  const [equity, setEquity] = useState(0);
   const [cash, setCash] = useState(0);
   const [todayPL, setTodayPL] = useState(0);
   const [positions, setPositions] = useState<PositionData[]>([]);
   const [positionCount, setPositionCount] = useState(0);
   const [totalInvested, setTotalInvested] = useState(0);
 
-  // Net worth (fetched from /api/wealth)
-  const [cr3, setCr3] = useState(720000);
-  const [rsus, setRsus] = useState(82000);
-  const [miami, setMiami] = useState(580000);
+  // Net worth (fetched from /api/wealth — no hardcoded fallbacks)
+  const [cr3, setCr3] = useState(0);
+  const [rsus, setRsus] = useState(0);
+  const [miami, setMiami] = useState(0);
   const totalNetWorth = equity + cr3 + rsus + miami;
 
   // Briefing
@@ -203,8 +203,8 @@ export default function DashboardPage() {
     type: string; priority: string; title: string; message: string; symbol?: string; link?: string;
   }>>([]);
 
-  // Audit
-  const [auditLog, setAuditLog] = useState<AuditLogEntry[]>(MOCK_AUDIT_LOG);
+  // Audit (live data only — no mock fallback)
+  const [auditLog, setAuditLog] = useState<AuditLogEntry[]>([]);
 
   // Connection health (dynamic)
   const [connectionStatus, setConnectionStatus] = useState<Record<string, 'connected' | 'error' | 'checking'>>({
@@ -263,7 +263,7 @@ export default function DashboardPage() {
     }
 
     if (accountRes && !accountRes.error) {
-      const eq = parseFloat(accountRes.equity) || PORTFOLIO_SUMMARY.alpacaEquity;
+      const eq = parseFloat(accountRes.equity) || 0;
       const ca = parseFloat(accountRes.cash) || 0;
       const lastEq = parseFloat(accountRes.last_equity) || eq;
       setEquity(eq);

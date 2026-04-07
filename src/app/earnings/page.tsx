@@ -2,6 +2,8 @@
 
 import { useState, useEffect } from 'react';
 import { AppShell } from '@/components/layout/AppShell';
+import { ErrorBoundary } from '@/components/ErrorBoundary';
+import { LoadingState } from '@/components/LoadingState';
 import { CalendarDays, TrendingUp, Zap, ChevronRight } from 'lucide-react';
 
 interface EarningsEntry {
@@ -41,6 +43,7 @@ export default function EarningsPage() {
 
   return (
     <AppShell>
+      <ErrorBoundary label="Earnings">
       <div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 4 }}>
           <CalendarDays size={24} color="#c9a84c" />
@@ -65,7 +68,7 @@ export default function EarningsPage() {
         </div>
 
         {loading ? (
-          <div style={{ textAlign: 'center', padding: 80, color: '#555570' }}>Loading earnings calendar...</div>
+          <LoadingState />
         ) : !data ? (
           <div style={{ textAlign: 'center', padding: 80, color: '#555570' }}>Unable to load earnings data</div>
         ) : (
@@ -250,6 +253,7 @@ export default function EarningsPage() {
           </div>
         )}
       </div>
+      </ErrorBoundary>
     </AppShell>
   );
 }

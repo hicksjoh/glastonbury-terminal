@@ -1,6 +1,7 @@
 'use client';
 
 import { AppShell } from '@/components/layout/AppShell';
+import { ErrorBoundary } from '@/components/ErrorBoundary';
 import StrategyBuilder from '@/components/options/StrategyBuilder';
 import type { OptionLeg } from '@/lib/options/types';
 
@@ -36,6 +37,7 @@ export default function StrategyBuilderPage() {
   }
 
   return (
+    <ErrorBoundary label="StrategyBuilder">
     <AppShell>
       <div style={{ marginBottom: 24 }}>
         <h1 style={{ fontSize: 24, fontWeight: 700, color: '#e8e8e8', margin: 0 }}>Strategy Builder</h1>
@@ -45,5 +47,6 @@ export default function StrategyBuilderPage() {
       </div>
       <StrategyBuilder onPlaceOrder={handlePlaceOrder} />
     </AppShell>
+    </ErrorBoundary>
   );
 }

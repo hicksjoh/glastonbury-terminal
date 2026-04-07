@@ -2,6 +2,8 @@
 
 import { useState, useEffect } from 'react';
 import { AppShell } from '@/components/layout/AppShell';
+import { ErrorBoundary } from '@/components/ErrorBoundary';
+import { LoadingState } from '@/components/LoadingState';
 import { Shield, TrendingDown, Activity, AlertTriangle, DollarSign, BarChart3 } from 'lucide-react';
 
 interface RiskData {
@@ -146,6 +148,7 @@ export default function RiskPage() {
 
   return (
     <AppShell>
+      <ErrorBoundary label="Risk">
       <div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 4 }}>
           <Shield size={24} color="#c9a84c" />
@@ -171,7 +174,7 @@ export default function RiskPage() {
         {activeTab === 'analytics' && (
           <>
             {loading ? (
-              <div style={{ textAlign: 'center', padding: 80, color: '#666' }}>Calculating risk metrics...</div>
+              <LoadingState />
             ) : hasPositions === false ? (
               /* Empty state — no open positions */
               <>
@@ -532,9 +535,7 @@ export default function RiskPage() {
             </div>
 
             {mcLoading && (
-              <div style={{ textAlign: 'center', padding: 80, color: '#666' }}>
-                Running {mcSimulations.toLocaleString()} Monte Carlo simulations over {mcHorizon}-day horizon...
-              </div>
+              <LoadingState />
             )}
 
             {!mcLoading && !mcData && (
@@ -780,6 +781,7 @@ export default function RiskPage() {
           </>
         )}
       </div>
+      </ErrorBoundary>
     </AppShell>
   );
 }
@@ -805,7 +807,7 @@ function CorrelationSection({ symbols }: { symbols: string[] }) {
   }, [symbols]);
 
   if (corrLoading) {
-    return <div style={{ textAlign: 'center', padding: 40, color: '#555' }}>Computing enhanced correlation...</div>;
+    return <LoadingState />;
   }
   if (!corrData) return null;
 

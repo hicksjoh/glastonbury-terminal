@@ -2,6 +2,8 @@
 
 import { useEffect, useState } from 'react';
 import { AppShell } from '@/components/layout/AppShell';
+import { ErrorBoundary } from '@/components/ErrorBoundary';
+import { LoadingState } from '@/components/LoadingState';
 import { ChevronLeft, ChevronRight, Check } from 'lucide-react';
 
 interface CalendarEvent {
@@ -108,6 +110,7 @@ export default function CalendarPage() {
 
   return (
     <AppShell>
+      <ErrorBoundary label="Calendar">
       <div>
         <h1 style={{ fontSize: 28, fontWeight: 700, color: '#fff', margin: '0 0 4px' }}>Financial Calendar</h1>
         <p style={{ color: '#8888a8', fontSize: 14, margin: '0 0 24px' }}>Multi-layer financial event tracking</p>
@@ -159,7 +162,7 @@ export default function CalendarPage() {
           </div>
         </div>
 
-        {loading && <div style={{ color: '#555570', fontSize: 12, marginBottom: 8 }}>Loading events...</div>}
+        {loading && <LoadingState />}
 
         {viewMode === 'month' ? (
           <>
@@ -273,6 +276,7 @@ export default function CalendarPage() {
           </div>
         )}
       </div>
+      </ErrorBoundary>
     </AppShell>
   );
 }

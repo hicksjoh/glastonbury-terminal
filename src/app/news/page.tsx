@@ -2,6 +2,8 @@
 
 import { useEffect, useState, useCallback, useMemo } from 'react';
 import { AppShell } from '@/components/layout/AppShell';
+import { ErrorBoundary } from '@/components/ErrorBoundary';
+import { LoadingState } from '@/components/LoadingState';
 import { TrendingUp } from 'lucide-react';
 
 interface NewsArticle {
@@ -195,6 +197,7 @@ export default function NewsPage() {
 
   return (
     <AppShell>
+      <ErrorBoundary label="News">
       <div style={{ display: 'flex', gap: 24 }}>
         {/* Main content */}
         <div style={{ flex: 1, minWidth: 0 }}>
@@ -655,6 +658,7 @@ export default function NewsPage() {
           .news-sidebar { display: block !important; }
         }
       `}</style>
+      </ErrorBoundary>
     </AppShell>
   );
 }

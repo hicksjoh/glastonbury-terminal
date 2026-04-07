@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createServiceClient } from '@/lib/supabase';
+import { rateLimit } from '@/lib/rate-limit';
 
 const ALPACA_BASE_URL = process.env.ALPACA_BASE_URL || 'https://paper-api.alpaca.markets';
 const ALPACA_HEADERS = {
@@ -374,6 +375,9 @@ async function handleHistory(): Promise<NextResponse> {
 // ── Route Handlers ─────────────────────────────────────────────────────────
 
 export async function POST(req: NextRequest) {
+  const { allowed } = rateLimit('autopilot', 15, 60000);
+  if (!allowed) return NextResponse.json({ error: 'Too many requests' }, { status: 429 });
+
   try {
     const body = await req.json();
     const { action } = body;

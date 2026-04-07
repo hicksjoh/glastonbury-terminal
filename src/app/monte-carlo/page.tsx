@@ -2,6 +2,7 @@
 import { useState, useEffect } from 'react';
 import dynamic from 'next/dynamic';
 import { AppShell } from '@/components/layout/AppShell';
+import { ErrorBoundary } from '@/components/ErrorBoundary';
 
 const MonteCarloChart = dynamic(() => import('./MonteCarloChart'), {
   loading: () => (
@@ -194,6 +195,7 @@ export default function MonteCarloPage() {
 
   return (
     <AppShell>
+      <ErrorBoundary label="MonteCarlo">
       <div style={{ marginBottom: 32 }}>
         <h1 style={{ fontSize: 24, fontWeight: 700, margin: 0 }}>Monte Carlo Modeler</h1>
         <p style={{ color: '#6b6b80', fontSize: 13, marginTop: 4 }}>
@@ -287,6 +289,7 @@ export default function MonteCarloPage() {
           ))}
         </div>
       </div>
+      </ErrorBoundary>
     </AppShell>
   );
 }

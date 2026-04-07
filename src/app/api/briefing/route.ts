@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { generateBriefing } from '@/lib/claude';
 import { createServiceClient } from '@/lib/supabase';
 import { buildMarketContext } from '@/lib/market-intel';
+import { rateLimit } from '@/lib/rate-limit';
 
 async function getBriefingContext(): Promise<string> {
   const parts: string[] = [];
@@ -155,6 +156,9 @@ async function getBriefingContext(): Promise<string> {
 }
 
 export async function GET() {
+  const { allowed } = rateLimit('briefing', 5, 60000);
+  if (!allowed) return NextResponse.json({ error: 'Too many requests' }, { status: 429 });
+
   try {
     const context = await getBriefingContext();
     const briefing = await generateBriefing(context);

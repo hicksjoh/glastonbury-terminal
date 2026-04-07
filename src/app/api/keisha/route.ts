@@ -4,7 +4,6 @@ import { rateLimit } from '@/lib/rate-limit';
 import { sanitizeInput } from '@/lib/sanitize';
 import {
   buildFullPortfolioContext,
-  detectTradeIntent,
   logRecommendation,
   logConversation,
 } from '@/lib/keisha-context';
@@ -17,6 +16,45 @@ import {
 import type { MessageParam, TextBlockParam, ToolUseBlockParam, ToolResultBlockParam } from '@anthropic-ai/sdk/resources/messages';
 
 // ═════════════════════════════════════════════════════════════════════════════
+//  Settings → System Prompt Helpers
+// ═════════════════════════════════════════════════════════════════════════════
+
+function getRiskLabel(value: number): string {
+  if (value <= 33) return 'Conservative';
+  if (value <= 66) return 'Moderate';
+  return 'Aggressive';
+}
+
+function getRiskDescription(value: number): string {
+  if (value <= 33) return 'prioritize capital preservation, smaller positions, wide stops';
+  if (value <= 66) return 'balanced risk/reward, standard position sizing';
+  return 'willing to take bigger positions, tighter stops, higher conviction plays';
+}
+
+function getCommStyleInstruction(style: string): string {
+  if (style === 'brief') return 'Keep responses concise (under 150 words). Skip preambles. Lead with the answer.';
+  return 'Give thorough analysis with supporting data, scenarios, and reasoning.';
+}
+
+function buildPreferencesBlock(settings?: { riskTolerance?: number; commStyle?: string; paperMode?: boolean }): string {
+  const risk = settings?.riskTolerance ?? 50;
+  const style = settings?.commStyle ?? 'detailed';
+  const paper = settings?.paperMode ?? true;
+
+  const riskLabel = getRiskLabel(risk);
+  const riskDesc = getRiskDescription(risk);
+  const commInstruction = getCommStyleInstruction(style);
+  const modeLabel = paper ? 'paper' : 'live';
+  const modeWarning = paper ? '' : ' — LIVE TRADING ENABLED. Double-confirm all orders with Wes before execution.';
+
+  return `
+USER PREFERENCES:
+- Risk Tolerance: ${riskLabel} (${risk}/100) — ${riskDesc}
+- Communication Style: ${style} — ${commInstruction}
+- Trading Mode: ${modeLabel}${modeWarning}`;
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
 //  POST Handler — Keisha Supreme (Tool Use + Agentic Loop)
 // ═════════════════════════════════════════════════════════════════════════════
 
@@ -25,7 +63,7 @@ export async function POST(req: NextRequest) {
   if (!allowed) return NextResponse.json({ error: 'Too many requests' }, { status: 429 });
 
   try {
-    const { messages, domain, conversationId } = await req.json();
+    const { messages, domain, conversationId, settings, image } = await req.json();
     const userMessage = sanitizeInput(messages[messages.length - 1]?.content || '');
 
     // ── Build context using shared module with smart pruning ──────────
@@ -55,7 +93,7 @@ TOOL USAGE RULES:
 - Chain multiple lookups when comparing stocks or building a thesis
 - Always call suggest_followups at the END of your response with 3 relevant follow-up questions
 - For orders (place_order), ONLY use the tool when Wes explicitly asks to buy or sell
-- For non-destructive tools (lookups, watchlist, alerts), execute immediately when relevant`;
+- For non-destructive tools (lookups, watchlist, alerts), execute immediately when relevant${buildPreferencesBlock(settings)}`;
 
     // ── Build conversation history ─────────────────────────────────────
     const conversationHistory: MessageParam[] = messages.map(
@@ -64,6 +102,17 @@ TOOL USAGE RULES:
         content: m.content,
       }),
     );
+
+    // ── Vision / Image Upload ─────────────────────────────────────────
+    if (image) {
+      const lastMsg = conversationHistory[conversationHistory.length - 1];
+      if (lastMsg && lastMsg.role === 'user') {
+        lastMsg.content = [
+          { type: 'image', source: { type: 'base64', media_type: image.mediaType, data: image.base64 } },
+          { type: 'text', text: typeof lastMsg.content === 'string' ? lastMsg.content : '' },
+        ] as any;
+      }
+    }
 
     // ── Agentic Loop — iterate until Claude gives a final text response ─
     let currentMessages = [...conversationHistory];
@@ -152,10 +201,6 @@ TOOL USAGE RULES:
       // If stop_reason was end_turn (text + tools in same response), break after processing
       if (response.stop_reason === 'end_turn') break;
     }
-
-    // ── Post-processing: trade intent detection ────────────────────────
-    const tradeCard = await detectTradeIntent(finalText);
-    if (tradeCard) finalText += tradeCard;
 
     // ── Background logging ─────────────────────────────────────────────
     logRecommendation(supabase, finalText).catch(() => {});

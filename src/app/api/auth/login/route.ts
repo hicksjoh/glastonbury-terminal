@@ -19,7 +19,10 @@ export async function POST(req: NextRequest) {
 
   try {
     const { password } = await req.json();
-    const APP_PASSWORD = process.env.APP_PASSWORD || 'glastonbury2026';
+    const APP_PASSWORD = process.env.APP_PASSWORD;
+    if (!APP_PASSWORD) {
+      return NextResponse.json({ error: 'Server misconfigured' }, { status: 500 });
+    }
 
     if (typeof password === 'string' && safeCompare(password, APP_PASSWORD)) {
       const token = hashToken(APP_PASSWORD);

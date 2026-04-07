@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import { AppShell } from '@/components/layout/AppShell';
+import { ErrorBoundary } from '@/components/ErrorBoundary';
 import { Plus, Trash2, Search, Bookmark } from 'lucide-react';
 
 interface ScreenerFilter {
@@ -152,6 +153,7 @@ export default function ScreenerPage() {
 
   return (
     <AppShell>
+      <ErrorBoundary label="Screener">
       <div>
         <h1 style={{ fontSize: 28, fontWeight: 700, color: '#fff', margin: '0 0 4px' }}>Stock Screener</h1>
         <p style={{ color: '#888', fontSize: 14, margin: '0 0 24px' }}>Build custom screens with compound filters</p>
@@ -306,6 +308,7 @@ export default function ScreenerPage() {
           </div>
         )}
       </div>
+      </ErrorBoundary>
     </AppShell>
   );
 }

@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import { AppShell } from '@/components/layout/AppShell';
+import { ErrorBoundary } from '@/components/ErrorBoundary';
 import { TrendingUp, ChevronDown, ChevronRight, Loader2 } from 'lucide-react';
 
 interface FactorWeights {
@@ -176,6 +177,7 @@ export default function DriftPage() {
 
   return (
     <AppShell>
+      <ErrorBoundary label="Drift">
       <style>{`
         @keyframes shimmer {
           0% { background-position: 200% 0; }
@@ -584,6 +586,7 @@ export default function DriftPage() {
           )}
         </div>
       </div>
+      </ErrorBoundary>
     </AppShell>
   );
 }

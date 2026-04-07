@@ -3,6 +3,8 @@
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { AppShell } from '@/components/layout/AppShell';
+import { ErrorBoundary } from '@/components/ErrorBoundary';
+import { LoadingState } from '@/components/LoadingState';
 
 interface ScreenerResult {
   symbol: string;
@@ -85,6 +87,7 @@ export default function ScreenerPage() {
   };
 
   return (
+    <ErrorBoundary label="OptionsScreener">
     <AppShell>
       <div style={{ marginBottom: 24 }}>
         <h1 style={{ fontSize: 24, fontWeight: 700, color: '#e8e8e8', margin: 0 }}>Options Screener</h1>
@@ -156,9 +159,7 @@ export default function ScreenerPage() {
 
       {/* Results Table */}
       {loading ? (
-        <div className="terminal-card" style={{ textAlign: 'center', padding: 60, color: '#6b6b80' }}>
-          Scanning options across {activeScan === 'custom' ? 'your filters' : activeScan.replace('_', ' ')}...
-        </div>
+        <LoadingState variant="table" rows={6} cols={8} />
       ) : results.length > 0 ? (
         <div className="terminal-card">
           <div style={{ overflowX: 'auto' }}>
@@ -223,6 +224,7 @@ export default function ScreenerPage() {
         </div>
       )}
     </AppShell>
+    </ErrorBoundary>
   );
 }
 

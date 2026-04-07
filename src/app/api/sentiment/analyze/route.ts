@@ -1,8 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { rateLimit } from '@/lib/rate-limit';
 
 const ANTHROPIC_KEY = process.env.ANTHROPIC_API_KEY;
 
 export async function POST(req: NextRequest) {
+  const { allowed } = rateLimit('sentiment-analyze', 10, 60000);
+  if (!allowed) return NextResponse.json({ error: 'Too many requests' }, { status: 429 });
+
   try {
     if (!ANTHROPIC_KEY) {
       return NextResponse.json({ error: 'ANTHROPIC_API_KEY not configured' }, { status: 500 });

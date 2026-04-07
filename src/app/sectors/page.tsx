@@ -2,6 +2,8 @@
 
 import { useEffect, useState } from 'react';
 import { AppShell } from '@/components/layout/AppShell';
+import { ErrorBoundary } from '@/components/ErrorBoundary';
+import { LoadingState } from '@/components/LoadingState';
 import { ChevronDown, ChevronUp, X, LayoutGrid, BarChart3 } from 'lucide-react';
 
 interface SectorData {
@@ -87,6 +89,7 @@ export default function SectorsPage() {
 
   return (
     <AppShell>
+      <ErrorBoundary label="Sectors">
       <div>
         <h1 style={{ fontSize: 28, fontWeight: 700, color: '#fff', margin: '0 0 4px' }}>Sector Performance</h1>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', margin: '0 0 24px' }}>
@@ -104,7 +107,7 @@ export default function SectorsPage() {
         </div>
 
         {loading ? (
-          <div style={{ textAlign: 'center', padding: 60, color: '#666' }}>Loading sectors...</div>
+          <LoadingState />
         ) : (
           <>
             {noApiKey && (
@@ -194,7 +197,7 @@ export default function SectorsPage() {
                   </button>
                 </div>
                 {loadingStocks ? (
-                  <div style={{ padding: 32, textAlign: 'center', color: '#666', fontSize: 13 }}>Loading top movers...</div>
+                  <LoadingState />
                 ) : filteredStocks.length > 0 ? (
                   <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                     <thead>
@@ -245,6 +248,7 @@ export default function SectorsPage() {
           </>
         )}
       </div>
+      </ErrorBoundary>
     </AppShell>
   );
 }

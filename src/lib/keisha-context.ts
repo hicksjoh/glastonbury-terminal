@@ -925,6 +925,70 @@ export async function buildFullPortfolioContext(opts: {
   if (personalityMode) contextParts.push(personalityMode);
   if (memoryPreamble) contextParts.push(memoryPreamble);
 
+  // ── Memory Pins Auto-Load ────────────────────────────────────────────
+  try {
+    const pinSymbols = extractSymbols(userMessage);
+    const domainCategory = domain || null;
+
+    // Build query: matching symbols OR matching domain category OR most recent general pins
+    let allPins: any[] = [];
+
+    // Fetch pins matching mentioned symbols
+    if (pinSymbols.length > 0) {
+      const { data: symbolPins } = await supabase
+        .from('keisha_memory_pins')
+        .select('content, category, symbol, created_at')
+        .eq('active', true)
+        .in('symbol', pinSymbols)
+        .order('created_at', { ascending: false })
+        .limit(10);
+      if (symbolPins) allPins.push(...symbolPins);
+    }
+
+    // Fetch pins matching the current domain category
+    if (domainCategory) {
+      const { data: domainPins } = await supabase
+        .from('keisha_memory_pins')
+        .select('content, category, symbol, created_at')
+        .eq('active', true)
+        .eq('category', domainCategory)
+        .order('created_at', { ascending: false })
+        .limit(5);
+      if (domainPins) allPins.push(...domainPins);
+    }
+
+    // Fetch most recent general pins (no symbol filter)
+    const { data: recentPins } = await supabase
+      .from('keisha_memory_pins')
+      .select('content, category, symbol, created_at')
+      .eq('active', true)
+      .order('created_at', { ascending: false })
+      .limit(5);
+    if (recentPins) allPins.push(...recentPins);
+
+    // Deduplicate by content and limit to 10
+    const seenContent = new Set<string>();
+    const uniquePins: any[] = [];
+    for (const pin of allPins) {
+      if (!seenContent.has(pin.content) && uniquePins.length < 10) {
+        seenContent.add(pin.content);
+        uniquePins.push(pin);
+      }
+    }
+
+    if (uniquePins.length > 0) {
+      const formattedPins = uniquePins.map((pin: any) => {
+        const date = new Date(pin.created_at).toISOString().split('T')[0];
+        const cat = pin.category ? `(${pin.category})` : '(general)';
+        return `- [${date}] ${cat} ${pin.content}`;
+      }).join('\n');
+
+      contextParts.push(`\nMEMORY PINS (Wes's saved notes):\n${formattedPins}`);
+    }
+  } catch {
+    // Non-critical — memory pins are supplemental context
+  }
+
   const portfolioContext = contextParts.join('\n');
 
   return { portfolioContext, gexRegime, mentionedSymbols, supabase };

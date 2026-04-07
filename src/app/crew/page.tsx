@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import { AppShell } from '@/components/layout/AppShell';
+import { ErrorBoundary } from '@/components/ErrorBoundary';
 import { Users, Brain, Shield, Zap, Trash2 } from 'lucide-react';
 
 interface CrewResponse {
@@ -192,6 +193,7 @@ export default function CrewPage() {
 
   return (
     <AppShell>
+      <ErrorBoundary label="Crew">
       <style>{`
         @keyframes pulse {
           0%, 100% { opacity: 1; transform: scale(1); }
@@ -555,6 +557,7 @@ export default function CrewPage() {
           </div>
         )}
       </div>
+      </ErrorBoundary>
     </AppShell>
   );
 }

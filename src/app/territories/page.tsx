@@ -2,6 +2,8 @@
 
 import { useEffect, useState } from 'react';
 import { AppShell } from '@/components/layout/AppShell';
+import { ErrorBoundary } from '@/components/ErrorBoundary';
+import { LoadingState } from '@/components/LoadingState';
 import { MapPin, Building2, DollarSign, ArrowUpDown } from 'lucide-react';
 
 interface Territory {
@@ -93,6 +95,7 @@ export default function TerritoriesPage() {
   ];
 
   return (
+    <ErrorBoundary label="Territories">
     <AppShell>
       <div>
         <h1 style={{ fontSize: 28, fontWeight: 700, color: '#fff', margin: '0 0 4px' }}>Territory Command</h1>
@@ -168,7 +171,7 @@ export default function TerritoriesPage() {
 
         {/* Territory Table */}
         {loading ? (
-          <div style={{ textAlign: 'center', padding: 60, color: '#555570' }}>Loading territories...</div>
+          <LoadingState variant="table" rows={8} cols={8} />
         ) : (
           <div style={{ background: 'rgba(255,255,255,0.02)', borderRadius: 12, border: '1px solid #1e1e35', overflow: 'hidden' }}>
             <table style={{ width: '100%', borderCollapse: 'collapse' }}>
@@ -300,5 +303,6 @@ export default function TerritoriesPage() {
         )}
       </div>
     </AppShell>
+    </ErrorBoundary>
   );
 }

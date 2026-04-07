@@ -3,6 +3,8 @@
 import { useEffect, useState, useRef, useCallback } from 'react';
 import { useParams } from 'next/navigation';
 import { AppShell } from '@/components/layout/AppShell';
+import { ErrorBoundary } from '@/components/ErrorBoundary';
+import { LoadingState } from '@/components/LoadingState';
 
 interface StockData {
   profile: {
@@ -197,7 +199,7 @@ export default function StockDetailPage() {
   if (loading) {
     return (
       <AppShell>
-        <div style={{ textAlign: 'center', padding: 100, color: '#666' }}>Loading {symbol}...</div>
+        <LoadingState variant="mixed" rows={4} cols={4} />
       </AppShell>
     );
   }
@@ -239,6 +241,7 @@ export default function StockDetailPage() {
   ];
 
   return (
+    <ErrorBoundary label="StockDetail">
     <AppShell>
       <div style={{ maxWidth: 1100, margin: '0 auto' }}>
         {/* Header */}
@@ -423,5 +426,6 @@ export default function StockDetailPage() {
         )}
       </div>
     </AppShell>
+    </ErrorBoundary>
   );
 }

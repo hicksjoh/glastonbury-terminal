@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import { AppShell } from '@/components/layout/AppShell';
+import { ErrorBoundary } from '@/components/ErrorBoundary';
 import { GitCompare, Search, Loader2, ChevronDown, ChevronUp, Activity, TrendingUp, TrendingDown, Target } from 'lucide-react';
 
 /* ── types ─────────────────────────────────────────────────────── */
@@ -343,6 +344,7 @@ export default function PairsPage() {
 
   return (
     <AppShell>
+      <ErrorBoundary label="Pairs">
       <div style={{ maxWidth: 1100 }}>
         {/* header */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 4 }}>
@@ -509,6 +511,7 @@ export default function PairsPage() {
           </table>
         </div>
       </div>
+      </ErrorBoundary>
     </AppShell>
   );
 }

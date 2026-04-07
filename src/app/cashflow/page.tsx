@@ -2,6 +2,8 @@
 
 import { useEffect, useState } from 'react';
 import { AppShell } from '@/components/layout/AppShell';
+import { ErrorBoundary } from '@/components/ErrorBoundary';
+import { LoadingState } from '@/components/LoadingState';
 import { AlertTriangle, TrendingUp, TrendingDown, Wallet, Clock, Download } from 'lucide-react';
 import { exportToCSV } from '@/lib/export';
 
@@ -64,6 +66,7 @@ export default function CashflowPage() {
 
   return (
     <AppShell>
+      <ErrorBoundary label="Cashflow">
       <div>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 28 }}>
           <div>
@@ -92,7 +95,7 @@ export default function CashflowPage() {
         </div>
 
         {loading ? (
-          <div style={{ textAlign: 'center', padding: 80, color: '#555570' }}>Loading cash flow data...</div>
+          <LoadingState />
         ) : (
           <>
             {/* Warning Banner */}
@@ -250,6 +253,7 @@ export default function CashflowPage() {
           </>
         )}
       </div>
+      </ErrorBoundary>
     </AppShell>
   );
 }

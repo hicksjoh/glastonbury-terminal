@@ -2,6 +2,8 @@
 
 import { useEffect, useState } from 'react';
 import { AppShell } from '@/components/layout/AppShell';
+import { ErrorBoundary } from '@/components/ErrorBoundary';
+import { LoadingState } from '@/components/LoadingState';
 import { Receipt, AlertTriangle, TrendingDown, TrendingUp, Shield, Calculator, Download } from 'lucide-react';
 import { exportToCSV } from '@/lib/export';
 
@@ -43,6 +45,7 @@ export default function TaxPage() {
   const currentYear = new Date().getFullYear();
 
   return (
+    <ErrorBoundary label="Tax">
     <AppShell>
       <div>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 28 }}>
@@ -75,7 +78,7 @@ export default function TaxPage() {
         </div>
 
         {loading ? (
-          <div style={{ textAlign: 'center', padding: 80, color: '#555570' }}>Loading tax data...</div>
+          <LoadingState variant="mixed" rows={5} cols={5} />
         ) : (
           <>
             {/* Top Cards */}
@@ -222,5 +225,6 @@ export default function TaxPage() {
         )}
       </div>
     </AppShell>
+    </ErrorBoundary>
   );
 }

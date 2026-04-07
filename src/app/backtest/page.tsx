@@ -2,6 +2,7 @@
 
 import { useState, useCallback } from 'react';
 import { AppShell } from '@/components/layout/AppShell';
+import { ErrorBoundary } from '@/components/ErrorBoundary';
 import { Play, RotateCw, BarChart3, AlertTriangle } from 'lucide-react';
 
 // ── Types ──────────────────────────────────────────────────────────
@@ -115,6 +116,7 @@ export default function BacktestPage() {
 
   return (
     <AppShell>
+      <ErrorBoundary label="Backtest">
       <div>
         <h1 style={{ fontSize: 28, fontWeight: 700, color: '#fff', margin: '0 0 4px' }}>Strategy Backtester</h1>
         <p style={{ color: '#8888a8', fontSize: 14, margin: '0 0 28px' }}>Test strategies against real FMP historical data</p>
@@ -293,6 +295,7 @@ export default function BacktestPage() {
           </div>
         </div>
       </div>
+      </ErrorBoundary>
     </AppShell>
   );
 }

@@ -2,6 +2,8 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import { AppShell } from '@/components/layout/AppShell';
+import { ErrorBoundary } from '@/components/ErrorBoundary';
+import { LoadingState } from '@/components/LoadingState';
 import { useNotifications } from '@/contexts/NotificationProvider';
 import { Bell, Plus, Trash2, Zap, Eye, MessageSquare, Volume2, VolumeX } from 'lucide-react';
 
@@ -212,6 +214,7 @@ export default function AlertsPage() {
 
   return (
     <AppShell>
+      <ErrorBoundary label="Alerts">
       <div>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 24 }}>
           <div>
@@ -377,7 +380,7 @@ export default function AlertsPage() {
 
         {/* Alert List */}
         {loading ? (
-          <div style={{ textAlign: 'center', padding: 60, color: '#666' }}>Loading alerts...</div>
+          <LoadingState />
         ) : alerts.length === 0 ? (
           <div style={{ textAlign: 'center', padding: 60, color: '#555' }}>
             No alerts configured yet. Create one above or use a template.
@@ -465,6 +468,7 @@ export default function AlertsPage() {
           </>
         )}
       </div>
+      </ErrorBoundary>
     </AppShell>
   );
 }

@@ -45,7 +45,33 @@ export async function POST(req: NextRequest) {
     const supabase = createServiceClient();
     const body = await req.json();
 
-    const { data, error } = await supabase.from('trade_journal').insert(body).select().single();
+    // Validate required fields and sanitize input
+    const { ticker, entry_date, direction, entry_price, strategy, notes, pnl, exit_price, exit_date, keisha_agreed, keisha_signal } = body;
+    if (!ticker || typeof ticker !== 'string' || ticker.length > 10) {
+      return NextResponse.json({ success: false, error: 'Invalid or missing ticker' }, { status: 400 });
+    }
+    if (!entry_date || typeof entry_date !== 'string') {
+      return NextResponse.json({ success: false, error: 'Invalid or missing entry_date' }, { status: 400 });
+    }
+    if (!direction || !['long', 'short'].includes(direction)) {
+      return NextResponse.json({ success: false, error: 'direction must be "long" or "short"' }, { status: 400 });
+    }
+
+    const sanitizedEntry = {
+      ticker: ticker.toUpperCase().trim(),
+      entry_date,
+      direction,
+      entry_price: entry_price ? Number(entry_price) : null,
+      exit_price: exit_price ? Number(exit_price) : null,
+      exit_date: exit_date || null,
+      pnl: pnl ? Number(pnl) : null,
+      strategy: strategy ? String(strategy).slice(0, 100) : null,
+      notes: notes ? String(notes).slice(0, 5000) : null,
+      keisha_agreed: typeof keisha_agreed === 'boolean' ? keisha_agreed : null,
+      keisha_signal: keisha_signal ? String(keisha_signal).slice(0, 500) : null,
+    };
+
+    const { data, error } = await supabase.from('trade_journal').insert(sanitizedEntry).select().single();
     if (error) throw error;
 
     return NextResponse.json({ success: true, data });

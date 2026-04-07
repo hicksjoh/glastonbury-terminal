@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import { AppShell } from '@/components/layout/AppShell';
+import { ErrorBoundary } from '@/components/ErrorBoundary';
 import { Target } from 'lucide-react';
 
 interface OptimizeResult {
@@ -88,6 +89,7 @@ export default function OptimizerPage() {
 
   return (
     <AppShell>
+      <ErrorBoundary label="Optimizer">
       <div>
         {/* Header */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 4 }}>
@@ -459,6 +461,7 @@ export default function OptimizerPage() {
           </div>
         )}
       </div>
+      </ErrorBoundary>
     </AppShell>
   );
 }

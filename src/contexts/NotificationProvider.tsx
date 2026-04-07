@@ -191,28 +191,18 @@ export function NotificationProvider({ children }: { children: ReactNode }) {
   );
 }
 
+// Toast bridge — uses the React Toast system from Toast.tsx via a global ref
+// (replaces the old DOM injection approach which created un-managed elements)
+let _toastFn: ((t: { type: 'success' | 'error' | 'warning' | 'info'; message: string }) => void) | null = null;
+
+export function registerToastBridge(fn: typeof _toastFn) {
+  _toastFn = fn;
+}
+
 function showToast(n: Notification) {
-  // Create a toast element
-  if (typeof document === 'undefined') return;
-  const toast = document.createElement('div');
-  toast.style.cssText = `
-    position: fixed; top: 20px; right: 20px; z-index: 10000;
-    background: #1a1a24; border: 1px solid ${n.priority === 'P0' ? '#f87171' : '#f0c674'};
-    border-radius: 12px; padding: 16px 20px; max-width: 380px;
-    color: #e8e8f0; font-size: 13px; box-shadow: 0 8px 32px rgba(0,0,0,0.4);
-    animation: slideIn 0.3s ease; cursor: pointer;
-  `;
-  const titleDiv = document.createElement('div');
-  titleDiv.style.cssText = `font-weight:700;margin-bottom:4px;color:${n.priority === 'P0' ? '#f87171' : '#f0c674'}`;
-  titleDiv.textContent = n.title;
-
-  const bodyDiv = document.createElement('div');
-  bodyDiv.style.cssText = 'color:#8888a8';
-  bodyDiv.textContent = n.message || '';
-
-  toast.appendChild(titleDiv);
-  toast.appendChild(bodyDiv);
-  toast.onclick = () => toast.remove();
-  document.body.appendChild(toast);
-  setTimeout(() => toast.remove(), 6000);
+  const type = n.priority === 'P0' ? 'error' : n.priority === 'P1' ? 'warning' : 'info';
+  const message = `${n.title}${n.message ? ': ' + n.message : ''}`;
+  if (_toastFn) {
+    _toastFn({ type, message });
+  }
 }

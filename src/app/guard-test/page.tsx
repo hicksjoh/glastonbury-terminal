@@ -1,6 +1,7 @@
 'use client';
 import { useState } from 'react';
 import { AppShell } from '@/components/layout/AppShell';
+import { ErrorBoundary } from '@/components/ErrorBoundary';
 import TradeGuard from '@/components/TradeGuard';
 import { ShieldCheck, Beaker, Play } from 'lucide-react';
 
@@ -67,6 +68,7 @@ export default function GuardTestPage() {
   }
 
   return (
+    <ErrorBoundary label="GuardTest">
     <AppShell>
       {/* Header */}
       <div style={{ marginBottom: 24 }}>
@@ -189,5 +191,6 @@ export default function GuardTestPage() {
         </div>
       </div>
     </AppShell>
+    </ErrorBoundary>
   );
 }

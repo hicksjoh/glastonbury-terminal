@@ -8,6 +8,8 @@ import {
   getMarketLosers,
   getEarningsCalendar,
 } from '@/lib/market-intel';
+import { sendPushNotification } from '@/lib/web-push';
+import type { PushSubscriptionData } from '@/lib/web-push';
 
 // ─── Auth check ───────────────────────────────────────────
 function isAuthorized(req: NextRequest): boolean {
@@ -208,11 +210,48 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Failed to save briefing', details: error.message }, { status: 500 });
     }
 
+    // Send push notification with briefing summary
+    let pushSent = 0;
+    try {
+      const { data: subs } = await supabase
+        .from('push_subscriptions')
+        .select('endpoint, p256dh, auth');
+
+      if (subs && subs.length > 0) {
+        // Extract first line of briefing as summary
+        const firstLine = briefingContent.split('\n').find((l: string) => l.trim().length > 10) || 'Your morning briefing is ready';
+        const pushPayload = {
+          title: '🌅 Morning Briefing',
+          body: firstLine.replace(/[#*_]/g, '').trim().slice(0, 120),
+          icon: '/icons/icon-192x192.png',
+          url: '/keisha',
+        };
+
+        await Promise.all(
+          subs.map(async (sub: { endpoint: string; p256dh: string; auth: string }) => {
+            const subscription: PushSubscriptionData = {
+              endpoint: sub.endpoint,
+              keys: { p256dh: sub.p256dh, auth: sub.auth },
+            };
+            const ok = await sendPushNotification(subscription, pushPayload);
+            if (ok) pushSent++;
+            if (!ok) {
+              // Clean up expired subscriptions
+              await supabase.from('push_subscriptions').delete().eq('endpoint', sub.endpoint);
+            }
+          }),
+        );
+      }
+    } catch (pushErr) {
+      console.error('Push notification error:', pushErr);
+    }
+
     return NextResponse.json({
       success: true,
       briefing: briefingContent,
       id: data.id,
       created_at: data.created_at,
+      pushNotificationsSent: pushSent,
       context_summary: {
         positions_count: portfolio.positions.length,
         equity: portfolio.equity,

@@ -2,6 +2,8 @@
 
 import { useEffect, useState } from 'react';
 import { AppShell } from '@/components/layout/AppShell';
+import { ErrorBoundary } from '@/components/ErrorBoundary';
+import { LoadingState } from '@/components/LoadingState';
 import { Plus, Filter, ChevronDown, ChevronUp, TrendingUp, TrendingDown, Target, Award, BarChart3, Download } from 'lucide-react';
 import { exportToCSV, exportToPDF } from '@/lib/export';
 
@@ -94,6 +96,7 @@ export default function JournalPage() {
 
   return (
     <AppShell>
+      <ErrorBoundary label="Journal">
       <div>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 24 }}>
           <div>
@@ -178,7 +181,7 @@ export default function JournalPage() {
         {tab === 'analytics' ? (
           /* Analytics Tab */
           analyticsLoading ? (
-            <div style={{ textAlign: 'center', padding: 80, color: '#555' }}>Loading analytics...</div>
+            <LoadingState />
           ) : !analytics ? (
             <div style={{ textAlign: 'center', padding: 80, color: '#555' }}>No analytics data available. Add trades to your journal first.</div>
           ) : (
@@ -308,7 +311,7 @@ export default function JournalPage() {
             </>
           )
         ) : loading ? (
-          <div style={{ textAlign: 'center', padding: 80, color: '#555570' }}>Loading journal...</div>
+          <LoadingState />
         ) : (
           <>
             {/* Stats Row */}
@@ -450,6 +453,7 @@ export default function JournalPage() {
           </>
         )}
       </div>
+      </ErrorBoundary>
     </AppShell>
   );
 }

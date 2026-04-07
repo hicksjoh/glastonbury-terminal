@@ -4,7 +4,6 @@ import { rateLimit } from '@/lib/rate-limit';
 import { sanitizeInput } from '@/lib/sanitize';
 import {
   buildFullPortfolioContext,
-  detectTradeIntent,
   logRecommendation,
   logConversation,
 } from '@/lib/keisha-context';
@@ -15,6 +14,96 @@ import {
   executeToolCall,
 } from '@/lib/keisha-tools';
 import type { MessageParam, ToolResultBlockParam } from '@anthropic-ai/sdk/resources/messages';
+
+// ═════════════════════════════════════════════════════════════════════════════
+//  Settings → System Prompt Helpers
+// ═════════════════════════════════════════════════════════════════════════════
+
+function getRiskLabel(value: number): string {
+  if (value <= 33) return 'Conservative';
+  if (value <= 66) return 'Moderate';
+  return 'Aggressive';
+}
+
+function getRiskDescription(value: number): string {
+  if (value <= 33) return 'prioritize capital preservation, smaller positions, wide stops';
+  if (value <= 66) return 'balanced risk/reward, standard position sizing';
+  return 'willing to take bigger positions, tighter stops, higher conviction plays';
+}
+
+function getCommStyleInstruction(style: string): string {
+  if (style === 'brief') return 'Keep responses concise (under 150 words). Skip preambles. Lead with the answer.';
+  return 'Give thorough analysis with supporting data, scenarios, and reasoning.';
+}
+
+function buildPreferencesBlock(settings?: { riskTolerance?: number; commStyle?: string; paperMode?: boolean }): string {
+  const risk = settings?.riskTolerance ?? 50;
+  const style = settings?.commStyle ?? 'detailed';
+  const paper = settings?.paperMode ?? true;
+
+  const riskLabel = getRiskLabel(risk);
+  const riskDesc = getRiskDescription(risk);
+  const commInstruction = getCommStyleInstruction(style);
+  const modeLabel = paper ? 'paper' : 'live';
+  const modeWarning = paper ? '' : ' — LIVE TRADING ENABLED. Double-confirm all orders with Wes before execution.';
+
+  return `
+USER PREFERENCES:
+- Risk Tolerance: ${riskLabel} (${risk}/100) — ${riskDesc}
+- Communication Style: ${style} — ${commInstruction}
+- Trading Mode: ${modeLabel}${modeWarning}`;
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+//  Action Button Helpers
+// ═════════════════════════════════════════════════════════════════════════════
+
+function getActionButtons(
+  tool: string,
+  input: Record<string, unknown>,
+  result: unknown,
+): Array<{ label: string; action: string; params: Record<string, unknown> }> {
+  const sym = String(input.symbol || '');
+  switch (tool) {
+    case 'lookup_price':
+      return sym ? [
+        { label: `Add ${sym} to Watchlist`, action: 'add_watchlist', params: { symbol: sym } },
+        { label: `Set Alert for ${sym}`, action: 'set_alert', params: { symbol: sym } },
+        { label: `Options Chain for ${sym}`, action: 'lookup_options', params: { symbol: sym } },
+      ] : [];
+    case 'batch_lookup': {
+      // Emit buttons for each symbol in the results
+      const buttons: Array<{ label: string; action: string; params: Record<string, unknown> }> = [];
+      const symbols: string[] = [];
+      if (Array.isArray(input.symbols)) {
+        symbols.push(...input.symbols.map(s => String(s)));
+      } else if (result && typeof result === 'object') {
+        symbols.push(...Object.keys(result as Record<string, unknown>));
+      }
+      for (const s of symbols) {
+        buttons.push(
+          { label: `Add ${s} to Watchlist`, action: 'add_watchlist', params: { symbol: s } },
+          { label: `Set Alert for ${s}`, action: 'set_alert', params: { symbol: s } },
+          { label: `Options Chain for ${s}`, action: 'lookup_options', params: { symbol: s } },
+        );
+      }
+      return buttons;
+    }
+    case 'portfolio_summary':
+      return [
+        { label: 'Scan Watchlist', action: 'scan_watchlist', params: {} },
+        { label: 'Run Full Briefing', action: '/brief', params: {} },
+      ];
+    case 'scan_watchlist':
+      return []; // The scan results themselves are actionable
+    case 'lookup_options':
+      return sym ? [
+        { label: `Sell Covered Call on ${sym}`, action: 'place_order', params: { symbol: sym, side: 'sell' } },
+      ] : [];
+    default:
+      return [];
+  }
+}
 
 // ═════════════════════════════════════════════════════════════════════════════
 //  POST Handler — Keisha Supreme (Streaming + Tool Use + Agentic Loop)
@@ -30,7 +119,7 @@ export async function POST(req: NextRequest) {
   }
 
   try {
-    const { messages, domain, conversationId } = await req.json();
+    const { messages, domain, conversationId, settings, image } = await req.json();
     const userMessage = sanitizeInput(messages[messages.length - 1]?.content || '');
 
     // ── Build context ─────────────────────────────────────────────────
@@ -59,7 +148,7 @@ TOOL USAGE RULES:
 - Chain multiple lookups when comparing stocks or building a thesis
 - Always call suggest_followups at the END of your response with 3 relevant follow-up questions
 - For orders (place_order), ONLY use the tool when Wes explicitly asks to buy or sell
-- For non-destructive tools (lookups, watchlist, alerts), execute immediately when relevant`;
+- For non-destructive tools (lookups, watchlist, alerts), execute immediately when relevant${buildPreferencesBlock(settings)}`;
 
     const conversationHistory: MessageParam[] = messages.map(
       (m: { role: string; content: string }) => ({
@@ -67,6 +156,17 @@ TOOL USAGE RULES:
         content: m.content,
       }),
     );
+
+    // ── Vision / Image Upload ─────────────────────────────────────────
+    if (image) {
+      const lastMsg = conversationHistory[conversationHistory.length - 1];
+      if (lastMsg && lastMsg.role === 'user') {
+        lastMsg.content = [
+          { type: 'image', source: { type: 'base64', media_type: image.mediaType, data: image.base64 } },
+          { type: 'text', text: typeof lastMsg.content === 'string' ? lastMsg.content : '' },
+        ] as any;
+      }
+    }
 
     // ── SSE Stream ────────────────────────────────────────────────────
     const encoder = new TextEncoder();
@@ -213,6 +313,14 @@ TOOL USAGE RULES:
                 })}\n\n`),
               );
 
+              // Emit contextual action buttons based on the tool that just ran
+              const buttons = getActionButtons(tb.name, tb.input, result);
+              if (buttons.length > 0) {
+                controller.enqueue(
+                  encoder.encode(`data: ${JSON.stringify({ actionButtons: buttons })}\n\n`),
+                );
+              }
+
               toolResults.push({
                 type: 'tool_result',
                 tool_use_id: tb.id,
@@ -229,23 +337,6 @@ TOOL USAGE RULES:
 
             // If this was the last possible turn or end_turn, break
             if (stopReason === 'end_turn' || isLastPossibleIteration) break;
-          }
-
-          // ── Detect trade intent ─────────────────────────────────────
-          const tradeCard = await detectTradeIntent(fullText);
-          if (tradeCard) {
-            const tradeMatch = tradeCard.match(/TRADE DETECTED: (\w+) (\w+)/);
-            if (tradeMatch) {
-              controller.enqueue(
-                encoder.encode(`data: ${JSON.stringify({
-                  trade: {
-                    action: tradeMatch[1],
-                    symbol: tradeMatch[2],
-                    card: tradeCard,
-                  },
-                })}\n\n`),
-              );
-            }
           }
 
           // ── Send done event with suggestions ────────────────────────

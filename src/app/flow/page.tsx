@@ -2,6 +2,8 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import { AppShell } from '@/components/layout/AppShell';
+import { ErrorBoundary } from '@/components/ErrorBoundary';
+import { LoadingState } from '@/components/LoadingState';
 import { Activity, RefreshCw, ArrowUpRight, ArrowDownRight } from 'lucide-react';
 
 interface Flow {
@@ -62,6 +64,7 @@ export default function FlowPage() {
 
   return (
     <AppShell>
+      <ErrorBoundary label="Flow">
       <div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 4 }}>
           <Activity size={24} color="#c9a84c" />
@@ -158,7 +161,7 @@ export default function FlowPage() {
 
         {/* Flow Table */}
         {loading && !data ? (
-          <div style={{ textAlign: 'center', padding: 80, color: '#555' }}>Scanning options flow...</div>
+          <LoadingState />
         ) : !data?.flows?.length ? (
           <div style={{
             background: 'rgba(255,255,255,0.02)', border: '1px solid #1e1e35',
@@ -223,6 +226,7 @@ export default function FlowPage() {
           </div>
         )}
       </div>
+      </ErrorBoundary>
     </AppShell>
   );
 }

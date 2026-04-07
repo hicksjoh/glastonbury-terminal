@@ -3,7 +3,7 @@
 import { useEffect, useState, useCallback, useRef } from 'react';
 import { AppShell } from '@/components/layout/AppShell';
 import { ErrorBoundary } from '@/components/ErrorBoundary';
-import { SparklineChart } from '@/components/SparklineChart';
+import SparklineChart from '@/components/SparklineChart';
 import { SkeletonTable } from '@/components/Skeleton';
 import { cacheSet, cacheGet, formatStaleAge } from '@/lib/cache';
 

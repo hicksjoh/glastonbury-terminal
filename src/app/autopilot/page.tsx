@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import { AppShell } from '@/components/layout/AppShell';
+import { ErrorBoundary } from '@/components/ErrorBoundary';
 import { Bot, Play, AlertTriangle, ChevronDown, ChevronUp, Loader2, Activity, Shield, TrendingUp, BarChart3 } from 'lucide-react';
 
 // ── Types ──────────────────────────────────────────────────────────────────────
@@ -211,6 +212,7 @@ export default function AutoPilotPage() {
 
   return (
     <AppShell>
+      <ErrorBoundary label="Autopilot">
       <div style={{ maxWidth: 1400, margin: '0 auto' }}>
 
         {/* ── Header ─────────────────────────────────────────────────────── */}
@@ -702,6 +704,7 @@ export default function AutoPilotPage() {
           to { transform: rotate(360deg); }
         }
       `}</style>
+      </ErrorBoundary>
     </AppShell>
   );
 }

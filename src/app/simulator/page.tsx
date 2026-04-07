@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import { AppShell } from '@/components/layout/AppShell';
+import { ErrorBoundary } from '@/components/ErrorBoundary';
 import { FlaskConical, Plus, Trash2, Play } from 'lucide-react';
 
 interface Leg {
@@ -121,6 +122,7 @@ export default function SimulatorPage() {
 
   return (
     <AppShell>
+      <ErrorBoundary label="Simulator">
       <div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 4 }}>
           <FlaskConical size={24} color="#c9a84c" />
@@ -336,6 +338,7 @@ export default function SimulatorPage() {
           </div>
         </div>
       </div>
+      </ErrorBoundary>
     </AppShell>
   );
 }

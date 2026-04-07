@@ -2,6 +2,8 @@
 
 import { useEffect, useState } from 'react';
 import { AppShell } from '@/components/layout/AppShell';
+import { ErrorBoundary } from '@/components/ErrorBoundary';
+import { LoadingState } from '@/components/LoadingState';
 import { TrendingUp, TrendingDown, DollarSign, Percent, Building2, Home, Briefcase, Banknote } from 'lucide-react';
 
 interface WealthData {
@@ -69,7 +71,7 @@ export default function WealthPage() {
   if (loading) {
     return (
       <AppShell>
-        <div style={{ textAlign: 'center', padding: 80, color: '#555570' }}>Loading wealth data...</div>
+        <LoadingState variant="mixed" rows={3} cols={3} />
       </AppShell>
     );
   }
@@ -97,6 +99,7 @@ export default function WealthPage() {
   const conicGradient = `conic-gradient(${gradientParts.join(', ')})`;
 
   return (
+    <ErrorBoundary label="Wealth">
     <AppShell>
       <div>
         <h1 style={{ fontSize: 28, fontWeight: 700, color: '#fff', margin: '0 0 4px' }}>Total Wealth</h1>
@@ -237,5 +240,6 @@ export default function WealthPage() {
         </GlassCard>
       </div>
     </AppShell>
+    </ErrorBoundary>
   );
 }

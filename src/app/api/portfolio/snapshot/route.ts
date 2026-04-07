@@ -107,7 +107,14 @@ export async function POST(req: NextRequest) {
 }
 
 // ─── GET: Retrieve historical snapshots for charting ──────
+// NOTE: This route is in PUBLIC_API_ROUTES for cron POST access,
+// so GET must manually verify auth (cookie present = passed middleware on page load)
 export async function GET(req: NextRequest) {
+  const authCookie = req.cookies.get('gt-auth');
+  if (!authCookie?.value) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  }
+
   try {
     const { searchParams } = new URL(req.url);
     const from = searchParams.get('from');

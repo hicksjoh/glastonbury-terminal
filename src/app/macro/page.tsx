@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import { AppShell } from '@/components/layout/AppShell';
+import { ErrorBoundary } from '@/components/ErrorBoundary';
 import { Globe } from 'lucide-react';
 
 interface FactorDetail {
@@ -141,6 +142,7 @@ export default function MacroPage() {
 
   return (
     <AppShell>
+      <ErrorBoundary label="Macro">
       <div style={{ maxWidth: 1200, margin: '0 auto' }}>
         {/* Header */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 28 }}>
@@ -525,6 +527,7 @@ export default function MacroPage() {
           </div>
         ) : null}
       </div>
+      </ErrorBoundary>
     </AppShell>
   );
 }

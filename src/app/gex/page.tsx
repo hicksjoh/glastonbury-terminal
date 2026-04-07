@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import { AppShell } from '@/components/layout/AppShell';
+import { ErrorBoundary } from '@/components/ErrorBoundary';
 import { Zap, RefreshCw } from 'lucide-react';
 
 interface StrikeGEX {
@@ -124,6 +125,7 @@ export default function GEXPage() {
 
   return (
     <AppShell>
+      <ErrorBoundary label="GEX">
       <style>{`
         @keyframes pulse {
           0%, 100% { opacity: 1; }
@@ -408,6 +410,7 @@ export default function GEXPage() {
           <div style={{ color: '#888', textAlign: 'center', padding: 40 }}>No data available.</div>
         )}
       </div>
+      </ErrorBoundary>
     </AppShell>
   );
 }

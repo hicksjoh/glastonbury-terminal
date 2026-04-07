@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { generateAnalysis } from '@/lib/claude';
 import { createServiceClient } from '@/lib/supabase';
+import { rateLimit } from '@/lib/rate-limit';
 
 function getBaseUrl(): string {
   return process.env.VERCEL_URL
@@ -9,6 +10,9 @@ function getBaseUrl(): string {
 }
 
 export async function GET() {
+  const { allowed } = rateLimit('keisha-briefing', 5, 60000);
+  if (!allowed) return NextResponse.json({ error: 'Too many requests' }, { status: 429 });
+
   try {
     const baseUrl = getBaseUrl();
     const supabase = createServiceClient();

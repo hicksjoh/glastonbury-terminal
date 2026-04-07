@@ -3,8 +3,10 @@ import { useState, useRef, useEffect, useCallback } from 'react';
 import { AppShell } from '@/components/layout/AppShell';
 import { ErrorBoundary } from '@/components/ErrorBoundary';
 import { ChatMessage } from '@/types';
-import { Send, Mic, MicOff, Zap, CheckCircle, Plus, Trash2, PanelLeftClose, PanelLeft, Volume2, VolumeX, Copy, Check, Search } from 'lucide-react';
+import { Send, Mic, MicOff, Zap, CheckCircle, Plus, Trash2, PanelLeftClose, PanelLeft, Volume2, VolumeX, Copy, Check, Search, Square, RefreshCw, Download, ImagePlus } from 'lucide-react';
 import MarkdownRenderer from '@/components/MarkdownRenderer';
+import { parseSlashCommand, getMatchingCommands, SLASH_COMMANDS } from '@/lib/slash-commands';
+import SparklineChart from '@/components/SparklineChart';
 
 type Domain = 'general' | 'cfo' | 'tax' | 'quant' | 'wealth' | 'strategy';
 
@@ -203,6 +205,14 @@ export default function KeishaPage() {
   const [confirmingOrder, setConfirmingOrder] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
   const recognitionRef = useRef<Record<string, unknown> | null>(null);
+  const abortRef = useRef<AbortController | null>(null);
+  const sendMessageRef = useRef<(content: string) => void>(() => {});
+  const [pendingRegenContent, setPendingRegenContent] = useState<string | null>(null);
+  const [slashMatches, setSlashMatches] = useState<Array<{name: string; description: string; usage: string}>>([]);
+  const [pendingImage, setPendingImage] = useState<{base64: string; mediaType: string; preview: string} | null>(null);
+  const [actionButtons, setActionButtons] = useState<Array<{label: string; action: string; params: Record<string, unknown>}>>([]);
+  const [sparklineData, setSparklineData] = useState<Record<string, number[]>>({});
+  const imageInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => { document.title = 'Keisha AI | Glastonbury Terminal'; }, []);
 
@@ -398,6 +408,48 @@ export default function KeishaPage() {
     setCopiedId(msgId);
     setTimeout(() => setCopiedId(null), 1500);
   };
+
+  // ── Regenerate last assistant message ─────────────────────────────────
+  const regenerateMessage = useCallback((assistantMsgId: string) => {
+    setMessages(prev => {
+      const idx = prev.findIndex(m => m.id === assistantMsgId);
+      if (idx < 0) return prev;
+      // Find the user message immediately before this assistant message
+      let userContent = '';
+      for (let i = idx - 1; i >= 0; i--) {
+        if (prev[i].role === 'user') {
+          userContent = prev[i].content;
+          break;
+        }
+      }
+      if (!userContent) return prev;
+      // Remove the assistant message and queue regeneration
+      setPendingRegenContent(userContent);
+      return prev.filter(m => m.id !== assistantMsgId);
+    });
+  }, []);
+
+  // ── Export conversation as markdown ────────────────────────────────────
+  const exportConversation = useCallback(() => {
+    const date = new Date().toISOString().slice(0, 10);
+    const lines = [`# Keisha AI Conversation — ${DOMAIN_CONFIG[domain].label} Mode`, `**Date:** ${date}`, '---'];
+    for (const msg of messages) {
+      if (msg.id === '0') continue;
+      const speaker = msg.role === 'user' ? 'Wes' : 'Keisha';
+      lines.push(`**${speaker}:** ${msg.content}`, '');
+    }
+    lines.push('---');
+    const markdown = lines.join('\n');
+    const blob = new Blob([markdown], { type: 'text/markdown' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `keisha-${domain}-${date}.md`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  }, [messages, domain]);
 
   // ── Search conversations ───────────────────────────────────────────────
   useEffect(() => {
@@ -651,6 +703,79 @@ export default function KeishaPage() {
     setInput('');
     setLoading(true);
 
+    // Clear action buttons on new message
+    setActionButtons([]);
+
+    // ── Slash command handling ────────────────────────────────────────
+    const parsed = parseSlashCommand(content);
+    if (parsed) {
+      const { command, args } = parsed;
+
+      // /help — show available commands inline
+      if (command.name === 'Help') {
+        const helpText = Object.entries(SLASH_COMMANDS)
+          .map(([key, cmd]) => `**${key}** — ${cmd.description}`)
+          .join('\n');
+        setMessages(prev => [...prev, {
+          id: (Date.now() + 1).toString(), role: 'assistant',
+          content: `### Slash Commands\n\n${helpText}`, timestamp: new Date().toISOString(),
+        }]);
+        setLoading(false); return;
+      }
+
+      // /export — client-side
+      if (command.name === 'Export Chat') {
+        exportConversation();
+        setLoading(false); return;
+      }
+
+      // /brief — hit the briefing API
+      if (command.name === 'Morning Briefing') {
+        try {
+          const res = await fetch('/api/keisha/briefing');
+          const data = await res.json();
+          setMessages(prev => [...prev, {
+            id: (Date.now() + 1).toString(), role: 'assistant',
+            content: data.briefing || data.error || 'Briefing unavailable',
+            timestamp: new Date().toISOString(),
+          }]);
+        } catch {
+          setMessages(prev => [...prev, {
+            id: (Date.now() + 1).toString(), role: 'assistant',
+            content: 'Failed to generate briefing.', timestamp: new Date().toISOString(),
+          }]);
+        }
+        setLoading(false); return;
+      }
+
+      // Tools-based slash commands
+      if (command.tool) {
+        const params = command.parseArgs(args);
+        try {
+          const res = await fetch('/api/keisha/slash', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ tool: command.tool, input: params }),
+          });
+          const data = await res.json();
+          const resultText = data.success !== false
+            ? '```json\n' + JSON.stringify(data.result || data, null, 2) + '\n```'
+            : `Error: ${data.result?.error || data.error || 'Unknown error'}`;
+          setMessages(prev => [...prev, {
+            id: (Date.now() + 1).toString(), role: 'assistant',
+            content: `**${command.name}**\n\n${resultText}`,
+            timestamp: new Date().toISOString(),
+          }]);
+        } catch {
+          setMessages(prev => [...prev, {
+            id: (Date.now() + 1).toString(), role: 'assistant',
+            content: `Failed to execute ${command.name}`, timestamp: new Date().toISOString(),
+          }]);
+        }
+        setLoading(false); return;
+      }
+    }
+
     // Ensure we have a conversation ID
     let convoId = activeConvoId;
     if (!convoId) {
@@ -659,19 +784,42 @@ export default function KeishaPage() {
     }
 
     const history = [...messages, userMsg].filter(m => m.id !== '0');
-    const requestBody = JSON.stringify({
+
+    // Read settings from localStorage
+    let parsedSettings: { riskTolerance?: string; commStyle?: string; paperMode?: boolean } = {};
+    try {
+      const raw = localStorage.getItem('glastonbury-settings');
+      if (raw) parsedSettings = JSON.parse(raw);
+    } catch { /* ignore parse errors */ }
+
+    const requestBodyObj: Record<string, unknown> = {
       messages: history.map(m => ({ role: m.role, content: m.content })),
       domain,
       conversationId: convoId,
-    });
+      settings: {
+        riskTolerance: parsedSettings.riskTolerance,
+        commStyle: parsedSettings.commStyle,
+        paperMode: parsedSettings.paperMode,
+      },
+    };
+
+    // Add image to request body if attached
+    if (pendingImage) {
+      requestBodyObj.image = { base64: pendingImage.base64, mediaType: pendingImage.mediaType };
+      setPendingImage(null);
+    }
+
+    const requestBody = JSON.stringify(requestBodyObj);
 
     // ── Try streaming endpoint first ──────────────────────────────────
     let streamed = false;
     try {
+      abortRef.current = new AbortController();
       const res = await fetch('/api/keisha/stream', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: requestBody,
+        signal: abortRef.current.signal,
       });
 
       if (res.ok && res.body) {
@@ -722,6 +870,22 @@ export default function KeishaPage() {
                 fullText = fullText.replace(/_Pulling live data\.\.\._\n\n$/, '');
                 fullText += `\n\n${statusIcon} **${a.type}:** ${statusMsg}`;
                 setMessages(prev => prev.map(m => m.id === assistantId ? { ...m, content: fullText } : m));
+
+                // Store sparkline data if available
+                if (a.result?.bars && Array.isArray(a.result.bars)) {
+                  setSparklineData(prev => ({ ...prev, [a.params?.symbol || '']: a.result.bars }));
+                }
+                // For batch_lookup, extract bars from each symbol
+                if (a.type === 'batch_lookup' && a.result?.results) {
+                  const newBars: Record<string, number[]> = {};
+                  for (const [sym, symData] of Object.entries(a.result.results as Record<string, { bars?: number[] }>)) {
+                    if (symData.bars && Array.isArray(symData.bars)) newBars[sym] = symData.bars;
+                  }
+                  if (Object.keys(newBars).length > 0) setSparklineData(prev => ({ ...prev, ...newBars }));
+                }
+              }
+              if (data.actionButtons) {
+                setActionButtons(data.actionButtons);
               }
               if (data.pendingConfirmation) {
                 // Dangerous action (e.g. place_order) — requires user confirmation
@@ -745,13 +909,21 @@ export default function KeishaPage() {
         }
 
         // Final update with complete text
+        abortRef.current = null;
         setMessages(prev => {
           const updated = prev.map(m => m.id === assistantId ? { ...m, content: fullText } : m);
           if (convoId) saveMessages(convoId, updated);
           return updated;
         });
       }
-    } catch {
+    } catch (err: unknown) {
+      // If user aborted, just stop — partial text stays in chat
+      if (err instanceof DOMException && err.name === 'AbortError') {
+        abortRef.current = null;
+        setLoading(false);
+        return;
+      }
+      abortRef.current = null;
       // Streaming failed — fall through to non-streaming
     }
 
@@ -798,7 +970,18 @@ export default function KeishaPage() {
       }
       setLoading(false);
     }
-  }, [loading, messages, domain, activeConvoId, createConversation, saveMessages]);
+  }, [loading, messages, domain, activeConvoId, createConversation, saveMessages, exportConversation, pendingImage]);
+
+  // Keep sendMessageRef in sync for regenerateMessage
+  sendMessageRef.current = sendMessage;
+
+  // Fire pending regeneration after the assistant message has been removed from state
+  useEffect(() => {
+    if (pendingRegenContent) {
+      setPendingRegenContent(null);
+      sendMessageRef.current(pendingRegenContent);
+    }
+  }, [pendingRegenContent]);
 
   const config = DOMAIN_CONFIG[domain];
 
@@ -984,8 +1167,8 @@ export default function KeishaPage() {
 
         {/* ── Chat Area ──────────────────────────────────────────────────── */}
         <div style={{ flex: 1, display: 'flex', flexDirection: 'column', paddingLeft: sidebarOpen ? 16 : 0 }}>
-          {/* Sidebar toggle */}
-          <div style={{ marginBottom: 8 }}>
+          {/* Sidebar toggle + Export */}
+          <div style={{ marginBottom: 8, display: 'flex', gap: 6, alignItems: 'center' }}>
             <button
               onClick={() => setSidebarOpen(prev => !prev)}
               style={{
@@ -997,11 +1180,24 @@ export default function KeishaPage() {
               {sidebarOpen ? <PanelLeftClose size={14} /> : <PanelLeft size={14} />}
               {sidebarOpen ? 'Hide history' : 'Show history'}
             </button>
+            {messages.length > 1 && (
+              <button
+                onClick={exportConversation}
+                title="Export conversation as markdown"
+                style={{
+                  padding: '4px 8px', borderRadius: 6, border: '1px solid #1e1e35',
+                  background: 'transparent', color: '#6b6b80', cursor: 'pointer',
+                  display: 'flex', alignItems: 'center', gap: 4, fontSize: 11,
+                }}
+              >
+                <Download size={14} /> Export
+              </button>
+            )}
           </div>
 
           {/* Messages */}
           <div style={{ flex: 1, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 16, paddingBottom: 16 }}>
-            {messages.map(msg => (
+            {messages.map((msg, msgIdx) => (
               <div key={msg.id} style={{ display: 'flex', justifyContent: msg.role === 'user' ? 'flex-end' : 'flex-start' }}>
                 {msg.role === 'assistant' && (
                   <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4, marginRight: 10, marginTop: 4, flexShrink: 0 }}>
@@ -1025,6 +1221,17 @@ export default function KeishaPage() {
                   }}
                 >
                   {msg.role === 'assistant' ? renderMessageContent(msg.content, msg.id) : msg.content}
+                  {/* Sparklines for symbols with bar data */}
+                  {msg.role === 'assistant' && Object.keys(sparklineData).length > 0 && msgIdx === messages.length - 1 && (
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12, marginTop: 8 }}>
+                      {Object.entries(sparklineData).map(([sym, bars]) => (
+                        <div key={sym} style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '4px 8px', background: 'rgba(255,255,255,0.03)', borderRadius: 6 }}>
+                          <span style={{ fontSize: 11, fontWeight: 600, color: '#aaa' }}>{sym}</span>
+                          <SparklineChart data={bars} width={80} height={24} />
+                        </div>
+                      ))}
+                    </div>
+                  )}
                   {msg.role === 'assistant' && msg.id !== '0' && (
                     <div
                       className="msg-actions"
@@ -1061,6 +1268,19 @@ export default function KeishaPage() {
                           : <Copy size={13} color="#888" />
                         }
                       </button>
+                      {msg.id === [...messages].reverse().find(m => m.role === 'assistant' && m.id !== '0')?.id && (
+                        <button
+                          onClick={() => regenerateMessage(msg.id)}
+                          title="Regenerate response"
+                          style={{
+                            padding: 4, borderRadius: 4, border: 'none',
+                            background: 'rgba(0,0,0,0.4)', cursor: 'pointer',
+                            display: 'flex', alignItems: 'center',
+                          }}
+                        >
+                          <RefreshCw size={13} color="#888" />
+                        </button>
+                      )}
                     </div>
                   )}
                 </div>
@@ -1124,8 +1344,62 @@ export default function KeishaPage() {
             </div>
           )}
 
+          {/* Action Buttons */}
+          {actionButtons.length > 0 && !loading && (
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, padding: '0 12px', marginTop: 4, marginBottom: 8 }}>
+              {actionButtons.map((btn, i) => (
+                <button key={i} onClick={() => {
+                  if (btn.action.startsWith('/')) {
+                    setInput(btn.action);
+                  } else {
+                    sendMessage(`${btn.label}`);
+                  }
+                  setActionButtons([]);
+                }}
+                style={{
+                  padding: '6px 14px', borderRadius: 20, border: '1px solid rgba(255,255,255,0.1)',
+                  background: 'rgba(255,255,255,0.03)', color: '#aaa', fontSize: 12,
+                  cursor: 'pointer', transition: 'all 0.15s',
+                }}
+                onMouseEnter={(e) => { e.currentTarget.style.background = 'rgba(240,198,116,0.1)'; e.currentTarget.style.color = '#f0c674'; e.currentTarget.style.borderColor = 'rgba(240,198,116,0.3)'; }}
+                onMouseLeave={(e) => { e.currentTarget.style.background = 'rgba(255,255,255,0.03)'; e.currentTarget.style.color = '#aaa'; e.currentTarget.style.borderColor = 'rgba(255,255,255,0.1)'; }}
+                >{btn.label}</button>
+              ))}
+            </div>
+          )}
+
+          {/* Image preview */}
+          {pendingImage && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '4px 12px', background: 'rgba(255,255,255,0.03)', borderRadius: 8, marginBottom: 4 }}>
+              <img src={pendingImage.preview} alt="upload" style={{ height: 40, borderRadius: 6, opacity: 0.8 }} />
+              <span style={{ fontSize: 12, color: '#888' }}>Image attached</span>
+              <button onClick={() => setPendingImage(null)} style={{ background: 'none', border: 'none', color: '#666', cursor: 'pointer', marginLeft: 'auto' }}>&#10005;</button>
+            </div>
+          )}
+
+          {/* Hidden file input for image upload */}
+          <input
+            ref={imageInputRef}
+            type="file"
+            accept="image/jpeg,image/png,image/gif,image/webp"
+            style={{ display: 'none' }}
+            onChange={(e) => {
+              const file = e.target.files?.[0];
+              if (!file || file.size > 5 * 1024 * 1024) return;
+              const reader = new FileReader();
+              reader.onload = () => {
+                const dataUrl = reader.result as string;
+                const base64 = dataUrl.split(',')[1];
+                const mediaType = file.type;
+                setPendingImage({ base64, mediaType, preview: dataUrl });
+              };
+              reader.readAsDataURL(file);
+              e.target.value = '';
+            }}
+          />
+
           {/* Input Row */}
-          <div style={{ display: 'flex', gap: 8, paddingTop: 8 }}>
+          <div style={{ display: 'flex', gap: 8, paddingTop: 8, position: 'relative' }}>
             <button
               onClick={toggleVoice}
               style={{
@@ -1136,10 +1410,43 @@ export default function KeishaPage() {
             >
               {listening ? <MicOff size={18} color="#f87171" /> : <Mic size={18} color="#555570" />}
             </button>
+            <button onClick={() => imageInputRef.current?.click()} title="Attach image"
+              style={{ background: 'none', border: 'none', cursor: 'pointer', color: pendingImage ? '#f0c674' : '#666', padding: 4, display: 'flex', alignItems: 'center', flexShrink: 0 }}>
+              <ImagePlus size={18} />
+            </button>
+
+            {/* Slash command autocomplete */}
+            {slashMatches.length > 0 && (
+              <div style={{
+                position: 'absolute', bottom: '100%', left: 0, right: 0,
+                background: 'rgba(20, 20, 30, 0.98)', border: '1px solid rgba(255,255,255,0.1)',
+                borderRadius: 10, padding: 4, marginBottom: 4, zIndex: 100,
+              }}>
+                {slashMatches.map((m) => (
+                  <div key={m.usage} onClick={() => { setInput(m.usage.split(' ')[0] + ' '); setSlashMatches([]); }}
+                    style={{ padding: '8px 12px', borderRadius: 6, cursor: 'pointer', fontSize: 13 }}
+                    onMouseEnter={(e) => (e.currentTarget.style.background = 'rgba(255,255,255,0.05)')}
+                    onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}>
+                    <span style={{ color: '#f0c674', fontWeight: 600 }}>{m.usage.split(' ')[0]}</span>
+                    <span style={{ color: '#888', marginLeft: 8 }}>{m.description}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+
             <input
               value={input}
-              onChange={e => setInput(e.target.value)}
-              onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(input); } }}
+              onChange={e => {
+                const newValue = e.target.value;
+                setInput(newValue);
+                if (newValue.startsWith('/') && !newValue.includes(' ')) {
+                  const matches = getMatchingCommands(newValue);
+                  setSlashMatches(matches.map(m => ({ name: m.name, description: m.description, usage: m.usage })));
+                } else {
+                  setSlashMatches([]);
+                }
+              }}
+              onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); setSlashMatches([]); sendMessage(input); } }}
               placeholder={`Ask Keisha (${config.label} mode)...`}
               style={{
                 flex: 1, padding: '12px 16px', backgroundColor: '#1a1a24',
@@ -1147,18 +1454,33 @@ export default function KeishaPage() {
                 color: '#e8e8e8', fontSize: 14, outline: 'none',
               }}
             />
-            <button
-              onClick={() => sendMessage(input)}
-              disabled={loading || !input.trim()}
-              style={{
-                width: 48, height: 48, borderRadius: 12, backgroundColor: config.color,
-                border: 'none', cursor: loading || !input.trim() ? 'not-allowed' : 'pointer',
-                display: 'flex', alignItems: 'center', justifyContent: 'center',
-                opacity: loading || !input.trim() ? 0.5 : 1, flexShrink: 0,
-              }}
-            >
-              <Send size={18} color="#08080d" />
-            </button>
+            {loading ? (
+              <button
+                onClick={() => { abortRef.current?.abort(); setLoading(false); }}
+                title="Stop generating"
+                style={{
+                  width: 48, height: 48, borderRadius: 12, backgroundColor: '#f87171',
+                  border: 'none', cursor: 'pointer',
+                  display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  flexShrink: 0,
+                }}
+              >
+                <Square size={18} color="#fff" />
+              </button>
+            ) : (
+              <button
+                onClick={() => sendMessage(input)}
+                disabled={!input.trim()}
+                style={{
+                  width: 48, height: 48, borderRadius: 12, backgroundColor: config.color,
+                  border: 'none', cursor: !input.trim() ? 'not-allowed' : 'pointer',
+                  display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  opacity: !input.trim() ? 0.5 : 1, flexShrink: 0,
+                }}
+              >
+                <Send size={18} color="#08080d" />
+              </button>
+            )}
           </div>
         </div>
       </div>

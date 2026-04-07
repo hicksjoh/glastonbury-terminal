@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { rateLimit } from '@/lib/rate-limit';
 
 const ALPACA_BASE_URL = process.env.ALPACA_BASE_URL || 'https://paper-api.alpaca.markets';
 
@@ -9,6 +10,9 @@ const alpacaHeaders = {
 };
 
 export async function POST(req: NextRequest) {
+  const { allowed } = rateLimit('options-order', 10, 60000);
+  if (!allowed) return NextResponse.json({ error: 'Too many order requests' }, { status: 429 });
+
   try {
     const body = await req.json();
     const { symbol, qty, side, type, time_in_force, limit_price, stop_price } = body;

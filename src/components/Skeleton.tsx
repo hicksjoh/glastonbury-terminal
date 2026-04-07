@@ -24,9 +24,9 @@ export function Skeleton({ width, height, borderRadius = 8, style }: {
 export function SkeletonCard({ height = 120 }: { height?: number }) {
   return (
     <div style={{
-      background: 'rgba(255,255,255,0.03)',
-      border: '1px solid rgba(138, 92, 246, 0.12)',
-      borderRadius: 14,
+      background: 'var(--secondary)',
+      border: '1px solid var(--border)',
+      borderRadius: 12,
       padding: 20,
       height,
     }}>
@@ -41,7 +41,7 @@ export function SkeletonTable({ rows = 5, cols = 4 }: { rows?: number; cols?: nu
   return (
     <div style={{ width: '100%' }}>
       {Array.from({ length: rows }).map((_, i) => (
-        <div key={i} style={{ display: 'flex', gap: 16, padding: '12px 0', borderBottom: '1px solid rgba(255,255,255,0.04)' }}>
+        <div key={i} style={{ display: 'flex', gap: 16, padding: '12px 0', borderBottom: '1px solid var(--border)' }}>
           {Array.from({ length: cols }).map((_, j) => (
             <Skeleton key={j} width={j === 0 ? '20%' : '15%'} height={14} />
           ))}

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { anthropic } from '@/lib/claude';
 import { createServiceClient } from '@/lib/supabase';
+import { rateLimit } from '@/lib/rate-limit';
 
 const ALPACA_BASE_URL = process.env.ALPACA_BASE_URL || 'https://paper-api.alpaca.markets';
 const ALPACA_HEADERS = {
@@ -10,6 +11,9 @@ const ALPACA_HEADERS = {
 const FMP_KEY = process.env.FMP_API_KEY || '';
 
 export async function POST(req: NextRequest) {
+  const { allowed } = rateLimit('agent-crew', 10, 60000);
+  if (!allowed) return NextResponse.json({ error: 'Too many requests' }, { status: 429 });
+
   try {
     const { symbol, action, context: additionalContext } = await req.json();
 

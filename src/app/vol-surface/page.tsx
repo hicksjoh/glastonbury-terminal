@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import { AppShell } from '@/components/layout/AppShell';
+import { ErrorBoundary } from '@/components/ErrorBoundary';
 import { Layers, RefreshCw } from 'lucide-react';
 
 /* ── colour palette ──────────────────────────────────────────── */
@@ -203,6 +204,7 @@ export default function VolSurfacePage() {
   const termRange = termMax - termMin || 0.01;
 
   return (
+    <ErrorBoundary label="VolSurface">
     <AppShell>
       <style>{`@keyframes shimmer { 0% { background-position: 200% 0 } 100% { background-position: -200% 0 } }`}</style>
       <div>
@@ -645,5 +647,6 @@ export default function VolSurfacePage() {
         )}
       </div>
     </AppShell>
+    </ErrorBoundary>
   );
 }
