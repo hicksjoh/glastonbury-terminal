@@ -27,6 +27,13 @@ import {
   Cell, ReferenceLine,
 } from 'recharts';
 import type { HarvestSummary } from '@/lib/tax-loss-harvester';
+import TaxAlertBanner from '@/components/tax/TaxAlertBanner';
+import {
+  calculateSection179,
+  calculateMileageDeduction,
+  calculateHomeOfficeDeduction,
+  calculateSEPContribution,
+} from '@/lib/tax-engine';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -179,6 +186,13 @@ export default function TaxPage() {
   const [estIncome, setEstIncome] = useState(100000);
   const [estWithholding, setEstWithholding] = useState(0);
 
+  // ── Business Deductions state ──
+  const [bizMiles, setBizMiles] = useState(0);
+  const [bizSqFt, setBizSqFt] = useState(0);
+  const [bizEquipment, setBizEquipment] = useState(0);
+  const [bizNetSE, setBizNetSE] = useState(0);
+  const [exportingCPA, setExportingCPA] = useState(false);
+
   const currentYear = new Date().getFullYear();
 
   // ── Data Fetching ──
@@ -324,6 +338,49 @@ export default function TaxPage() {
       .sort((a, b) => b.daysHeld - a.daysHeld);
   }, [positions]);
 
+  // ── Business Deductions ──
+  const bizDeductions = useMemo(() => {
+    const mileage = calculateMileageDeduction(bizMiles);
+    const homeOffice = calculateHomeOfficeDeduction(bizSqFt, 'simplified');
+    const sec179 = calculateSection179(bizEquipment);
+    const sep = calculateSEPContribution(bizNetSE, filingStatus);
+    const total = mileage.deduction + homeOffice.deduction + sec179.deduction + sep.maxContribution;
+    const margRate = taxCalc.incomeTax.marginalRate;
+    return { mileage, homeOffice, sec179, sep, total, taxSavings: Math.round(total * margRate * 100) / 100 };
+  }, [bizMiles, bizSqFt, bizEquipment, bizNetSE, filingStatus, taxCalc]);
+
+  // ── CPA Export ──
+  const handleCPAExport = useCallback(async () => {
+    setExportingCPA(true);
+    try {
+      const res = await fetch(`/api/tax/impact?symbol=__EXPORT__&side=sell&qty=0`);
+      // We'll use a simpler approach: generate from events data
+      if (!data?.events?.length) {
+        alert('No trade events to export.');
+        return;
+      }
+      // Build a simple 8949-style CSV from events
+      const headers = 'Description of Property,Date Acquired,Date Sold,Proceeds,Cost or Other Basis,Code(s),Adjustment Amount,Gain or (Loss),Category';
+      const rows = data.events
+        .filter(e => e.event_type === 'realized_gain' || e.event_type === 'realized_loss')
+        .map(e => {
+          const isLT = e.tax_character === 'long_term';
+          const cat = isLT ? 'D' : 'A';
+          const adj = 'wash_sale_flag' in e && (e as any).wash_sale_flag ? 'W' : '';
+          return `"${e.ticker || ''}",${e.date || 'Various'},${e.date || ''},${Math.abs(e.amount).toFixed(2)},0.00,${adj},0.00,${e.amount.toFixed(2)},${cat}`;
+        });
+      const csv = [headers, ...rows].join('\n');
+      const blob = new Blob([csv], { type: 'text/csv' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `Form8949-${currentYear}.csv`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch { /* silent */ }
+    finally { setExportingCPA(false); }
+  }, [data, currentYear]);
+
   // ── Sort Handler ──
   const handleSort = (col: SortCol) => {
     if (sortCol === col) setSortDir(d => d === 'asc' ? 'desc' : 'asc');
@@ -384,7 +441,25 @@ export default function TaxPage() {
             >
               <Download size={12} /> Export CSV
             </button>
+            <button
+              onClick={handleCPAExport}
+              disabled={exportingCPA}
+              aria-label="Export Form 8949 for CPA"
+              style={{
+                display: 'flex', alignItems: 'center', gap: 5,
+                padding: '7px 12px', borderRadius: 8, cursor: exportingCPA ? 'wait' : 'pointer',
+                background: 'rgba(138,92,246,0.08)', border: '1px solid #8a5cf6', color: '#8a5cf6', fontSize: 11,
+                fontWeight: 600, opacity: exportingCPA ? 0.6 : 1,
+              }}
+            >
+              <Receipt size={12} /> {exportingCPA ? 'Generating...' : 'Export for CPA'}
+            </button>
           </div>
+        </div>
+
+        {/* Tax Alerts */}
+        <div style={{ marginBottom: 16 }}>
+          <TaxAlertBanner maxAlerts={3} />
         </div>
 
         {/* Disclaimer Banner */}
@@ -892,6 +967,130 @@ export default function TaxPage() {
                 />
               </SectionCard>
             </div>
+
+            {/* ═══ 9. BUSINESS DEDUCTIONS (Glastonbury Group) ═══ */}
+            <SectionCard title="Business Deductions — Glastonbury Group" icon={Calculator} style={{ marginBottom: 20 }}>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
+                {/* Mileage */}
+                <div>
+                  <label style={{ fontSize: 10, color: '#8888a8', fontWeight: 600, display: 'block', marginBottom: 4 }}>
+                    BUSINESS MILES DRIVEN
+                  </label>
+                  <input
+                    type="number"
+                    value={bizMiles || ''}
+                    onChange={e => setBizMiles(Number(e.target.value) || 0)}
+                    placeholder="0"
+                    aria-label="Business miles driven"
+                    style={{
+                      width: '100%', padding: '8px 10px', borderRadius: 6, fontSize: 13,
+                      background: '#0a0a1a', border: '1px solid #2a2a3a', color: '#e8e8e8',
+                      fontFamily: "'JetBrains Mono', monospace",
+                    }}
+                  />
+                  <div style={{ fontSize: 10, color: '#555', marginTop: 3 }}>
+                    @ ${ACTIVE_TAX_YEAR.businessDeductions.mileageRate}/mile → <strong style={{ color: '#4ade80' }}>{fmtCurrency(bizDeductions.mileage.deduction)}</strong>
+                  </div>
+                </div>
+
+                {/* Home Office */}
+                <div>
+                  <label style={{ fontSize: 10, color: '#8888a8', fontWeight: 600, display: 'block', marginBottom: 4 }}>
+                    HOME OFFICE (SQ FT)
+                  </label>
+                  <input
+                    type="number"
+                    value={bizSqFt || ''}
+                    onChange={e => setBizSqFt(Number(e.target.value) || 0)}
+                    placeholder="0"
+                    aria-label="Home office square footage"
+                    style={{
+                      width: '100%', padding: '8px 10px', borderRadius: 6, fontSize: 13,
+                      background: '#0a0a1a', border: '1px solid #2a2a3a', color: '#e8e8e8',
+                      fontFamily: "'JetBrains Mono', monospace",
+                    }}
+                  />
+                  <div style={{ fontSize: 10, color: '#555', marginTop: 3 }}>
+                    Simplified method (max 300 sq ft) → <strong style={{ color: '#4ade80' }}>{fmtCurrency(bizDeductions.homeOffice.deduction)}</strong>
+                  </div>
+                </div>
+
+                {/* Section 179 */}
+                <div>
+                  <label style={{ fontSize: 10, color: '#8888a8', fontWeight: 600, display: 'block', marginBottom: 4 }}>
+                    EQUIPMENT PURCHASES (§179)
+                  </label>
+                  <input
+                    type="number"
+                    value={bizEquipment || ''}
+                    onChange={e => setBizEquipment(Number(e.target.value) || 0)}
+                    placeholder="0"
+                    aria-label="Equipment purchases"
+                    style={{
+                      width: '100%', padding: '8px 10px', borderRadius: 6, fontSize: 13,
+                      background: '#0a0a1a', border: '1px solid #2a2a3a', color: '#e8e8e8',
+                      fontFamily: "'JetBrains Mono', monospace",
+                    }}
+                  />
+                  <div style={{ fontSize: 10, color: '#555', marginTop: 3 }}>
+                    Deduction: <strong style={{ color: '#4ade80' }}>{fmtCurrency(bizDeductions.sec179.deduction)}</strong>
+                    {bizDeductions.sec179.phaseout && <span style={{ color: '#f87171' }}> (phaseout applies)</span>}
+                  </div>
+                </div>
+
+                {/* SEP-IRA */}
+                <div>
+                  <label style={{ fontSize: 10, color: '#8888a8', fontWeight: 600, display: 'block', marginBottom: 4 }}>
+                    NET SELF-EMPLOYMENT INCOME
+                  </label>
+                  <input
+                    type="number"
+                    value={bizNetSE || ''}
+                    onChange={e => setBizNetSE(Number(e.target.value) || 0)}
+                    placeholder="0"
+                    aria-label="Net self-employment income"
+                    style={{
+                      width: '100%', padding: '8px 10px', borderRadius: 6, fontSize: 13,
+                      background: '#0a0a1a', border: '1px solid #2a2a3a', color: '#e8e8e8',
+                      fontFamily: "'JetBrains Mono', monospace",
+                    }}
+                  />
+                  <div style={{ fontSize: 10, color: '#555', marginTop: 3 }}>
+                    SEP-IRA max: <strong style={{ color: '#4ade80' }}>{fmtCurrency(bizDeductions.sep.maxContribution)}</strong>
+                    {' '}(saves {fmtCurrency(bizDeductions.sep.taxSavings)})
+                  </div>
+                </div>
+              </div>
+
+              {/* Summary */}
+              {bizDeductions.total > 0 && (
+                <div style={{
+                  marginTop: 16, padding: '10px 14px', borderRadius: 8,
+                  background: 'rgba(74,222,128,0.05)', border: '1px solid rgba(74,222,128,0.15)',
+                  display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                }}>
+                  <div>
+                    <div style={{ fontSize: 12, fontWeight: 700, color: '#e8e8e8' }}>
+                      Total Business Deductions
+                    </div>
+                    <div style={{ fontSize: 10, color: '#8888a8', marginTop: 2 }}>
+                      Estimated tax savings at {fmtPct(taxCalc.incomeTax.marginalRate)} marginal rate
+                    </div>
+                  </div>
+                  <div style={{ textAlign: 'right' }}>
+                    <div style={{
+                      fontSize: 20, fontWeight: 700, color: '#4ade80',
+                      fontFamily: "'JetBrains Mono', monospace",
+                    }}>
+                      {fmtCurrency(bizDeductions.total)}
+                    </div>
+                    <div style={{ fontSize: 11, color: '#4ade80', opacity: 0.7 }}>
+                      saves {fmtCurrency(bizDeductions.taxSavings)}
+                    </div>
+                  </div>
+                </div>
+              )}
+            </SectionCard>
           </>
         )}
       </div>
