@@ -1,12 +1,18 @@
 'use client';
-import { useState, useRef, useEffect, useCallback } from 'react';
+import { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import { AppShell } from '@/components/layout/AppShell';
 import { ErrorBoundary } from '@/components/ErrorBoundary';
 import { ChatMessage } from '@/types';
+import type { ExplanationLevel } from '@/types/keisha';
 import { Send, Mic, MicOff, Zap, CheckCircle, Plus, Trash2, PanelLeftClose, PanelLeft, Volume2, VolumeX, Copy, Check, Search, Square, RefreshCw, Download, ImagePlus } from 'lucide-react';
 import MarkdownRenderer from '@/components/MarkdownRenderer';
 import { parseSlashCommand, getMatchingCommands, SLASH_COMMANDS } from '@/lib/slash-commands';
 import SparklineChart from '@/components/SparklineChart';
+import { ExplainButton } from '@/components/keisha/ExplainButton';
+import { GlossaryTerm } from '@/components/keisha/GlossaryTerm';
+import { TradeCard, PortfolioSnapshotCard, OptionsCard } from '@/components/keisha';
+import { GLOSSARY, getGlossaryKeys } from '@/lib/glossary';
+import type { RenderCard, TradeCardData, PortfolioCardData, OptionsCardData } from '@/types/keisha';
 
 type Domain = 'general' | 'cfo' | 'tax' | 'quant' | 'wealth' | 'strategy';
 
@@ -212,7 +218,39 @@ export default function KeishaPage() {
   const [pendingImage, setPendingImage] = useState<{base64: string; mediaType: string; preview: string} | null>(null);
   const [actionButtons, setActionButtons] = useState<Array<{label: string; action: string; params: Record<string, unknown>}>>([]);
   const [sparklineData, setSparklineData] = useState<Record<string, number[]>>({});
+  const [messageCards, setMessageCards] = useState<Record<string, RenderCard[]>>({});
   const imageInputRef = useRef<HTMLInputElement>(null);
+
+  // ── Explanation level (Plain Talk mode) ─────────────────────────────────
+  const [explanationLevel, setExplanationLevel] = useState<ExplanationLevel>('balanced');
+
+  // Load explanation level from localStorage on mount
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem('keisha-explanation-level');
+      if (saved === 'technical' || saved === 'balanced' || saved === 'plain_talk') {
+        setExplanationLevel(saved);
+      }
+    } catch { /* ignore */ }
+  }, []);
+
+  const handleExplanationChange = useCallback((level: ExplanationLevel) => {
+    setExplanationLevel(level);
+    try {
+      localStorage.setItem('keisha-explanation-level', level);
+    } catch { /* ignore */ }
+  }, []);
+
+  // ── Glossary term processing ───────────────────────────────────────────
+  const glossaryKeys = useMemo(() => getGlossaryKeys(), []);
+  const glossaryPattern = useMemo(() => {
+    if (glossaryKeys.length === 0) return null;
+    // Sort by length descending to match longer terms first
+    const sorted = [...glossaryKeys].sort((a, b) => b.length - a.length);
+    // Escape special regex chars and build pattern
+    const escaped = sorted.map(k => k.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
+    return new RegExp(`\\b(${escaped.join('|')})\\b`, 'gi');
+  }, [glossaryKeys]);
 
   useEffect(() => { document.title = 'Keisha AI | Glastonbury Terminal'; }, []);
 
@@ -531,11 +569,13 @@ export default function KeishaPage() {
 
   // Render message content with trade action buttons
   const renderMessageContent = (content: string, msgId: string) => {
+    const showGlossary = explanationLevel !== 'technical';
+
     // Check for trade action markers
     const hasTradeAction = content.includes('[Confirm & Execute]');
 
     if (!hasTradeAction) {
-      return <MarkdownRenderer content={content} />;
+      return <MarkdownRenderer content={content} enableGlossary={showGlossary} />;
     }
 
     // Split at the trade card
@@ -545,7 +585,7 @@ export default function KeishaPage() {
 
     return (
       <>
-        <MarkdownRenderer content={mainContent} />
+        <MarkdownRenderer content={mainContent} enableGlossary={showGlossary} />
         {tradeInfo && (
           <div style={{
             marginTop: 12, padding: '14px 16px', borderRadius: 10,
@@ -800,6 +840,7 @@ export default function KeishaPage() {
         riskTolerance: parsedSettings.riskTolerance,
         commStyle: parsedSettings.commStyle,
         paperMode: parsedSettings.paperMode,
+        explanationLevel,
       },
     };
 
@@ -883,6 +924,13 @@ export default function KeishaPage() {
                   }
                   if (Object.keys(newBars).length > 0) setSparklineData(prev => ({ ...prev, ...newBars }));
                 }
+              }
+              // Inline rich card from tool result
+              if (data.renderCard) {
+                setMessageCards(prev => ({
+                  ...prev,
+                  [assistantId]: [...(prev[assistantId] || []), data.renderCard as RenderCard],
+                }));
               }
               if (data.actionButtons) {
                 setActionButtons(data.actionButtons);
@@ -1024,6 +1072,40 @@ export default function KeishaPage() {
               }}
             >
               {c.label}
+            </button>
+          );
+        })}
+      </div>
+
+      {/* Explanation Level Toggle */}
+      <div style={{ display: 'flex', gap: 2, marginBottom: 16, alignItems: 'center' }}>
+        <span style={{ fontSize: 11, color: '#6b6b80', marginRight: 8, fontWeight: 500 }}>Explain:</span>
+        {(['technical', 'balanced', 'plain_talk'] as ExplanationLevel[]).map(level => {
+          const active = explanationLevel === level;
+          const labels: Record<ExplanationLevel, string> = {
+            technical: 'Technical',
+            balanced: 'Balanced',
+            plain_talk: 'Plain Talk',
+          };
+          return (
+            <button
+              key={level}
+              onClick={() => handleExplanationChange(level)}
+              aria-label={`Set explanation level to ${labels[level]}`}
+              aria-pressed={active}
+              style={{
+                padding: '5px 12px',
+                borderRadius: 6,
+                border: active ? '1px solid #8a5cf6' : '1px solid #2a2a3a',
+                background: active ? 'rgba(138, 92, 246, 0.15)' : 'transparent',
+                color: active ? '#c4a6ff' : '#6b6b80',
+                fontSize: 11,
+                fontWeight: active ? 600 : 400,
+                cursor: 'pointer',
+                transition: 'all 150ms ease',
+              }}
+            >
+              {level === 'plain_talk' ? '💡 ' : ''}{labels[level]}
             </button>
           );
         })}
@@ -1221,6 +1303,19 @@ export default function KeishaPage() {
                   }}
                 >
                   {msg.role === 'assistant' ? renderMessageContent(msg.content, msg.id) : msg.content}
+                  {/* ── Inline Rich Cards ─────────────────────────────────── */}
+                  {msg.role === 'assistant' && messageCards[msg.id]?.map((card, cardIdx) => {
+                    switch (card.type) {
+                      case 'trade':
+                        return <TradeCard key={`card-${cardIdx}`} data={card.data as TradeCardData} />;
+                      case 'portfolio':
+                        return <PortfolioSnapshotCard key={`card-${cardIdx}`} data={card.data as PortfolioCardData} />;
+                      case 'options':
+                        return <OptionsCard key={`card-${cardIdx}`} data={card.data as OptionsCardData} />;
+                      default:
+                        return null;
+                    }
+                  })}
                   {/* Sparklines for symbols with bar data */}
                   {msg.role === 'assistant' && Object.keys(sparklineData).length > 0 && msgIdx === messages.length - 1 && (
                     <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12, marginTop: 8 }}>
@@ -1231,6 +1326,10 @@ export default function KeishaPage() {
                         </div>
                       ))}
                     </div>
+                  )}
+                  {/* Explain Simpler button for assistant messages */}
+                  {msg.role === 'assistant' && msg.id !== '0' && explanationLevel !== 'plain_talk' && (
+                    <ExplainButton messageContent={msg.content} messageId={msg.id} />
                   )}
                   {msg.role === 'assistant' && msg.id !== '0' && (
                     <div

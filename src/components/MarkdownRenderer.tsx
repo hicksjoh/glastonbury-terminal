@@ -1,14 +1,84 @@
 'use client';
 
 import ReactMarkdown from 'react-markdown';
-import React from 'react';
+import React, { ReactNode } from 'react';
+import { GlossaryTerm } from '@/components/keisha/GlossaryTerm';
+import { GLOSSARY } from '@/lib/glossary';
 
 interface MarkdownRendererProps {
   content: string;
   compact?: boolean;
+  enableGlossary?: boolean;
 }
 
-export default function MarkdownRenderer({ content, compact = false }: MarkdownRendererProps) {
+/**
+ * Process a React children tree and wrap glossary terms in GlossaryTerm components.
+ * Only processes string children — leaves other React elements untouched.
+ */
+function processGlossaryTerms(children: ReactNode, glossaryPattern: RegExp | null): ReactNode {
+  if (!glossaryPattern) return children;
+
+  return React.Children.map(children, (child) => {
+    if (typeof child !== 'string') return child;
+
+    // Split text on glossary term matches
+    const parts: ReactNode[] = [];
+    let lastIndex = 0;
+    let match: RegExpExecArray | null;
+
+    // Reset regex state
+    glossaryPattern.lastIndex = 0;
+
+    while ((match = glossaryPattern.exec(child)) !== null) {
+      const term = match[0];
+      const termKey = term.toLowerCase();
+
+      // Check this is actually in our glossary
+      if (!GLOSSARY[termKey]) continue;
+
+      // Add text before match
+      if (match.index > lastIndex) {
+        parts.push(child.slice(lastIndex, match.index));
+      }
+
+      // Add wrapped term
+      parts.push(
+        <GlossaryTerm key={`${termKey}-${match.index}`} term={termKey}>
+          {term}
+        </GlossaryTerm>
+      );
+
+      lastIndex = match.index + term.length;
+    }
+
+    // Add remaining text
+    if (lastIndex < child.length) {
+      parts.push(child.slice(lastIndex));
+    }
+
+    return parts.length > 0 ? <>{parts}</> : child;
+  });
+}
+
+// Build glossary pattern once (module-level, not per-render)
+let _glossaryPattern: RegExp | null = null;
+function getGlossaryPattern(): RegExp | null {
+  if (_glossaryPattern) return _glossaryPattern;
+  const keys = Object.keys(GLOSSARY);
+  if (keys.length === 0) return null;
+  const sorted = [...keys].sort((a, b) => b.length - a.length);
+  const escaped = sorted.map(k => k.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
+  _glossaryPattern = new RegExp(`\\b(${escaped.join('|')})\\b`, 'gi');
+  return _glossaryPattern;
+}
+
+export default function MarkdownRenderer({ content, compact = false, enableGlossary = false }: MarkdownRendererProps) {
+  const glossaryPattern = enableGlossary ? getGlossaryPattern() : null;
+
+  const wrapChildren = (children: ReactNode): ReactNode => {
+    return enableGlossary ? processGlossaryTerms(children, glossaryPattern) : children;
+  };
+
   return (
     <div className={compact ? 'markdown-compact' : 'markdown-full'}>
       <ReactMarkdown
@@ -23,7 +93,7 @@ export default function MarkdownRenderer({ content, compact = false }: MarkdownR
               paddingBottom: 6,
               borderBottom: '1px solid rgba(240, 198, 116, 0.2)',
             }}>
-              {children}
+              {wrapChildren(children)}
             </h1>
           ),
           h2: ({ children }) => (
@@ -36,7 +106,7 @@ export default function MarkdownRenderer({ content, compact = false }: MarkdownR
               textTransform: 'uppercase',
               letterSpacing: '0.05em',
             }}>
-              {children}
+              {wrapChildren(children)}
             </h2>
           ),
           h3: ({ children }) => (
@@ -47,7 +117,7 @@ export default function MarkdownRenderer({ content, compact = false }: MarkdownR
               marginTop: compact ? 8 : 14,
               marginBottom: compact ? 4 : 6,
             }}>
-              {children}
+              {wrapChildren(children)}
             </h3>
           ),
           p: ({ children }) => (
@@ -58,7 +128,7 @@ export default function MarkdownRenderer({ content, compact = false }: MarkdownR
               marginTop: compact ? 4 : 8,
               marginBottom: compact ? 4 : 8,
             }}>
-              {children}
+              {wrapChildren(children)}
             </p>
           ),
           strong: ({ children }) => (
@@ -66,11 +136,11 @@ export default function MarkdownRenderer({ content, compact = false }: MarkdownR
               color: '#f0c674',
               fontWeight: 600,
             }}>
-              {children}
+              {wrapChildren(children)}
             </strong>
           ),
           em: ({ children }) => (
-            <em style={{ color: '#c4a6ff' }}>{children}</em>
+            <em style={{ color: '#c4a6ff' }}>{wrapChildren(children)}</em>
           ),
           ul: ({ children }) => (
             <ul style={{
@@ -108,7 +178,7 @@ export default function MarkdownRenderer({ content, compact = false }: MarkdownR
                 left: -14,
                 fontWeight: 'bold',
               }}>&#8226;</span>
-              {children}
+              {wrapChildren(children)}
             </li>
           ),
           code: ({ children, className }) => {

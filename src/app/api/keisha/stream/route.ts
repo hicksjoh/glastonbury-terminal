@@ -12,6 +12,7 @@ import {
   DANGEROUS_TOOLS,
   MAX_TOOL_ITERATIONS,
   executeToolCall,
+  buildRenderCard,
 } from '@/lib/keisha-tools';
 import type { MessageParam, ToolResultBlockParam } from '@anthropic-ai/sdk/resources/messages';
 
@@ -36,21 +37,35 @@ function getCommStyleInstruction(style: string): string {
   return 'Give thorough analysis with supporting data, scenarios, and reasoning.';
 }
 
-function buildPreferencesBlock(settings?: { riskTolerance?: number; commStyle?: string; paperMode?: boolean }): string {
+function getExplanationInstruction(level?: string): string {
+  switch (level) {
+    case 'technical':
+      return 'Respond with full technical detail. Use precise trading terminology, Greek letter names, quant metrics. Assume the user is an expert trader.';
+    case 'plain_talk':
+      return 'Explain everything in plain, everyday English. No jargon. Use analogies and real-world comparisons. Example: Instead of "theta decay is accelerating", say "your option is losing value faster each day — like ice cream melting quicker as the day gets hotter." Keep sentences short and conversational.';
+    default: // balanced
+      return 'Use proper trading terminology but include brief parenthetical explanations for technical terms. Example: "GEX flipped negative (market makers are no longer cushioning price moves, so expect bigger swings)".';
+  }
+}
+
+function buildPreferencesBlock(settings?: { riskTolerance?: number; commStyle?: string; paperMode?: boolean; explanationLevel?: string }): string {
   const risk = settings?.riskTolerance ?? 50;
   const style = settings?.commStyle ?? 'detailed';
   const paper = settings?.paperMode ?? true;
+  const explainLevel = settings?.explanationLevel ?? 'balanced';
 
   const riskLabel = getRiskLabel(risk);
   const riskDesc = getRiskDescription(risk);
   const commInstruction = getCommStyleInstruction(style);
   const modeLabel = paper ? 'paper' : 'live';
   const modeWarning = paper ? '' : ' — LIVE TRADING ENABLED. Double-confirm all orders with Wes before execution.';
+  const explanationInstruction = getExplanationInstruction(explainLevel);
 
   return `
 USER PREFERENCES:
 - Risk Tolerance: ${riskLabel} (${risk}/100) — ${riskDesc}
 - Communication Style: ${style} — ${commInstruction}
+- Explanation Level: ${explainLevel} — ${explanationInstruction}
 - Trading Mode: ${modeLabel}${modeWarning}`;
 }
 
@@ -306,10 +321,14 @@ TOOL USAGE RULES:
               // Execute safe tool
               const { result, success } = await executeToolCall(tb.name, tb.input);
 
+              // Build inline rich card if applicable
+              const renderCard = buildRenderCard(tb.name, tb.input, result, success);
+
               // Stream action result to client
               controller.enqueue(
                 encoder.encode(`data: ${JSON.stringify({
                   action: { type: tb.name, params: tb.input, result, success },
+                  ...(renderCard ? { renderCard } : {}),
                 })}\n\n`),
               );
 

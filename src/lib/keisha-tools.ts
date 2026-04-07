@@ -1,6 +1,7 @@
 import type { Tool } from '@anthropic-ai/sdk/resources/messages';
 import { createServiceClient } from '@/lib/supabase';
 import { sanitizeSymbol } from '@/lib/sanitize';
+import type { RenderCard, TradeCardData, PortfolioCardData, OptionsCardData } from '@/types/keisha';
 
 // =============================================================================
 //  Keisha Native Tool Definitions -- replaces XML tag parsing
@@ -890,5 +891,112 @@ export async function executeToolCall(
     const msg = err instanceof Error ? err.message : 'Tool execution failed';
     console.error(`Tool ${toolName} error:`, msg);
     return { result: { error: msg }, success: false };
+  }
+}
+
+// =============================================================================
+//  Build RenderCard from tool results — powers inline rich cards in chat
+// =============================================================================
+
+export function buildRenderCard(
+  toolName: string,
+  toolInput: Record<string, unknown>,
+  result: unknown,
+  success: boolean,
+): RenderCard | null {
+  if (!success || !result || typeof result !== 'object') return null;
+
+  const r = result as Record<string, unknown>;
+
+  switch (toolName) {
+    case 'lookup_price': {
+      if (!r.price) return null;
+      return {
+        type: 'trade',
+        data: {
+          symbol: String(r.symbol || toolInput.symbol || ''),
+          currentPrice: Number(r.price),
+          change: Number(r.change || 0),
+          changePct: Number(r.changePct || 0),
+        } as TradeCardData,
+      };
+    }
+
+    case 'get_position': {
+      if (!r.symbol) return null;
+      return {
+        type: 'trade',
+        data: {
+          symbol: String(r.symbol),
+          currentPrice: Number(r.currentPrice || 0),
+          change: 0,
+          changePct: 0,
+          positionQty: Number(r.qty || 0),
+          positionPnl: Number(r.unrealizedPl || 0),
+          positionPnlPct: parseFloat(String(r.unrealizedPlPct || '0')),
+        } as TradeCardData,
+      };
+    }
+
+    case 'portfolio_summary': {
+      if (!r.equity) return null;
+      const equity = Number(r.equity);
+      const unrealizedPl = Number(r.totalUnrealizedPl || 0);
+      return {
+        type: 'portfolio',
+        data: {
+          totalValue: equity,
+          dailyPnl: unrealizedPl,
+          dailyPnlPct: equity > 0 ? +((unrealizedPl / equity) * 100).toFixed(2) : 0,
+          topPositions: [],
+          allocation: [],
+        } as PortfolioCardData,
+      };
+    }
+
+    case 'lookup_options': {
+      const expirations = r.expirations as Array<{
+        date: string;
+        contracts: Array<{
+          symbol: string;
+          strike: number;
+          type: string;
+          bid: number;
+          ask: number;
+          last: number;
+          iv: number;
+          delta: number;
+        }>;
+      }> | undefined;
+      if (!expirations || expirations.length === 0) return null;
+      const firstExp = expirations[0];
+      if (!firstExp.contracts || firstExp.contracts.length === 0) return null;
+      // Pick the nearest ATM contract
+      const contract = firstExp.contracts[0];
+      const premium = contract.ask || contract.last || 0;
+      return {
+        type: 'options',
+        data: {
+          symbol: String(r.symbol || toolInput.symbol || ''),
+          expiration: firstExp.date,
+          strike: Number(contract.strike),
+          type: contract.type === 'put' ? 'put' : 'call',
+          premium,
+          iv: Number((contract.iv * 100).toFixed(1)),
+          greeks: {
+            delta: Number(contract.delta || 0),
+            gamma: 0,
+            theta: 0,
+            vega: 0,
+          },
+          breakeven: contract.type === 'call'
+            ? Number(contract.strike) + premium
+            : Number(contract.strike) - premium,
+        } as OptionsCardData,
+      };
+    }
+
+    default:
+      return null;
   }
 }
