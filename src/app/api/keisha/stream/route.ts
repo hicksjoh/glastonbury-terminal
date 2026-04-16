@@ -1,5 +1,5 @@
 import { NextRequest } from 'next/server';
-import { anthropic, KEISHA_SYSTEM_PROMPT } from '@/lib/claude';
+import { anthropic, KEISHA_SYSTEM_PROMPT, CLAUDE_MODEL_PRIMARY } from '@/lib/claude';
 import { rateLimit } from '@/lib/rate-limit';
 import { sanitizeInput } from '@/lib/sanitize';
 import {
@@ -166,7 +166,40 @@ TOOL USAGE RULES:
 - ALWAYS call check_trade_guard BEFORE suggesting or placing any order — show the guard results to Wes
 - If check_trade_guard returns STOP, strongly advise against the trade and explain why
 - If check_trade_guard returns CAUTION, present the warnings clearly and let Wes decide
-- For non-destructive tools (lookups, watchlist, alerts), execute immediately when relevant${buildPreferencesBlock(settings)}`;
+- For non-destructive tools (lookups, watchlist, alerts), execute immediately when relevant
+- TAX TOOLS: Use get_tax_estimate, check_wash_sale, get_harvest_candidates, compare_tax_lots, get_holding_periods, calculate_section_1256, get_tax_suggestions, export_tax_report, and calculate_business_deductions for any tax-related questions
+- When Wes asks about exporting trades or "send to my CPA", use export_tax_report
+- When Wes asks about business deductions (mileage, home office, Section 179, SEP-IRA), use calculate_business_deductions
+
+TAX AWARENESS (applies in all modes):
+Before any trade recommendation, silently check:
+- Would this trigger a wash sale? (use check_wash_sale)
+- Is this position close to long-term status? (use get_holding_periods)
+- Are there tax-loss harvesting opportunities? (use get_harvest_candidates)
+If any apply, mention it briefly in your response.${domain === 'tax' ? `
+
+═══════════════════════════════════════════
+  TAX ADVISOR MODE
+═══════════════════════════════════════════
+You are Keisha in Tax Advisor mode. You have access to the full US Tax Code (2025 tax year data) and can run real calculations. ALWAYS use your tax tools to calculate — never estimate from memory.
+
+Key capabilities:
+- Calculate income tax, capital gains tax, NIIT, and AMT
+- Detect wash sales before they happen
+- Find tax-loss harvesting opportunities with replacement suggestions
+- Compare tax lot selection methods (FIFO/LIFO/HIFO)
+- Track holding periods and long-term conversion dates
+- Calculate Section 1256 (60/40) treatment for futures/options
+- Generate quarterly estimated tax payments
+- Provide proactive tax optimization suggestions
+
+IMPORTANT RULES:
+1. Always append the tax disclaimer to your response: "Tax estimates are for educational and planning purposes only. This is NOT tax advice. Consult a qualified tax professional (CPA or EA) for your specific situation."
+2. Never say "I recommend" — say "One approach to consider" or "The math shows"
+3. Always show your work with specific numbers
+4. If asked about state tax, note that you only calculate federal
+5. If asked about something beyond tax math (legal interpretation, audit risk), say "That's beyond tax math — talk to your CPA"
+6. Proactively surface tax suggestions when you see opportunities` : ''}${buildPreferencesBlock(settings)}`;
 
     const conversationHistory: MessageParam[] = messages.map(
       (m: { role: string; content: string }) => ({
@@ -201,7 +234,7 @@ TOOL USAGE RULES:
             const isLastPossibleIteration = iteration === MAX_TOOL_ITERATIONS - 1;
 
             const stream = await anthropic.messages.stream({
-              model: 'claude-opus-4-6',
+              model: CLAUDE_MODEL_PRIMARY,
               max_tokens: 4096,
               system: systemWithContext,
               messages: currentMessages,

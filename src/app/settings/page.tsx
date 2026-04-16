@@ -131,7 +131,7 @@ export default function SettingsPage() {
         body: JSON.stringify({ messages: [{ role: 'user', content: 'ping' }], mode: 'general' }),
       });
       if (res.ok) {
-        updateConnection('keisha', 'connected', 'claude-sonnet-4');
+        updateConnection('keisha', 'connected', process.env.NEXT_PUBLIC_CLAUDE_MODEL_LABEL || 'claude-opus-4-7');
       } else {
         updateConnection('keisha', 'disconnected', `HTTP ${res.status}`);
       }

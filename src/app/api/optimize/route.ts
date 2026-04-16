@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { equilibriumReturns, blackLitterman, efficientFrontier, View } from '@/lib/black-litterman';
 import { correlationMatrix } from '@/lib/correlation';
-import { anthropic } from '@/lib/claude';
+import { anthropic, CLAUDE_MODEL_FALLBACK } from '@/lib/claude';
 
 const ALPACA_BASE_URL = process.env.ALPACA_BASE_URL || 'https://paper-api.alpaca.markets';
 const FMP_KEY = process.env.FMP_API_KEY;
@@ -128,7 +128,7 @@ Consider current market conditions, sector trends, and fundamental factors. Only
 Respond ONLY with a JSON array, no other text.`;
 
     const message = await anthropic.messages.create({
-      model: 'claude-sonnet-4-20250514',
+      model: CLAUDE_MODEL_FALLBACK,
       max_tokens: 1024,
       messages: [{ role: 'user', content: prompt }],
     });

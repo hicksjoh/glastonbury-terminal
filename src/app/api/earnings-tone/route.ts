@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { anthropic } from '@/lib/claude';
+import { anthropic, CLAUDE_MODEL_FALLBACK } from '@/lib/claude';
 import { getSupabase } from '@/lib/supabase';
 
 const FMP_KEY = process.env.FMP_API_KEY;
@@ -114,7 +114,7 @@ export async function GET(req: NextRequest) {
     // Try Claude analysis first
     try {
       const message = await anthropic.messages.create({
-        model: 'claude-sonnet-4-20250514',
+        model: CLAUDE_MODEL_FALLBACK,
         max_tokens: 2000,
         messages: [
           {

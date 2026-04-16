@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { anthropic } from '@/lib/claude';
+import { anthropic, CLAUDE_MODEL_FALLBACK } from '@/lib/claude';
 import { createServiceClient } from '@/lib/supabase';
 import { rateLimit } from '@/lib/rate-limit';
 
@@ -243,7 +243,7 @@ function formatAccount(account: any): string {
 // ── Helper: Call a Claude agent ────────────────────────────────────────────
 async function callAgent(systemPrompt: string, userMessage: string): Promise<string> {
   const message = await anthropic.messages.create({
-    model: 'claude-sonnet-4-20250514',
+    model: CLAUDE_MODEL_FALLBACK,
     max_tokens: 1500,
     system: systemPrompt,
     messages: [{ role: 'user', content: userMessage }],

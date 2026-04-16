@@ -5,9 +5,9 @@ import { useRouter } from 'next/navigation';
 import { AppShell } from '@/components/layout/AppShell';
 import { ErrorBoundary } from '@/components/ErrorBoundary';
 import Image from 'next/image';
-import MarkdownRenderer from '@/components/MarkdownRenderer';
 import { MarketNarrative } from '@/components/dashboard/MarketNarrative';
 import { MorningBriefing } from '@/components/dashboard/MorningBriefing';
+import { BriefingCard } from '@/components/keisha/BriefingCard';
 import { getRegimeUIConfig, mapApiRegime } from '@/lib/ui-regime-adapter';
 import type { RegimeUIConfig } from '@/lib/ui-regime-adapter';
 // NOTE: MOCK_AUDIT_LOG and PORTFOLIO_SUMMARY removed — dashboard uses live data only
@@ -183,12 +183,7 @@ export default function DashboardPage() {
   const [miami, setMiami] = useState(0);
   const totalNetWorth = equity + cr3 + rsus + miami;
 
-  // Briefing
-  const [briefing, setBriefing] = useState('');
-  const [briefingLoading, setBriefingLoading] = useState(true);
-  const [briefingExpanded, setBriefingExpanded] = useState(false);
-  const [briefingFetchedAt, setBriefingFetchedAt] = useState<Date | null>(null);
-  const [, setBriefingTick] = useState(0);
+  // Briefing is owned by <BriefingCard /> (SSE streaming, cache, retry)
 
   // Market
   const [vix, setVix] = useState(0);
@@ -241,32 +236,30 @@ export default function DashboardPage() {
       fetch('/api/audit-log').then(r => r.ok ? r.json() : null).catch(() => null),
     ]);
 
-    // Connection statuses: use env-check for reliable detection (matches Settings page)
-    // Data-fetch results can show "error" even when the service is connected (e.g. empty data)
+    // Connection statuses: use /api/health which actually pings each upstream.
+    // Maps live service status ('ok' | 'degraded' | 'error' | 'unconfigured') to UI states.
     try {
-      const envRes = await fetch('/api/env-check').then(r => r.ok ? r.json() : null).catch(() => null);
-      if (envRes?.vars) {
-        const v = envRes.vars;
-        const connStatus: Record<string, 'connected' | 'error' | 'checking'> = {
-          'Alpaca': (v.ALPACA_API_KEY && v.ALPACA_SECRET_KEY) ? (accountRes && !accountRes.error ? 'connected' : 'connected') : 'error',
-          'FMP': v.FMP_API_KEY ? 'connected' : 'error',
-          'Supabase': (v.SUPABASE_URL && v.SUPABASE_SERVICE_KEY) ? 'connected' : 'error',
-          'Claude AI': v.ANTHROPIC_API_KEY ? 'connected' : 'error',
-        };
-        // Override: if env vars are set but live API calls actually failed, still show connected
-        // (empty data != broken connection — matches Settings behavior)
-        // Only show error if the env var itself is missing
-        setConnectionStatus(connStatus);
-      }
+      const healthRes = await fetch('/api/health').then(r => r.json()).catch(() => null);
+      const svc = healthRes?.services ?? {};
+      const toUi = (s: string | undefined): 'connected' | 'error' | 'checking' => {
+        if (s === 'ok' || s === 'degraded') return 'connected';
+        if (s === 'error') return 'error';
+        return 'error';
+      };
+      setConnectionStatus({
+        'Alpaca': toUi(svc.alpaca),
+        'FMP': toUi(svc.fmp),
+        'Supabase': toUi(svc.supabase),
+        'Claude AI': toUi(svc.claude),
+      });
     } catch {
-      // Fallback: use data-fetch results if env-check fails
-      const connStatus: Record<string, 'connected' | 'error' | 'checking'> = {
+      // Fallback: use data-fetch results if /api/health is unreachable
+      setConnectionStatus({
         'Alpaca': accountRes && !accountRes.error ? 'connected' : 'error',
         'FMP': moversRes ? 'connected' : 'error',
         'Supabase': auditRes ? 'connected' : 'error',
         'Claude AI': 'checking',
-      };
-      setConnectionStatus(connStatus);
+      });
     }
 
     if (accountRes && !accountRes.error) {
@@ -372,34 +365,6 @@ export default function DashboardPage() {
     setLoading(false);
   }, []);
 
-  const fetchBriefing = useCallback(async () => {
-    setBriefingLoading(true);
-    try {
-      // Check Supabase for today's pre-generated briefing first.
-      // The /today endpoint now rejects briefings >24h old (returns stale:true), so
-      // we trust its response — if it gives us content, it's fresh.
-      const cachedRes = await fetch('/api/briefing/today').then(r => r.ok ? r.json() : null).catch(() => null);
-      if (cachedRes?.briefing && cachedRes.created_at) {
-        setBriefing(cachedRes.briefing);
-        // Use the briefing's actual generation time, not page-load time.
-        // Prevents "Just now" being shown for days-old content.
-        setBriefingFetchedAt(new Date(cachedRes.created_at));
-        setBriefingLoading(false);
-        return;
-      }
-      // No fresh cached briefing — generate live
-      const res = await fetch('/api/briefing');
-      const data = await res.json();
-      setBriefing(data.briefing || 'Unable to generate briefing.');
-      // Live-gen: use generatedAt if present, else now
-      setBriefingFetchedAt(data.generatedAt ? new Date(data.generatedAt) : new Date());
-    } catch {
-      setBriefing('Briefing service unavailable.');
-      setBriefingFetchedAt(new Date());
-    }
-    setBriefingLoading(false);
-  }, []);
-
   // Fetch regime config
   const fetchRegime = useCallback(async () => {
     try {
@@ -415,25 +380,8 @@ export default function DashboardPage() {
 
   useEffect(() => {
     fetchDashboardData();
-    fetchBriefing();
     fetchRegime();
-  }, [fetchDashboardData, fetchBriefing, fetchRegime]);
-
-  // Update briefing relative timestamp every 30s
-  useEffect(() => {
-    const interval = setInterval(() => setBriefingTick(t => t + 1), 30000);
-    return () => clearInterval(interval);
-  }, []);
-
-  function briefingTimeAgo(): string {
-    if (!briefingFetchedAt) return 'Loading...';
-    const diffMs = Date.now() - briefingFetchedAt.getTime();
-    const mins = Math.floor(diffMs / 60000);
-    if (mins < 1) return 'Just now';
-    if (mins < 60) return `${mins}m ago`;
-    const hrs = Math.floor(mins / 60);
-    return `${hrs}h ago`;
-  }
+  }, [fetchDashboardData, fetchRegime]);
 
   // ─── Time greeting ──────────────────────────────────────
   const hour = new Date().getHours();
@@ -679,81 +627,9 @@ export default function DashboardPage() {
         {/* ═══ ROW 2: Three-Column Main Content ═══ */}
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: 16, marginBottom: 20 }}>
 
-          {/* Column 1: Keisha AI Briefing */}
+          {/* Column 1: Keisha AI Briefing — SSE-streaming via <BriefingCard /> */}
           <ErrorBoundary label="keisha-briefing">
-          <GlassCard style={{ padding: '20px 22px', overflow: 'hidden' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                <div style={{
-                  width: 28, height: 28, borderRadius: '50%',
-                  background: 'linear-gradient(135deg, #f0c674, #c9a84c)',
-                  display: 'flex', alignItems: 'center', justifyContent: 'center',
-                  fontSize: 13, fontWeight: 800, color: '#080b14',
-                }}>K</div>
-                <div>
-                  <div style={{ fontSize: 11, fontWeight: 600, color: '#f0c674', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Keisha — AI Briefing</div>
-                  <div style={{ fontSize: 10, color: '#555' }}>{briefingLoading ? 'Generating...' : briefingTimeAgo()}</div>
-                </div>
-              </div>
-              <button
-                onClick={fetchBriefing}
-                style={{ background: 'none', border: 'none', color: '#666', cursor: 'pointer', padding: 4, fontSize: 14 }}
-                title="Refresh briefing"
-              >
-                ↻
-              </button>
-            </div>
-
-            {briefingLoading ? (
-              <div style={{ display: 'flex', gap: 6, padding: '20px 0' }}>
-                {[0, 1, 2].map(i => (
-                  <div key={i} style={{
-                    width: 8, height: 8, borderRadius: '50%',
-                    background: '#f0c674', opacity: 0.5,
-                    animation: `pulse 1.2s ease-in-out ${i * 0.2}s infinite`,
-                  }} />
-                ))}
-              </div>
-            ) : (
-              <div style={{ position: 'relative' }}>
-                <div style={{
-                  maxHeight: briefingExpanded ? 'none' : 180,
-                  overflow: 'hidden',
-                  transition: 'max-height 0.4s ease',
-                }}>
-                  <MarkdownRenderer content={briefing} compact />
-                </div>
-                {!briefingExpanded && briefing.length > 300 && (
-                  <div style={{
-                    position: 'absolute', bottom: 0, left: 0, right: 0, height: 60,
-                    background: 'linear-gradient(transparent, rgba(8, 11, 20, 0.95))',
-                    display: 'flex', alignItems: 'flex-end', justifyContent: 'center', paddingBottom: 4,
-                  }}>
-                    <button
-                      onClick={() => setBriefingExpanded(true)}
-                      style={{
-                        background: 'none', border: 'none', color: '#f0c674',
-                        fontSize: 12, cursor: 'pointer', fontWeight: 600,
-                      }}
-                    >
-                      Read full briefing →
-                    </button>
-                  </div>
-                )}
-                {briefingExpanded && (
-                  <button
-                    onClick={() => setBriefingExpanded(false)}
-                    style={{
-                      background: 'none', border: 'none', color: '#888',
-                      fontSize: 11, cursor: 'pointer', marginTop: 8,
-                    }}
-                  >
-                    Collapse ↑
-                  </button>
-                )}
-              </div>
-            )}
-          </GlassCard>
+            <BriefingCard />
           </ErrorBoundary>
 
           {/* Column 2: Top Positions + Mini Chart */}

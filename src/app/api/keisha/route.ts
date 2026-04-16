@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { anthropic, KEISHA_SYSTEM_PROMPT } from '@/lib/claude';
+import { anthropic, KEISHA_SYSTEM_PROMPT, CLAUDE_MODEL_PRIMARY } from '@/lib/claude';
 import { rateLimit } from '@/lib/rate-limit';
 import { sanitizeInput } from '@/lib/sanitize';
 import {
@@ -141,7 +141,7 @@ TOOL USAGE RULES:
 
     for (let i = 0; i < MAX_TOOL_ITERATIONS; i++) {
       const response = await anthropic.messages.create({
-        model: 'claude-opus-4-6',
+        model: CLAUDE_MODEL_PRIMARY,
         max_tokens: 4096,
         system: systemWithContext,
         messages: currentMessages,

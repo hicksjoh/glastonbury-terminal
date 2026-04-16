@@ -122,7 +122,7 @@ Positive moneyLeftOnTable means they exited too early. Negative means they saved
 
     const anthropic = new Anthropic();
     const msg = await anthropic.messages.create({
-      model: 'claude-sonnet-4-20250514',
+      model: process.env.CLAUDE_MODEL_FALLBACK || 'claude-sonnet-4-6',
       max_tokens: 600,
       messages: [{ role: 'user', content: prompt }],
     });

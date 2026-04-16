@@ -34,21 +34,40 @@ export async function GET() {
     checks.fmp = 'error';
   }
 
-  // Check Supabase
+  // Check Supabase — probe the PostgREST root, which returns 200 regardless of schema
   try {
-    const { createClient } = await import('@supabase/supabase-js');
-    const supabase = createClient(
-      process.env.NEXT_PUBLIC_SUPABASE_URL || '',
-      process.env.SUPABASE_SERVICE_ROLE_KEY || '',
-    );
-    const { error } = await supabase.from('settings').select('id').limit(1);
-    checks.supabase = error ? 'error' : 'ok';
+    const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
+    const key = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+    if (!url || !key) {
+      checks.supabase = 'unconfigured';
+    } else {
+      const res = await fetch(`${url}/rest/v1/`, {
+        headers: { apikey: key, Authorization: `Bearer ${key}` },
+        signal: AbortSignal.timeout(4000),
+      });
+      checks.supabase = res.ok ? 'ok' : 'error';
+    }
   } catch {
     checks.supabase = process.env.NEXT_PUBLIC_SUPABASE_URL ? 'error' : 'unconfigured';
   }
 
-  // Check Claude
-  checks.claude = process.env.ANTHROPIC_API_KEY ? 'ok' : 'unconfigured';
+  // Check Claude — verify the API key actually authenticates
+  try {
+    if (!process.env.ANTHROPIC_API_KEY) {
+      checks.claude = 'unconfigured';
+    } else {
+      const res = await fetch('https://api.anthropic.com/v1/models', {
+        headers: {
+          'x-api-key': process.env.ANTHROPIC_API_KEY,
+          'anthropic-version': '2023-06-01',
+        },
+        signal: AbortSignal.timeout(4000),
+      });
+      checks.claude = res.ok ? 'ok' : 'error';
+    }
+  } catch {
+    checks.claude = process.env.ANTHROPIC_API_KEY ? 'error' : 'unconfigured';
+  }
 
   // Check Phase 1 APIs (key presence)
   checks.finnhub = process.env.FINNHUB_API_KEY ? 'ok' : 'unconfigured';

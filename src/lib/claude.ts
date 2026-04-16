@@ -1,8 +1,50 @@
 import Anthropic from '@anthropic-ai/sdk';
+import type { MessageCreateParamsNonStreaming, MessageStreamParams } from '@anthropic-ai/sdk/resources/messages';
 
 export const anthropic = new Anthropic({
   apiKey: process.env.ANTHROPIC_API_KEY!,
 });
+
+export const CLAUDE_MODEL_PRIMARY = process.env.CLAUDE_MODEL_PRIMARY || 'claude-opus-4-7';
+export const CLAUDE_MODEL_FALLBACK = process.env.CLAUDE_MODEL_FALLBACK || 'claude-sonnet-4-6';
+export const CLAUDE_MODEL_FAST = process.env.CLAUDE_MODEL_FAST || 'claude-haiku-4-5-20251001';
+
+function isRetryableStatus(err: unknown): boolean {
+  const status = (err as { status?: number })?.status;
+  return status === 429 || status === 529 || status === 503;
+}
+
+export async function createMessageWithFallback(
+  params: Omit<MessageCreateParamsNonStreaming, 'model'>,
+): Promise<{ message: Awaited<ReturnType<typeof anthropic.messages.create>>; modelUsed: string }> {
+  try {
+    const message = await anthropic.messages.create({
+      model: CLAUDE_MODEL_PRIMARY,
+      ...params,
+    });
+    return { message, modelUsed: CLAUDE_MODEL_PRIMARY };
+  } catch (err) {
+    if (!isRetryableStatus(err)) throw err;
+    const message = await anthropic.messages.create({
+      model: CLAUDE_MODEL_FALLBACK,
+      ...params,
+    });
+    return { message, modelUsed: CLAUDE_MODEL_FALLBACK };
+  }
+}
+
+export async function streamMessageWithFallback(
+  params: Omit<MessageStreamParams, 'model'>,
+): Promise<{ stream: ReturnType<typeof anthropic.messages.stream>; modelUsed: string }> {
+  try {
+    const stream = anthropic.messages.stream({ model: CLAUDE_MODEL_PRIMARY, ...params });
+    return { stream, modelUsed: CLAUDE_MODEL_PRIMARY };
+  } catch (err) {
+    if (!isRetryableStatus(err)) throw err;
+    const stream = anthropic.messages.stream({ model: CLAUDE_MODEL_FALLBACK, ...params });
+    return { stream, modelUsed: CLAUDE_MODEL_FALLBACK };
+  }
+}
 
 export const KEISHA_SYSTEM_PROMPT = `You are Keisha — an elite personal wealth strategist and AI financial advisor built exclusively for Wesley Hicks (Wes), founder and CEO of The Glastonbury Group. You are the brain of the Glastonbury Terminal.
 
@@ -234,7 +276,7 @@ export async function generateBriefing(portfolioContext: string): Promise<string
   });
 
   const message = await anthropic.messages.create({
-    model: 'claude-opus-4-6',
+    model: CLAUDE_MODEL_PRIMARY,
     max_tokens: 1200,
     system: KEISHA_SYSTEM_PROMPT,
     messages: [{
@@ -276,7 +318,7 @@ ${portfolioContext}
 When answering, always ground your response in the live data above. If certain data points are missing (e.g., market is closed, no positions yet), acknowledge it and work with what you have. Never fabricate numbers.`;
 
   const response = await anthropic.messages.create({
-    model: 'claude-opus-4-6',
+    model: CLAUDE_MODEL_PRIMARY,
     max_tokens: 4096,
     system: systemWithContext,
     messages: conversationHistory.map(m => ({
