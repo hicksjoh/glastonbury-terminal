@@ -156,8 +156,9 @@ function buildBriefingPromptContext(
   return parts.join('\n\n');
 }
 
-// ─── POST: Generate and save scheduled briefing ───────────
-export async function POST(req: NextRequest) {
+// ─── Shared handler: Generate and save scheduled briefing ─
+// Exposed via both GET (Vercel cron sends GET) and POST (manual/external trigger).
+async function runScheduledBriefing(req: NextRequest) {
   if (!isAuthorized(req)) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
@@ -264,4 +265,14 @@ export async function POST(req: NextRequest) {
     console.error('Scheduled briefing error:', msg);
     return NextResponse.json({ error: msg }, { status: 500 });
   }
+}
+
+// Vercel cron jobs dispatch GET requests; external triggers may use POST.
+// Both invoke the same handler so the schedule actually fires.
+export async function GET(req: NextRequest) {
+  return runScheduledBriefing(req);
+}
+
+export async function POST(req: NextRequest) {
+  return runScheduledBriefing(req);
 }

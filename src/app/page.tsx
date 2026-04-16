@@ -375,19 +375,24 @@ export default function DashboardPage() {
   const fetchBriefing = useCallback(async () => {
     setBriefingLoading(true);
     try {
-      // Check Supabase for today's pre-generated briefing first
+      // Check Supabase for today's pre-generated briefing first.
+      // The /today endpoint now rejects briefings >24h old (returns stale:true), so
+      // we trust its response — if it gives us content, it's fresh.
       const cachedRes = await fetch('/api/briefing/today').then(r => r.ok ? r.json() : null).catch(() => null);
-      if (cachedRes?.briefing) {
+      if (cachedRes?.briefing && cachedRes.created_at) {
         setBriefing(cachedRes.briefing);
-        setBriefingFetchedAt(new Date());
+        // Use the briefing's actual generation time, not page-load time.
+        // Prevents "Just now" being shown for days-old content.
+        setBriefingFetchedAt(new Date(cachedRes.created_at));
         setBriefingLoading(false);
         return;
       }
-      // No cached briefing — generate fresh
+      // No fresh cached briefing — generate live
       const res = await fetch('/api/briefing');
       const data = await res.json();
       setBriefing(data.briefing || 'Unable to generate briefing.');
-      setBriefingFetchedAt(new Date());
+      // Live-gen: use generatedAt if present, else now
+      setBriefingFetchedAt(data.generatedAt ? new Date(data.generatedAt) : new Date());
     } catch {
       setBriefing('Briefing service unavailable.');
       setBriefingFetchedAt(new Date());
