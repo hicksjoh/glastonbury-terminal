@@ -56,6 +56,26 @@ async function fetchFmpJSON<T>(path: string): Promise<T | null> {
       signal: AbortSignal.timeout(4000),
     });
     if (!res.ok) return null;
+    const body = await res.json();
+    // FMP returns {"Error Message": "..."} with HTTP 200 when rate-limited
+    if (body && typeof body === 'object' && !Array.isArray(body) && 'Error Message' in body) {
+      return null;
+    }
+    return body as T;
+  } catch {
+    return null;
+  }
+}
+
+async function fetchFinnhubJSON<T>(path: string): Promise<T | null> {
+  const key = process.env.FINNHUB_API_KEY;
+  if (!key) return null;
+  try {
+    const sep = path.includes('?') ? '&' : '?';
+    const res = await fetch(`https://finnhub.io${path}${sep}token=${key}`, {
+      signal: AbortSignal.timeout(4000),
+    });
+    if (!res.ok) return null;
     return (await res.json()) as T;
   } catch {
     return null;
@@ -66,20 +86,65 @@ type AlpacaAccount = { equity?: string; cash?: string; buying_power?: string; la
 type AlpacaPosition = { symbol: string; qty: string; market_value: string; unrealized_pl: string; unrealized_plpc: string; current_price?: string };
 type FmpQuote = { symbol: string; price: number; changesPercentage: number; name?: string };
 type FmpNews = { title: string; site?: string; publishedDate?: string; symbol?: string };
+type FinnhubQuote = { c: number; d: number; dp: number; h: number; l: number; o: number; pc: number; t: number };
+type FinnhubNews = { category: string; datetime: number; headline: string; id: number; image: string; related: string; source: string; summary: string; url: string };
+
+async function fetchQuotes(symbols: string[]): Promise<{ symbol: string; price: number; change_pct: number }[] | null> {
+  // Prefer FMP (one request, multiple symbols). Fall back to Finnhub (one request per symbol).
+  const fmp = await fetchFmpJSON<FmpQuote[]>(`/api/v3/quote/${symbols.join(',')}`);
+  if (Array.isArray(fmp) && fmp.length > 0) {
+    return fmp.map(q => ({ symbol: q.symbol, price: q.price, change_pct: q.changesPercentage }));
+  }
+  const quotes = await Promise.all(
+    symbols.map(async sym => {
+      const q = await fetchFinnhubJSON<FinnhubQuote>(`/api/v1/quote?symbol=${encodeURIComponent(sym)}`);
+      return q && typeof q.c === 'number' ? { symbol: sym, price: q.c, change_pct: q.dp } : null;
+    }),
+  );
+  const filtered = quotes.filter((q): q is { symbol: string; price: number; change_pct: number } => q !== null);
+  return filtered.length > 0 ? filtered : null;
+}
+
+async function fetchTopNews(): Promise<{ title: string; site?: string; published?: string; symbol?: string }[]> {
+  const fmp = await fetchFmpJSON<FmpNews[]>('/api/v3/stock_news?limit=8');
+  if (Array.isArray(fmp) && fmp.length > 0) {
+    return fmp.slice(0, 8).map(n => ({ title: n.title, site: n.site, published: n.publishedDate, symbol: n.symbol }));
+  }
+  const fh = await fetchFinnhubJSON<FinnhubNews[]>('/api/v1/news?category=general');
+  if (Array.isArray(fh) && fh.length > 0) {
+    return fh.slice(0, 8).map(n => ({
+      title: n.headline,
+      site: n.source,
+      published: new Date(n.datetime * 1000).toISOString(),
+      symbol: n.related,
+    }));
+  }
+  return [];
+}
 
 async function buildContext(userId: string) {
   const supabase = createServiceClient();
 
-  const [account, positions, watchlist, vixQuote, spyQuote, topNews, journal, territoriesRes] = await Promise.all([
+  const [account, positions, watchlist, vixQuoteFmp, marketPulse, topNews, journal, territoriesRes] = await Promise.all([
     fetchAlpacaJSON<AlpacaAccount>('/v2/account'),
     fetchAlpacaJSON<AlpacaPosition[]>('/v2/positions'),
     supabase.from('watchlist').select('symbol, company_name, current_price, notes').limit(15),
+    // VIX: FMP first (^VIX); fall back to Finnhub (^VIX ticker works there too)
     fetchFmpJSON<FmpQuote[]>('/api/v3/quote/%5EVIX'),
-    fetchFmpJSON<FmpQuote[]>('/api/v3/quote/SPY,QQQ,DIA,IWM'),
-    fetchFmpJSON<FmpNews[]>('/api/v3/stock_news?limit=8'),
+    fetchQuotes(['SPY', 'QQQ', 'DIA', 'IWM']),
+    fetchTopNews(),
     supabase.from('trade_journal').select('ticker, direction, strategy, entry_date, exit_date, pnl, notes').order('created_at', { ascending: false }).limit(5),
     supabase.from('cr3_territories').select('territory_id, region, county').eq('ar_type', 'Seacoast FL'),
   ]);
+
+  // VIX fallback to Finnhub if FMP was rate-limited
+  let vix: { price: number; change_pct: number } | null = vixQuoteFmp?.[0]
+    ? { price: vixQuoteFmp[0].price, change_pct: vixQuoteFmp[0].changesPercentage }
+    : null;
+  if (!vix) {
+    const fh = await fetchFinnhubJSON<FinnhubQuote>('/api/v1/quote?symbol=%5EVIX');
+    if (fh && typeof fh.c === 'number') vix = { price: fh.c, change_pct: fh.dp };
+  }
 
   const dayPl = account?.equity && account?.last_equity
     ? Number(account.equity) - Number(account.last_equity)
@@ -115,18 +180,9 @@ async function buildContext(userId: string) {
       company: w.company_name,
       notes: w.notes,
     })),
-    vix: vixQuote?.[0] ? { price: vixQuote[0].price, change_pct: vixQuote[0].changesPercentage } : null,
-    market_pulse: Array.isArray(spyQuote) ? spyQuote.map(q => ({
-      symbol: q.symbol,
-      price: q.price,
-      change_pct: q.changesPercentage,
-    })) : [],
-    top_news: (topNews ?? []).slice(0, 8).map(n => ({
-      title: n.title,
-      site: n.site,
-      published: n.publishedDate,
-      symbol: n.symbol,
-    })),
+    vix,
+    market_pulse: marketPulse ?? [],
+    top_news: topNews,
     recent_journal: (journal?.data ?? []).map((j: { ticker: string; direction: string; strategy: string | null; entry_date: string; exit_date: string | null; pnl: number | null; notes: string | null }) => ({
       ticker: j.ticker,
       direction: j.direction,
