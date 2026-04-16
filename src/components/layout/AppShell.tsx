@@ -8,6 +8,9 @@ import { ShortcutsHelp } from '@/components/ShortcutsHelp';
 import { useKeyboardShortcuts } from '@/hooks/useKeyboardShortcuts';
 
 const MarketTickerBar = dynamic(() => import('@/components/MarketTickerBar'), { ssr: false });
+const VoiceMic = dynamic(() => import('@/components/keisha/VoiceMic').then(m => m.VoiceMic), { ssr: false });
+
+const VOICE_ENABLED = process.env.NEXT_PUBLIC_FEATURE_VOICE === 'true';
 
 const SIDEBAR_FULL = 220;
 const SIDEBAR_COMPACT = 52;
@@ -102,6 +105,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         </main>
       </div>
       <ShortcutsHelp />
+      {VOICE_ENABLED && <VoiceMic />}
     </div>
   );
 }

@@ -16,6 +16,7 @@
   "dependencies": {
     "@anthropic-ai/sdk": "^0.24.0",
     "@supabase/supabase-js": "^2.43.4",
+    "@types/ws": "^8.18.1",
     "clsx": "^2.1.1",
     "date-fns": "^3.6.0",
     "lightweight-charts": "^5.1.0",
@@ -25,7 +26,8 @@
     "react-dom": "^18",
     "react-markdown": "^10.1.0",
     "recharts": "^2.12.7",
-    "web-push": "^3.6.7"
+    "web-push": "^3.6.7",
+    "ws": "^8.20.0"
   },
   "devDependencies": {
     "@playwright/test": "^1.58.2",
@@ -38,6 +40,7 @@
     "pg": "^8.20.0",
     "postcss": "^8",
     "tailwindcss": "^3.4.1",
-    "typescript": "^5"
+    "typescript": "^5",
+    "vitest": "^4.1.2"
   }
 }
