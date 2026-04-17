@@ -143,9 +143,7 @@ export function Sidebar({ isOpen, isMobile, onClose, compact, onToggleCompact }:
       left: 0,
       top: 0,
       zIndex: 40,
-      overflowY: isCompact ? 'visible' : 'auto',
-      overflowX: isCompact ? 'visible' : 'hidden',
-      overscrollBehavior: 'contain',
+      overflow: 'hidden',
       transform: isMobile && !isOpen ? 'translateX(-100%)' : 'translateX(0)',
       transition: 'width 200ms ease, padding 200ms ease, transform 0.3s ease',
     }}>
@@ -191,8 +189,17 @@ export function Sidebar({ isOpen, isMobile, onClose, compact, onToggleCompact }:
         </button>
       )}
 
-      {/* Nav */}
-      <nav aria-label="Main navigation" style={{ flex: 1 }}>
+      {/* Nav — flex:1 + minHeight:0 lets overflowY:auto actually scroll (classic flex gotcha) */}
+      <nav aria-label="Main navigation" style={{
+        flex: 1,
+        minHeight: 0,
+        overflowY: 'auto',
+        overflowX: isCompact ? 'visible' : 'hidden',
+        overscrollBehavior: 'contain',
+        // Thin custom scrollbar so it doesn't dominate the sidebar visually
+        scrollbarWidth: 'thin',
+        scrollbarColor: '#3a3a4a transparent',
+      }}>
         {NAV_SECTIONS.map((section, si) => {
           const isCollapsed = section.label ? !!collapsed[section.label] : false;
           const hasActiveChild = section.items.some(item => pathname === item.href);
