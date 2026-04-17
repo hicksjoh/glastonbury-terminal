@@ -9,11 +9,65 @@ export interface KeishaSettings {
   explanationLevel?: ExplanationLevel;
 }
 
-export type CardType = 'trade' | 'portfolio' | 'options' | 'guard' | 'gex' | 'insider' | 'alert' | 'signal';
+export type CardType =
+  | 'trade' | 'portfolio' | 'options' | 'guard' | 'gex' | 'insider' | 'alert' | 'signal'
+  | 'order_ticket' | 'mini_chart' | 'greeks_calc' | 'trade_preview';
 
 export interface RenderCard {
   type: CardType;
-  data: TradeCardData | PortfolioCardData | OptionsCardData | GuardCardData | GEXCardData | InsiderCardData;
+  data:
+    | TradeCardData | PortfolioCardData | OptionsCardData | GuardCardData | GEXCardData | InsiderCardData
+    | OrderTicketCardData | MiniChartCardData | GreeksCalcCardData | TradePreviewCardData;
+}
+
+// ─── Phase 9 — MCP-style inline widgets ─────────────────────────────────────
+export interface OrderTicketCardData {
+  ticker: string;
+  side: 'buy' | 'sell';
+  qty: number;
+  limit: number | null;
+  last_price: number | null;
+  suggested_sizing: { kellyShares: number | null; halfKellyShares: number | null } | null;
+  paperMode: boolean;
+}
+
+export interface MiniChartCardData {
+  ticker: string;
+  timeframe: '1D' | '5D' | '1M' | '3M' | '6M' | '1Y';
+  closes: number[];
+  last: number;
+  change_pct: number;
+}
+
+export interface GreeksCalcCardData {
+  ticker: string;
+  strike: number;
+  expiry: string;  // ISO date
+  spot: number;
+  type: 'call' | 'put';
+  iv: number;
+  dte: number;
+  greeks: { delta: number; gamma: number; theta: number; vega: number; rho: number };
+  premium_theoretical: number;
+}
+
+export interface TradePreviewLeg {
+  action: 'buy' | 'sell';
+  type: 'call' | 'put' | 'stock';
+  strike?: number;
+  expiry?: string;
+  qty: number;
+  price: number;
+}
+
+export interface TradePreviewCardData {
+  ticker: string;
+  legs: TradePreviewLeg[];
+  net_debit_credit: number; // negative = credit, positive = debit
+  max_profit: number | null;
+  max_loss: number | null;
+  breakevens: number[];
+  payoff_curve: { price: number; pnl: number }[];
 }
 
 export interface TradeCardData {

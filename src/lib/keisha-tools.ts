@@ -404,6 +404,74 @@ export const KEISHA_TOOLS: Tool[] = [
     },
   },
   {
+    name: 'order_ticket',
+    description: 'Return an interactive order-ticket widget for a stock ticker. Use this when Wes asks "buy me X shares of TSLA" or wants to preview an order — the widget lets him review in the /trading page before executing. NEVER places the order; it only opens the ticket. Include a limit price if you have strong conviction; omit for market order.',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        ticker: { type: 'string', description: 'Stock ticker' },
+        side: { type: 'string', enum: ['buy', 'sell'], description: 'buy or sell' },
+        qty: { type: 'number', description: 'Share count' },
+        limit: { type: 'number', description: 'Optional limit price; omit for market' },
+      },
+      required: ['ticker', 'side', 'qty'],
+    },
+  },
+  {
+    name: 'mini_chart',
+    description: 'Return a small inline price sparkline widget for a ticker. Use it when Wes asks about price action and a visual helps. Pick an appropriate timeframe based on the question (1D for intraday, 1M for "past month", etc).',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        ticker: { type: 'string', description: 'Stock ticker' },
+        timeframe: { type: 'string', enum: ['1D', '5D', '1M', '3M', '6M', '1Y'], description: 'Timeframe' },
+      },
+      required: ['ticker', 'timeframe'],
+    },
+  },
+  {
+    name: 'greeks_calculator',
+    description: 'Return a live Greeks widget (Δ Γ Θ ν ρ) for a specific option contract. Computes Black-Scholes Greeks using a current-spot + implied-vol estimate. Use when Wes is evaluating an option trade and wants to see the Greeks inline.',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        ticker: { type: 'string', description: 'Underlying ticker' },
+        strike: { type: 'number', description: 'Strike price' },
+        expiry: { type: 'string', description: 'Expiration ISO date (YYYY-MM-DD)' },
+        type: { type: 'string', enum: ['call', 'put'], description: 'call or put' },
+        iv: { type: 'number', description: 'Implied vol as decimal (e.g. 0.35 for 35%). Optional; defaults to 0.3.' },
+      },
+      required: ['ticker', 'strike', 'expiry', 'type'],
+    },
+  },
+  {
+    name: 'trade_preview',
+    description: 'Return a multi-leg trade preview widget with a P&L-at-expiry diagram. Takes an array of legs (up to 4) and computes net debit/credit, max profit, max loss, and breakevens. Use for spreads, iron condors, butterflies, straddles, etc.',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        ticker: { type: 'string', description: 'Underlying ticker' },
+        legs: {
+          type: 'array',
+          description: 'Up to 4 legs',
+          items: {
+            type: 'object',
+            properties: {
+              action: { type: 'string', enum: ['buy', 'sell'] },
+              type: { type: 'string', enum: ['call', 'put', 'stock'] },
+              strike: { type: 'number' },
+              expiry: { type: 'string' },
+              qty: { type: 'number' },
+              price: { type: 'number' },
+            },
+            required: ['action', 'type', 'qty', 'price'],
+          },
+        },
+      },
+      required: ['ticker', 'legs'],
+    },
+  },
+  {
     name: 'semantic_search',
     description: 'Semantic-search Wes\'s indexed documents (journal entries, earnings transcripts, earnings memos, deep research memos, filings, news, debates). Returns top passages with similarity scores and citations. Use this when Wes asks "have I ever traded X before?", "what did management say about margins last quarter?", "journal entries where I mentioned FOMO", or anything that benefits from pulling from his personal corpus. Always use before making a claim about his trading history.',
     input_schema: {
@@ -1831,6 +1899,158 @@ export async function executeToolCall(
         };
       }
 
+      case 'order_ticket': {
+        const sym = sanitizeSymbol(String(toolInput.ticker ?? ''));
+        const side = toolInput.side === 'sell' ? 'sell' : 'buy';
+        const qty = Math.max(0, Number(toolInput.qty) || 0);
+        const limit = toolInput.limit != null ? Number(toolInput.limit) : null;
+        if (!sym || qty <= 0) return { result: { error: 'Need ticker and positive qty' }, success: false };
+        // Pull last price for the card
+        const { fetchQuote } = await import('@/lib/crew-data');
+        const quote = await fetchQuote(sym);
+        return {
+          result: {
+            ticker: sym,
+            side,
+            qty,
+            limit,
+            last_price: quote?.price ?? null,
+            suggested_sizing: null,
+            paperMode: process.env.ALPACA_PAPER === 'true' || (process.env.ALPACA_BASE_URL || '').includes('paper'),
+          },
+          success: true,
+        };
+      }
+
+      case 'mini_chart': {
+        const sym = sanitizeSymbol(String(toolInput.ticker ?? ''));
+        const tf = String(toolInput.timeframe ?? '1M') as '1D'|'5D'|'1M'|'3M'|'6M'|'1Y';
+        if (!sym) return { result: { error: 'Need ticker' }, success: false };
+        const { fetchBars } = await import('@/lib/crew-data');
+        const tfMap: Record<string, { frame: string; limit: number }> = {
+          '1D': { frame: '5Min',  limit: 78 },
+          '5D': { frame: '30Min', limit: 65 },
+          '1M': { frame: '1Day',  limit: 22 },
+          '3M': { frame: '1Day',  limit: 65 },
+          '6M': { frame: '1Day',  limit: 130 },
+          '1Y': { frame: '1Day',  limit: 252 },
+        };
+        const cfg = tfMap[tf] ?? tfMap['1M'];
+        const bars = await fetchBars(sym, cfg.frame, cfg.limit);
+        if (bars.length === 0) return { result: { error: 'No bars returned' }, success: false };
+        const closes = bars.map(b => b.c);
+        const last = closes[closes.length - 1];
+        const first = closes[0];
+        const change_pct = ((last - first) / first) * 100;
+        return { result: { ticker: sym, timeframe: tf, closes, last, change_pct }, success: true };
+      }
+
+      case 'greeks_calculator': {
+        const { bsPrice, bsDelta, bsGamma, bsTheta, bsVega, bsRho } = await import('@/lib/black-scholes');
+        const { fetchQuote } = await import('@/lib/crew-data');
+        const sym = sanitizeSymbol(String(toolInput.ticker ?? ''));
+        const strike = Number(toolInput.strike);
+        const type = toolInput.type === 'put' ? 'put' : 'call';
+        const iv = Number(toolInput.iv) > 0 ? Number(toolInput.iv) : 0.30;
+        const expiry = String(toolInput.expiry ?? '');
+        if (!sym || !strike || !expiry) return { result: { error: 'Need ticker, strike, expiry' }, success: false };
+        const q = await fetchQuote(sym);
+        if (!q) return { result: { error: 'No quote available' }, success: false };
+        const spot = q.price;
+        const dte = Math.max(1, Math.ceil((new Date(expiry).getTime() - Date.now()) / (1000 * 60 * 60 * 24)));
+        const T = dte / 365;
+        const r = 0.045; // treasury-ish
+        const premium = bsPrice(spot, strike, T, r, iv, type);
+        return {
+          result: {
+            ticker: sym, strike, expiry, type, spot, iv, dte,
+            greeks: {
+              delta: bsDelta(spot, strike, T, r, iv, type),
+              gamma: bsGamma(spot, strike, T, r, iv),
+              theta: bsTheta(spot, strike, T, r, iv, type),
+              vega: bsVega(spot, strike, T, r, iv),
+              rho: bsRho(spot, strike, T, r, iv, type),
+            },
+            premium_theoretical: premium,
+          },
+          success: true,
+        };
+      }
+
+      case 'trade_preview': {
+        const sym = sanitizeSymbol(String(toolInput.ticker ?? ''));
+        const legsRaw = Array.isArray(toolInput.legs) ? toolInput.legs : [];
+        if (!sym || legsRaw.length === 0) return { result: { error: 'Need ticker + legs' }, success: false };
+        type Leg = { action: 'buy'|'sell'; type: 'call'|'put'|'stock'; strike?: number; expiry?: string; qty: number; price: number };
+        const legs: Leg[] = legsRaw.slice(0, 4).map(l => {
+          const o = l as Record<string, unknown>;
+          return {
+            action: o.action === 'sell' ? 'sell' : 'buy',
+            type: o.type === 'put' ? 'put' : o.type === 'stock' ? 'stock' : 'call',
+            strike: o.strike ? Number(o.strike) : undefined,
+            expiry: o.expiry ? String(o.expiry) : undefined,
+            qty: Math.max(1, Number(o.qty) || 1),
+            price: Number(o.price) || 0,
+          };
+        });
+
+        const netDebitCredit = legs.reduce((sum, l) => {
+          const mult = l.type === 'stock' ? 1 : 100;
+          const sign = l.action === 'buy' ? 1 : -1;
+          return sum + sign * l.price * l.qty * mult;
+        }, 0);
+
+        // Payoff-at-expiry curve across +/- 20% of highest strike (or spot)
+        const strikes = legs.map(l => l.strike).filter((s): s is number => typeof s === 'number');
+        const centerGuess = strikes.length ? strikes.reduce((a,b)=>a+b,0)/strikes.length : 100;
+        const low = centerGuess * 0.7;
+        const high = centerGuess * 1.3;
+        const STEPS = 60;
+        const curve: { price: number; pnl: number }[] = [];
+        for (let i = 0; i <= STEPS; i++) {
+          const price = low + (high - low) * (i / STEPS);
+          let pnl = -netDebitCredit;
+          for (const l of legs) {
+            const mult = l.type === 'stock' ? 1 : 100;
+            const sign = l.action === 'buy' ? 1 : -1;
+            if (l.type === 'stock') {
+              pnl += sign * (price - l.price) * l.qty;
+            } else {
+              const intrinsic = l.type === 'call'
+                ? Math.max(0, price - (l.strike ?? 0))
+                : Math.max(0, (l.strike ?? 0) - price);
+              pnl += sign * intrinsic * l.qty * mult;
+            }
+          }
+          curve.push({ price: Number(price.toFixed(2)), pnl: Number(pnl.toFixed(2)) });
+        }
+
+        const maxProfit = Math.max(...curve.map(p => p.pnl));
+        const maxLoss = Math.min(...curve.map(p => p.pnl));
+        // Breakevens = prices where pnl crosses zero
+        const breakevens: number[] = [];
+        for (let i = 1; i < curve.length; i++) {
+          const a = curve[i-1], b = curve[i];
+          if ((a.pnl < 0 && b.pnl >= 0) || (a.pnl > 0 && b.pnl <= 0)) {
+            const t = a.pnl / (a.pnl - b.pnl);
+            breakevens.push(Number((a.price + t * (b.price - a.price)).toFixed(2)));
+          }
+        }
+
+        return {
+          result: {
+            ticker: sym,
+            legs,
+            net_debit_credit: netDebitCredit,
+            max_profit: isFinite(maxProfit) ? Number(maxProfit.toFixed(2)) : null,
+            max_loss: isFinite(maxLoss) ? Number(maxLoss.toFixed(2)) : null,
+            breakevens,
+            payoff_curve: curve,
+          },
+          success: true,
+        };
+      }
+
       case 'semantic_search': {
         const { semanticSearch } = await import('@/lib/doc-indexer');
         const { isEmbeddingConfigured } = await import('@/lib/embeddings');
@@ -2067,6 +2287,18 @@ export function buildRenderCard(
         } as GuardCardData,
       };
     }
+
+    case 'order_ticket':
+      return { type: 'order_ticket', data: r as unknown as import('@/types/keisha').OrderTicketCardData };
+
+    case 'mini_chart':
+      return { type: 'mini_chart', data: r as unknown as import('@/types/keisha').MiniChartCardData };
+
+    case 'greeks_calculator':
+      return { type: 'greeks_calc', data: r as unknown as import('@/types/keisha').GreeksCalcCardData };
+
+    case 'trade_preview':
+      return { type: 'trade_preview', data: r as unknown as import('@/types/keisha').TradePreviewCardData };
 
     default:
       return null;

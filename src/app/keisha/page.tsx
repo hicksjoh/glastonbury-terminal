@@ -10,9 +10,10 @@ import { parseSlashCommand, getMatchingCommands, SLASH_COMMANDS } from '@/lib/sl
 import SparklineChart from '@/components/SparklineChart';
 import { ExplainButton } from '@/components/keisha/ExplainButton';
 import { GlossaryTerm } from '@/components/keisha/GlossaryTerm';
-import { TradeCard, PortfolioSnapshotCard, OptionsCard, GuardCard, GEXCard, InsiderCard, ToolLoadingSkeleton } from '@/components/keisha';
+import { TradeCard, PortfolioSnapshotCard, OptionsCard, GuardCard, GEXCard, InsiderCard, ToolLoadingSkeleton, OrderTicketCard, MiniChartCard, GreeksCalcCard, TradePreviewCard } from '@/components/keisha';
+import TaxImpactBanner from '@/components/trade/TaxImpactBanner';
 import { GLOSSARY, getGlossaryKeys } from '@/lib/glossary';
-import type { RenderCard, TradeCardData, PortfolioCardData, OptionsCardData, GuardCardData, GEXCardData, InsiderCardData } from '@/types/keisha';
+import type { RenderCard, TradeCardData, PortfolioCardData, OptionsCardData, GuardCardData, GEXCardData, InsiderCardData, OrderTicketCardData, MiniChartCardData, GreeksCalcCardData, TradePreviewCardData } from '@/types/keisha';
 
 type Domain = 'general' | 'cfo' | 'tax' | 'quant' | 'wealth' | 'strategy';
 
@@ -1412,6 +1413,14 @@ export default function KeishaPage() {
                         return <GEXCard key={`card-${cardIdx}`} data={card.data as GEXCardData} />;
                       case 'insider':
                         return <InsiderCard key={`card-${cardIdx}`} data={card.data as InsiderCardData} />;
+                      case 'order_ticket':
+                        return <OrderTicketCard key={`card-${cardIdx}`} data={card.data as OrderTicketCardData} />;
+                      case 'mini_chart':
+                        return <MiniChartCard key={`card-${cardIdx}`} data={card.data as MiniChartCardData} />;
+                      case 'greeks_calc':
+                        return <GreeksCalcCard key={`card-${cardIdx}`} data={card.data as GreeksCalcCardData} />;
+                      case 'trade_preview':
+                        return <TradePreviewCard key={`card-${cardIdx}`} data={card.data as TradePreviewCardData} />;
                       default:
                         return null;
                     }
@@ -1727,6 +1736,14 @@ export default function KeishaPage() {
             <strong>{pendingOrder.params.side?.toUpperCase()}</strong> {pendingOrder.params.qty} shares of <strong>{pendingOrder.params.symbol}</strong> ({pendingOrder.params.orderType || 'market'})
             {pendingOrder.params.limitPrice && <> at <strong>${pendingOrder.params.limitPrice}</strong></>}
           </div>
+          {pendingOrder.params.symbol && (
+            <TaxImpactBanner
+              symbol={pendingOrder.params.symbol}
+              side={(pendingOrder.params.side || 'buy') as 'buy' | 'sell'}
+              qty={parseInt(pendingOrder.params.qty) || 0}
+              compact
+            />
+          )}
           <div style={{ display: 'flex', gap: 8 }}>
             <button
               onClick={handleOrderConfirm}
