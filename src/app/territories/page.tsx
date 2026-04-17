@@ -5,6 +5,9 @@ import { AppShell } from '@/components/layout/AppShell';
 import { ErrorBoundary } from '@/components/ErrorBoundary';
 import { LoadingState } from '@/components/LoadingState';
 import { MapPin, Building2, DollarSign, ArrowUpDown } from 'lucide-react';
+import { StormWatchCard } from '@/components/territories/StormWatchCard';
+
+const STORM_AGENT_ENABLED = process.env.NEXT_PUBLIC_FEATURE_STORM_AGENT === 'true';
 
 interface Territory {
   id: string;
@@ -102,6 +105,12 @@ export default function TerritoriesPage() {
         <p style={{ color: '#8888a8', fontSize: 14, margin: '0 0 28px' }}>
           CR3 American Exteriors — 23 Franchise Territories
         </p>
+
+        {STORM_AGENT_ENABLED && (
+          <ErrorBoundary label="storm-watch">
+            <StormWatchCard />
+          </ErrorBoundary>
+        )}
 
         {/* Summary Cards */}
         {summary && (

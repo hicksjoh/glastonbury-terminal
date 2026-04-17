@@ -13,6 +13,22 @@
     {
       "path": "/api/portfolio/snapshot",
       "schedule": "0 22 * * 1-5"
+    },
+    {
+      "path": "/api/cron/storm-watch",
+      "schedule": "*/15 * * * *"
+    },
+    {
+      "path": "/api/cron/tax-harvest",
+      "schedule": "0 0 * * 1"
+    },
+    {
+      "path": "/api/cron/coach-review",
+      "schedule": "0 1 * * 1"
+    },
+    {
+      "path": "/api/cron/prediction-snapshot",
+      "schedule": "*/5 * * * *"
     }
   ]
 }
