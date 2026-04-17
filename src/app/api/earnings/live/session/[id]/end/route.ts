@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createServiceClient } from '@/lib/supabase';
 import { rateLimit } from '@/lib/rate-limit';
 import { generateMemo } from '@/lib/earnings-engine';
+import { indexDoc } from '@/lib/doc-indexer';
+import { isEmbeddingConfigured } from '@/lib/embeddings';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -67,6 +69,26 @@ export async function POST(_req: NextRequest, ctx: { params: { id: string } }) {
         notes: `Earnings memo (${session.quarter ?? 'live'}):\n\n${memo.keisha_take}\n\nGuidance: ${memo.guidance_delta}`,
       });
     } catch { /* journal append is best-effort */ }
+
+    // Auto-index the transcript + memo into doc_chunks for semantic search (Phase 6).
+    // Best-effort — if embeddings aren't configured we silently skip.
+    if (isEmbeddingConfigured().ready) {
+      const transcriptHeader = `Earnings transcript — ${session.ticker}${session.quarter ? ` ${session.quarter}` : ''}\n\n`;
+      indexDoc({
+        doc_type: 'transcript',
+        source_id: sessionId,
+        content: transcriptHeader + transcriptText,
+        ticker: session.ticker,
+        metadata: { quarter: session.quarter },
+      }).catch(() => {});
+      indexDoc({
+        doc_type: 'research',
+        source_id: `earnings-memo:${sessionId}`,
+        content: `Earnings memo — ${session.ticker}${session.quarter ? ` ${session.quarter}` : ''}\nGuidance: ${memo.guidance_delta}\n\nKeisha's take: ${memo.keisha_take}\n\n${memo.memo_markdown}`,
+        ticker: session.ticker,
+        metadata: { quarter: session.quarter, guidance_delta: memo.guidance_delta, source: 'earnings_memo' },
+      }).catch(() => {});
+    }
 
     const latency = Date.now() - t0;
     return NextResponse.json({

@@ -4,6 +4,26 @@ import { sanitizeSymbol } from '@/lib/sanitize';
 import type { RenderCard, TradeCardData, PortfolioCardData, OptionsCardData, GuardCardData, GEXCardData, InsiderCardData } from '@/types/keisha';
 import { runTradeGuard } from '@/lib/trade-guard-engine';
 import { runGEXAnalysis } from '@/lib/gex-engine';
+import {
+  type FilingStatus,
+  TAX_DISCLAIMER,
+  ACTIVE_TAX_YEAR,
+  calculateIncomeTax,
+  calculateCapitalGainsTax,
+  calculateNIIT,
+  classifyHoldingPeriod,
+  calculateSection1256Tax,
+  estimateQuarterlyPayment,
+  getTaxBracketInfo,
+  calculateSection179,
+  calculateMileageDeduction,
+  calculateHomeOfficeDeduction,
+  calculateSEPContribution,
+} from '@/lib/tax-engine';
+import { getWashSalePreview, getUpcomingWindowCloses, scanPortfolioForWashSales, type TradeRecord } from '@/lib/wash-sale-detector';
+import { compareLotMethods, type TaxLot } from '@/lib/tax-lot-optimizer';
+import { scanForHarvestCandidates, type HarvestPosition } from '@/lib/tax-loss-harvester';
+import { generateForm8949Data, exportForm8949CSV, generateScheduleDSummary } from '@/lib/tax-export';
 
 // =============================================================================
 //  Keisha Native Tool Definitions -- replaces XML tag parsing
@@ -268,6 +288,137 @@ export const KEISHA_TOOLS: Tool[] = [
       type: 'object' as const,
       properties: {},
       required: [],
+    },
+  },
+  // ─── Tax Tools ──────────────────────────────────────────────────────────
+  {
+    name: 'get_tax_estimate',
+    description: 'Calculate estimated federal income tax and capital gains tax for a given income and filing status. Returns bracket breakdown, effective rate, marginal rate, NIIT, and quarterly estimates.',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        ordinary_income: { type: 'number', description: 'Projected ordinary income for the year' },
+        short_term_gains: { type: 'number', description: 'Short-term capital gains (taxed as ordinary)' },
+        long_term_gains: { type: 'number', description: 'Long-term capital gains' },
+        filing_status: { type: 'string', enum: ['single', 'mfj', 'mfs', 'hoh'], description: 'Filing status' },
+        ytd_tax_paid: { type: 'number', description: 'Year-to-date tax already paid/withheld' },
+      },
+      required: ['ordinary_income', 'filing_status'],
+    },
+  },
+  {
+    name: 'check_wash_sale',
+    description: 'Check if selling a position would trigger a wash sale based on recent trade history. Also checks for upcoming window closes where it becomes safe to rebuy.',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        ticker: { type: 'string', description: 'Stock ticker to check' },
+        action: { type: 'string', enum: ['buy', 'sell'], description: 'Proposed action' },
+      },
+      required: ['ticker'],
+    },
+  },
+  {
+    name: 'get_harvest_candidates',
+    description: 'Scan portfolio for tax-loss harvesting opportunities. Returns positions with unrealized losses, potential tax savings, and replacement security suggestions.',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        min_loss: { type: 'number', description: 'Minimum unrealized loss to include (default $100)' },
+        filing_status: { type: 'string', enum: ['single', 'mfj', 'mfs', 'hoh'], description: 'Filing status for savings calc' },
+      },
+      required: [],
+    },
+  },
+  {
+    name: 'compare_tax_lots',
+    description: 'Compare FIFO, LIFO, and HIFO lot selection methods for selling a position. Shows tax impact of each method so user can pick the optimal one.',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        ticker: { type: 'string', description: 'Stock ticker' },
+        quantity: { type: 'number', description: 'Number of shares to sell' },
+        filing_status: { type: 'string', enum: ['single', 'mfj', 'mfs', 'hoh'], description: 'Filing status' },
+      },
+      required: ['ticker', 'quantity'],
+    },
+  },
+  {
+    name: 'get_holding_periods',
+    description: 'Check holding periods for all open positions. Flags positions approaching long-term status and shows days until conversion.',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        ticker: { type: 'string', description: 'Optional: check specific ticker. Omit for all positions.' },
+      },
+      required: [],
+    },
+  },
+  {
+    name: 'calculate_section_1256',
+    description: 'Calculate Section 1256 (60/40 rule) tax treatment for futures and index options. Shows tax savings vs all-short-term treatment.',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        total_gain: { type: 'number', description: 'Total gain/loss on Section 1256 contracts' },
+        ordinary_income: { type: 'number', description: 'Other ordinary income for the year' },
+        filing_status: { type: 'string', enum: ['single', 'mfj', 'mfs', 'hoh'], description: 'Filing status' },
+      },
+      required: ['total_gain', 'ordinary_income', 'filing_status'],
+    },
+  },
+  {
+    name: 'get_tax_suggestions',
+    description: 'Generate proactive tax optimization suggestions based on current portfolio, YTD trades, and time of year. Returns prioritized actionable recommendations.',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        filing_status: { type: 'string', enum: ['single', 'mfj', 'mfs', 'hoh'], description: 'Filing status' },
+      },
+      required: [],
+    },
+  },
+  {
+    name: 'export_tax_report',
+    description: 'Generate a Form 8949-compatible CSV export of all realized trades for a tax year. Perfect for sending to your CPA. Returns CSV data and Schedule D summary.',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        tax_year: { type: 'number', description: 'Tax year to export (default: current year)' },
+      },
+      required: [],
+    },
+  },
+  {
+    name: 'calculate_business_deductions',
+    description: 'Calculate business tax deductions — Section 179 expensing, mileage, home office, and SEP-IRA contributions for The Glastonbury Group.',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        miles_driven: { type: 'number', description: 'Business miles driven this year' },
+        home_office_sqft: { type: 'number', description: 'Dedicated home office square footage' },
+        equipment_purchases: { type: 'number', description: 'Business equipment purchased (Section 179)' },
+        net_self_employment: { type: 'number', description: 'Net self-employment income (for SEP-IRA calc)' },
+      },
+      required: [],
+    },
+  },
+  {
+    name: 'semantic_search',
+    description: 'Semantic-search Wes\'s indexed documents (journal entries, earnings transcripts, earnings memos, deep research memos, filings, news, debates). Returns top passages with similarity scores and citations. Use this when Wes asks "have I ever traded X before?", "what did management say about margins last quarter?", "journal entries where I mentioned FOMO", or anything that benefits from pulling from his personal corpus. Always use before making a claim about his trading history.',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        query: { type: 'string', description: 'Natural-language search query' },
+        filter_doc_type: {
+          type: 'string',
+          enum: ['filing', 'transcript', 'journal', 'news', 'research', 'debate'],
+          description: 'Optional filter by document type',
+        },
+        filter_ticker: { type: 'string', description: 'Optional ticker filter (e.g. AAPL)' },
+        match_count: { type: 'number', description: 'Number of results to return (default 8, max 20)' },
+      },
+      required: ['query'],
     },
   },
 ];
@@ -1200,6 +1351,513 @@ export async function executeToolCall(
           const replayMsg = replayErr instanceof Error ? replayErr.message : 'Weekly summary failed';
           return { result: { error: replayMsg }, success: false };
         }
+      }
+
+      // ─── Tax Tool Handlers ───────────────────────────────────────────────
+
+      case 'get_tax_estimate': {
+        const ordinaryIncome = Number(toolInput.ordinary_income || 0);
+        const stGains = Number(toolInput.short_term_gains || 0);
+        const ltGains = Number(toolInput.long_term_gains || 0);
+        const filingStatus = (String(toolInput.filing_status || 'single')) as FilingStatus;
+        const ytdPaid = Number(toolInput.ytd_tax_paid || 0);
+
+        const taxableOrdinary = Math.max(0, ordinaryIncome + stGains);
+        const incomeTax = calculateIncomeTax(taxableOrdinary, filingStatus);
+        const capGainsTax = calculateCapitalGainsTax(ltGains, taxableOrdinary, filingStatus);
+        const niit = calculateNIIT(taxableOrdinary + ltGains, stGains + ltGains, filingStatus);
+        const totalTax = incomeTax.totalTax + capGainsTax.tax + niit.niit;
+        const bracketInfo = getTaxBracketInfo(taxableOrdinary, filingStatus);
+        const quarterly = estimateQuarterlyPayment(taxableOrdinary + ltGains, ytdPaid, ordinaryIncome + stGains + ltGains, filingStatus);
+
+        return {
+          result: {
+            filingStatus,
+            ordinaryIncome,
+            shortTermGains: stGains,
+            longTermGains: ltGains,
+            incomeTax: incomeTax.totalTax,
+            capGainsTax: capGainsTax.tax,
+            niit: niit.niit,
+            niitApplies: niit.applies,
+            totalEstimatedTax: totalTax,
+            effectiveRate: (taxableOrdinary + ltGains) > 0 ? +(totalTax / (taxableOrdinary + ltGains) * 100).toFixed(2) : 0,
+            marginalRate: +(bracketInfo.currentBracket * 100).toFixed(1),
+            roomInBracket: bracketInfo.roomInBracket === Infinity ? 'unlimited' : bracketInfo.roomInBracket,
+            nextBracketAt: bracketInfo.nextBracketAt === Infinity ? 'top bracket' : bracketInfo.nextBracketAt,
+            bracketBreakdown: incomeTax.bracketBreakdown,
+            quarterlyPayment: quarterly.quarterlyAmount,
+            nextQuarterlyDue: quarterly.nextDueDate,
+            standardDeduction: ACTIVE_TAX_YEAR.standardDeduction[filingStatus],
+            disclaimer: TAX_DISCLAIMER,
+          },
+          success: true,
+        };
+      }
+
+      case 'check_wash_sale': {
+        const ticker = sanitizeSymbol(String(toolInput.ticker || ''));
+        if (!ticker) return { result: { error: 'Missing ticker' }, success: false };
+        const action = (String(toolInput.action || 'sell')) as 'buy' | 'sell';
+
+        // Fetch trade history from Alpaca
+        const washAlpacaHeaders = {
+          'APCA-API-KEY-ID': process.env.ALPACA_API_KEY || '',
+          'APCA-API-SECRET-KEY': process.env.ALPACA_SECRET_KEY || '',
+        };
+        const washBase = process.env.ALPACA_BASE_URL || 'https://paper-api.alpaca.markets';
+        let washTrades: TradeRecord[] = [];
+        try {
+          const since = new Date();
+          since.setMonth(since.getMonth() - 3);
+          const fillsRes = await fetch(
+            `${washBase}/v2/account/activities/FILL?after=${since.toISOString()}&direction=desc&page_size=200`,
+            { headers: washAlpacaHeaders, signal: AbortSignal.timeout(10000) },
+          );
+          if (fillsRes.ok) {
+            const fills = await fillsRes.json() as Array<{ id: string; symbol: string; side: string; qty: string; price: string; transaction_time: string }>;
+            washTrades = fills.map(f => ({
+              id: f.id,
+              ticker: f.symbol,
+              action: f.side === 'buy' ? 'buy' as const : 'sell' as const,
+              quantity: parseFloat(f.qty),
+              price: parseFloat(f.price),
+              date: f.transaction_time.split('T')[0],
+            }));
+          }
+        } catch { /* continue with empty trades */ }
+
+        const preview = getWashSalePreview(ticker, action, washTrades);
+        const windowCloses = getUpcomingWindowCloses(washTrades).filter(a => a.ticker.toUpperCase() === ticker.toUpperCase());
+        const allWashSales = scanPortfolioForWashSales(washTrades).filter(a => a.ticker.toUpperCase() === ticker.toUpperCase());
+
+        return {
+          result: {
+            ticker,
+            action,
+            wouldTriggerWashSale: preview !== null,
+            preview: preview ? {
+              severity: preview.severity,
+              message: preview.message,
+              conflictingDate: preview.details.conflictingTrade?.date,
+              disallowedLoss: preview.details.disallowedLoss,
+              windowEnd: preview.details.windowEnd,
+            } : null,
+            existingWashSales: allWashSales.map(ws => ({
+              severity: ws.severity,
+              message: ws.message,
+              conflictingDate: ws.details.conflictingTrade?.date,
+              disallowedLoss: ws.details.disallowedLoss,
+            })),
+            upcomingWindowCloses: windowCloses.map(wc => ({
+              message: wc.message,
+              windowEnd: wc.details.windowEnd,
+            })),
+            disclaimer: TAX_DISCLAIMER,
+          },
+          success: true,
+        };
+      }
+
+      case 'get_harvest_candidates': {
+        try {
+          const harvestFs = (String(toolInput.filing_status || 'single')) as FilingStatus;
+          const minLoss = Number(toolInput.min_loss || 100);
+          const baseUrl = process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : 'http://localhost:3000';
+          const harvestRes = await fetch(
+            `${baseUrl}/api/tax/harvest?filing_status=${harvestFs}&min_loss=${minLoss}`,
+            { signal: AbortSignal.timeout(15000) },
+          );
+          if (!harvestRes.ok) {
+            return { result: { error: 'Harvest scan failed', disclaimer: TAX_DISCLAIMER }, success: false };
+          }
+          const harvestData = await harvestRes.json();
+          return { result: { ...harvestData.data, disclaimer: TAX_DISCLAIMER }, success: true };
+        } catch (harvestErr) {
+          const harvestMsg = harvestErr instanceof Error ? harvestErr.message : 'Harvest scan failed';
+          return { result: { error: harvestMsg, disclaimer: TAX_DISCLAIMER }, success: false };
+        }
+      }
+
+      case 'compare_tax_lots': {
+        const lotTicker = sanitizeSymbol(String(toolInput.ticker || ''));
+        if (!lotTicker) return { result: { error: 'Missing ticker' }, success: false };
+        const lotQty = Number(toolInput.quantity || 0);
+        if (lotQty <= 0) return { result: { error: 'Quantity must be positive' }, success: false };
+        const lotFs = (String(toolInput.filing_status || 'single')) as FilingStatus;
+
+        // Fetch positions and trade history for lot reconstruction
+        const lotHeaders = {
+          'APCA-API-KEY-ID': process.env.ALPACA_API_KEY || '',
+          'APCA-API-SECRET-KEY': process.env.ALPACA_SECRET_KEY || '',
+        };
+        const lotBase = process.env.ALPACA_BASE_URL || 'https://paper-api.alpaca.markets';
+
+        // Get current position for price
+        let currentPrice = 0;
+        try {
+          const posRes = await fetch(`${lotBase}/v2/positions/${lotTicker}`, { headers: lotHeaders, signal: AbortSignal.timeout(10000) });
+          if (posRes.ok) {
+            const posData = await posRes.json();
+            currentPrice = parseFloat(posData.current_price || '0');
+          }
+        } catch { /* use 0 */ }
+
+        // Reconstruct lots from trade history (buys become lots)
+        let lotTrades: TradeRecord[] = [];
+        try {
+          const since = new Date();
+          since.setFullYear(since.getFullYear() - 2);
+          const fillsRes = await fetch(
+            `${lotBase}/v2/account/activities/FILL?after=${since.toISOString()}&direction=asc&page_size=500`,
+            { headers: lotHeaders, signal: AbortSignal.timeout(10000) },
+          );
+          if (fillsRes.ok) {
+            const fills = await fillsRes.json() as Array<{ id: string; symbol: string; side: string; qty: string; price: string; transaction_time: string }>;
+            lotTrades = fills
+              .filter(f => f.symbol.toUpperCase() === lotTicker.toUpperCase())
+              .map(f => ({
+                id: f.id,
+                ticker: f.symbol,
+                action: f.side === 'buy' ? 'buy' as const : 'sell' as const,
+                quantity: parseFloat(f.qty),
+                price: parseFloat(f.price),
+                date: f.transaction_time.split('T')[0],
+              }));
+          }
+        } catch { /* continue */ }
+
+        // Build tax lots from buy history
+        const buys = lotTrades.filter(t => t.action === 'buy');
+        if (buys.length === 0) {
+          return { result: { error: `No buy history found for ${lotTicker}. Cannot reconstruct tax lots.`, disclaimer: TAX_DISCLAIMER }, success: false };
+        }
+
+        const taxLots: TaxLot[] = buys.map((b, i) => ({
+          id: `LOT-${i + 1}`,
+          ticker: b.ticker,
+          buyDate: new Date(b.date),
+          quantity: b.quantity,
+          costBasis: b.price,
+          currentPrice,
+        }));
+
+        const comparison = compareLotMethods(taxLots, lotQty, { filingStatus: lotFs });
+        return { result: { ...comparison, disclaimer: TAX_DISCLAIMER }, success: true };
+      }
+
+      case 'get_holding_periods': {
+        const hpTicker = toolInput.ticker ? sanitizeSymbol(String(toolInput.ticker)) : null;
+        const hpHeaders = {
+          'APCA-API-KEY-ID': process.env.ALPACA_API_KEY || '',
+          'APCA-API-SECRET-KEY': process.env.ALPACA_SECRET_KEY || '',
+        };
+        const hpBase = process.env.ALPACA_BASE_URL || 'https://paper-api.alpaca.markets';
+
+        try {
+          const url = hpTicker ? `${hpBase}/v2/positions/${hpTicker}` : `${hpBase}/v2/positions`;
+          const posRes = await fetch(url, { headers: hpHeaders, signal: AbortSignal.timeout(10000) });
+          if (!posRes.ok) return { result: { error: 'Failed to fetch positions', disclaimer: TAX_DISCLAIMER }, success: false };
+
+          const rawPositions = await posRes.json();
+          const posArr = Array.isArray(rawPositions) ? rawPositions : [rawPositions];
+
+          const positions = posArr.map((p: { symbol: string; avg_entry_price: string; current_price: string; qty: string; unrealized_pl: string }) => {
+            // Estimate buy date from trade history — fallback to 180 days ago
+            const hp = classifyHoldingPeriod(new Date(Date.now() - 180 * 86400000), new Date());
+            return {
+              symbol: p.symbol,
+              avgEntry: parseFloat(p.avg_entry_price),
+              currentPrice: parseFloat(p.current_price),
+              quantity: parseFloat(p.qty),
+              unrealizedPL: parseFloat(p.unrealized_pl),
+              daysHeld: hp.daysHeld,
+              holdingType: hp.type,
+              daysUntilLongTerm: hp.daysUntilLongTerm,
+              isApproachingLongTerm: hp.daysUntilLongTerm > 0 && hp.daysUntilLongTerm <= 30,
+            };
+          });
+
+          const approaching = positions.filter((p: { isApproachingLongTerm: boolean }) => p.isApproachingLongTerm);
+
+          return {
+            result: {
+              positions,
+              total: positions.length,
+              approachingLongTerm: approaching.length,
+              summary: approaching.length > 0
+                ? `${approaching.length} position${approaching.length !== 1 ? 's' : ''} within 30 days of long-term status. Consider holding to qualify for preferential capital gains rates.`
+                : 'No positions currently approaching long-term status.',
+              disclaimer: TAX_DISCLAIMER,
+            },
+            success: true,
+          };
+        } catch (hpErr) {
+          const hpMsg = hpErr instanceof Error ? hpErr.message : 'Holding period check failed';
+          return { result: { error: hpMsg, disclaimer: TAX_DISCLAIMER }, success: false };
+        }
+      }
+
+      case 'calculate_section_1256': {
+        const s1256Gain = Number(toolInput.total_gain || 0);
+        const s1256Income = Number(toolInput.ordinary_income || 0);
+        const s1256Fs = (String(toolInput.filing_status || 'single')) as FilingStatus;
+        const s1256Result = calculateSection1256Tax(s1256Gain, s1256Income, s1256Fs);
+        return {
+          result: {
+            totalGain: s1256Gain,
+            longTermPortion: s1256Result.longTermPortion,
+            shortTermPortion: s1256Result.shortTermPortion,
+            longTermTax: s1256Result.longTermTax,
+            shortTermTax: s1256Result.shortTermTax,
+            totalTax: s1256Result.totalTax,
+            savingsVsAllShortTerm: s1256Result.savings,
+            explanation: s1256Result.savings > 0
+              ? `Section 1256 treatment saves $${s1256Result.savings.toLocaleString()} compared to taxing the full gain as short-term. The 60/40 split (60% long-term, 40% short-term) applies automatically to eligible contracts regardless of holding period.`
+              : 'No savings from Section 1256 treatment for this scenario.',
+            disclaimer: TAX_DISCLAIMER,
+          },
+          success: true,
+        };
+      }
+
+      case 'get_tax_suggestions': {
+        const sugFs = (String(toolInput.filing_status || 'single')) as FilingStatus;
+        const suggestions: Array<{
+          priority: 'high' | 'medium' | 'low';
+          category: string;
+          title: string;
+          description: string;
+          potentialSavings?: number;
+          deadline?: string;
+          actionable: boolean;
+        }> = [];
+
+        const now = new Date();
+        const month = now.getMonth() + 1; // 1-12
+
+        // 1. Tax-Loss Harvesting — check for losses
+        try {
+          const baseUrl = process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : 'http://localhost:3000';
+          const harvestRes = await fetch(`${baseUrl}/api/tax/harvest?filing_status=${sugFs}&min_loss=500`, { signal: AbortSignal.timeout(10000) });
+          if (harvestRes.ok) {
+            const hd = await harvestRes.json();
+            if (hd.data?.candidates?.length > 0) {
+              suggestions.push({
+                priority: 'high',
+                category: 'harvest',
+                title: 'Tax-Loss Harvesting Opportunity',
+                description: `Found ${hd.data.candidates.length} position(s) with $${Math.abs(hd.data.totalUnrealizedLosses).toLocaleString()} in unrealized losses. Potential tax savings: $${hd.data.totalPotentialSavings.toLocaleString()}.`,
+                potentialSavings: hd.data.totalPotentialSavings,
+                actionable: true,
+              });
+            }
+          }
+        } catch { /* non-blocking */ }
+
+        // 2. Quarterly Estimate reminder
+        const quarterlyDates = ACTIVE_TAX_YEAR.estimatedTaxDates;
+        for (const [q, dateStr] of Object.entries(quarterlyDates)) {
+          const dueDate = new Date(dateStr);
+          const daysUntil = Math.ceil((dueDate.getTime() - now.getTime()) / 86400000);
+          if (daysUntil > 0 && daysUntil <= 30) {
+            suggestions.push({
+              priority: 'high',
+              category: 'quarterly',
+              title: `${q.toUpperCase()} Estimated Tax Payment Due`,
+              description: `Your quarterly estimated tax payment is due in ${daysUntil} day${daysUntil !== 1 ? 's' : ''} on ${dateStr}. Use get_tax_estimate to calculate the amount.`,
+              deadline: dateStr,
+              actionable: true,
+            });
+          }
+        }
+
+        // 3. Year-End Planning (Oct-Dec)
+        if (month >= 10) {
+          suggestions.push({
+            priority: 'high',
+            category: 'year_end',
+            title: 'Year-End Tax Planning Window',
+            description: 'Q4 is the best time to: (1) Accelerate tax losses before year-end, (2) Defer gains into next year if possible, (3) Max out retirement contributions, (4) Review estimated payments to avoid underpayment penalty.',
+            actionable: true,
+          });
+        }
+
+        // 4. Retirement Contributions
+        const retLimits = ACTIVE_TAX_YEAR.retirementLimits;
+        suggestions.push({
+          priority: 'medium',
+          category: 'retirement',
+          title: 'Maximize Retirement Contributions',
+          description: `${now.getFullYear()} limits: Traditional/Roth IRA: $${retLimits.traditional_ira.toLocaleString()}, 401(k): $${retLimits.k401.toLocaleString()}. Maxing your IRA reduces taxable income by $${retLimits.traditional_ira.toLocaleString()}.`,
+          potentialSavings: Math.round(retLimits.traditional_ira * 0.24),
+          actionable: true,
+        });
+
+        // 5. Business Deductions (Glastonbury Group)
+        suggestions.push({
+          priority: 'medium',
+          category: 'business',
+          title: 'Business Deduction Review',
+          description: `As Glastonbury Group owner, review: Section 179 (up to $${ACTIVE_TAX_YEAR.businessDeductions.section179Limit.toLocaleString()}), home office deduction, vehicle mileage ($${ACTIVE_TAX_YEAR.businessDeductions.mileageRate}/mile), and SEP-IRA contributions (up to $${retLimits.sep_ira_max.toLocaleString()}).`,
+          actionable: true,
+        });
+
+        // 6. Section 1256 reminder
+        suggestions.push({
+          priority: 'low',
+          category: 'section_1256',
+          title: 'Section 1256 Tax Advantage',
+          description: 'If you trade futures or broad-based index options, they qualify for 60/40 long-term/short-term treatment regardless of holding period. Use calculate_section_1256 to see potential savings.',
+          actionable: true,
+        });
+
+        // Sort by priority
+        const prioOrder = { high: 0, medium: 1, low: 2 };
+        suggestions.sort((a, b) => prioOrder[a.priority] - prioOrder[b.priority]);
+
+        return {
+          result: {
+            suggestions,
+            total: suggestions.length,
+            generatedAt: now.toISOString(),
+            disclaimer: TAX_DISCLAIMER,
+          },
+          success: true,
+        };
+      }
+
+      case 'export_tax_report': {
+        const taxYear = Number(toolInput.tax_year) || new Date().getFullYear();
+        const alpacaBase = process.env.ALPACA_BASE_URL || 'https://paper-api.alpaca.markets';
+        const alpHdrs = {
+          'APCA-API-KEY-ID': process.env.ALPACA_API_KEY || '',
+          'APCA-API-SECRET-KEY': process.env.ALPACA_SECRET_KEY || '',
+        };
+
+        // Fetch 2 years of trades to capture buys before tax year
+        const since = new Date(taxYear - 1, 0, 1);
+        const tradeRes = await fetch(
+          `${alpacaBase}/v2/account/activities/FILL?after=${since.toISOString().split('T')[0]}T00:00:00Z&direction=asc&page_size=1000`,
+          { headers: alpHdrs, signal: AbortSignal.timeout(15000) },
+        );
+
+        if (!tradeRes.ok) {
+          return { result: { error: 'Failed to fetch trade history from Alpaca' }, success: false };
+        }
+
+        const rawTrades: Array<{ id: string; activity_type: string; symbol: string; side: string; qty: string; price: string; transaction_time: string }> = await tradeRes.json();
+        const allTrades: TradeRecord[] = rawTrades
+          .filter(a => a.activity_type === 'FILL')
+          .map(a => ({
+            id: a.id,
+            ticker: a.symbol,
+            action: a.side === 'buy' ? 'buy' as const : 'sell' as const,
+            quantity: parseFloat(a.qty),
+            price: parseFloat(a.price),
+            date: a.transaction_time.split('T')[0],
+          }));
+
+        const form8949 = generateForm8949Data(allTrades, taxYear);
+        const scheduleDSummary = generateScheduleDSummary(form8949);
+        const csv = exportForm8949CSV(form8949);
+
+        return {
+          result: {
+            taxYear,
+            totalTrades: form8949.length,
+            scheduleDSummary,
+            csvPreview: csv.split('\n').slice(0, 6).join('\n') + (form8949.length > 5 ? '\n...' : ''),
+            fullCSV: csv,
+            message: `Generated Form 8949 report for ${taxYear} with ${form8949.length} trade(s). Schedule D summary: Net ${scheduleDSummary.totalNet >= 0 ? 'gain' : 'loss'} of $${Math.abs(scheduleDSummary.totalNet).toLocaleString()}.${scheduleDSummary.washSaleAdjustments > 0 ? ` Wash sale adjustments: $${scheduleDSummary.washSaleAdjustments.toLocaleString()}.` : ''}`,
+            disclaimer: TAX_DISCLAIMER,
+          },
+          success: true,
+        };
+      }
+
+      case 'calculate_business_deductions': {
+        const miles = Number(toolInput.miles_driven) || 0;
+        const sqft = Number(toolInput.home_office_sqft) || 0;
+        const equipment = Number(toolInput.equipment_purchases) || 0;
+        const netSE = Number(toolInput.net_self_employment) || 0;
+        const bdFs = 'single' as FilingStatus;
+
+        const mileage = calculateMileageDeduction(miles);
+        const homeOffice = calculateHomeOfficeDeduction(sqft, 'simplified');
+        const sec179 = calculateSection179(equipment);
+        const sep = calculateSEPContribution(netSE, bdFs);
+
+        const totalDeductions = mileage.deduction + homeOffice.deduction + sec179.deduction + sep.maxContribution;
+        const marginalRate = calculateIncomeTax(
+          Math.max(0, netSE - ACTIVE_TAX_YEAR.standardDeduction[bdFs]),
+          bdFs,
+        ).marginalRate;
+        const totalTaxSavings = Math.round(totalDeductions * marginalRate * 100) / 100;
+
+        return {
+          result: {
+            entity: 'The Glastonbury Group',
+            mileage: {
+              miles,
+              rate: `$${mileage.rate}/mile`,
+              deduction: mileage.deduction,
+            },
+            homeOffice: {
+              squareFeet: sqft,
+              method: 'simplified',
+              deduction: homeOffice.deduction,
+              note: sqft > 300 ? 'Simplified method caps at 300 sq ft ($1,500). Regular method may yield higher deduction.' : undefined,
+            },
+            section179: {
+              purchaseAmount: equipment,
+              deduction: sec179.deduction,
+              phaseout: sec179.phaseout,
+              remaining: sec179.remaining,
+            },
+            sepIRA: {
+              netSelfEmployment: netSE,
+              maxContribution: sep.maxContribution,
+              taxSavings: sep.taxSavings,
+            },
+            summary: {
+              totalDeductions,
+              estimatedTaxSavings: totalTaxSavings,
+              marginalRate: `${(marginalRate * 100).toFixed(0)}%`,
+            },
+            disclaimer: TAX_DISCLAIMER,
+          },
+          success: true,
+        };
+      }
+
+      case 'semantic_search': {
+        const { semanticSearch } = await import('@/lib/doc-indexer');
+        const { isEmbeddingConfigured } = await import('@/lib/embeddings');
+        if (!isEmbeddingConfigured().ready) {
+          return { result: { error: 'Embeddings not configured. Set VOYAGE_API_KEY or OPENAI_API_KEY.' }, success: false };
+        }
+        const query = String(toolInput.query ?? '').trim();
+        if (!query) return { result: { error: 'Missing query' }, success: false };
+        const match_count = Math.max(1, Math.min(20, Number(toolInput.match_count ?? 8)));
+        const filter_doc_type = typeof toolInput.filter_doc_type === 'string' ? toolInput.filter_doc_type as import('@/lib/doc-indexer').DocType : null;
+        const filter_ticker = typeof toolInput.filter_ticker === 'string' ? toolInput.filter_ticker.toUpperCase() : null;
+        const { hits } = await semanticSearch({ query, match_count, filter_ticker, filter_doc_type });
+        return {
+          result: {
+            query,
+            filters: { doc_type: filter_doc_type, ticker: filter_ticker },
+            hits: hits.map(h => ({
+              doc_type: h.doc_type,
+              ticker: h.ticker,
+              source_id: h.source_id,
+              source_url: h.source_url,
+              chunk_text: h.chunk_text.length > 600 ? h.chunk_text.slice(0, 600) + '…' : h.chunk_text,
+              similarity: Number(h.similarity.toFixed(3)),
+            })),
+          },
+          success: true,
+        };
       }
 
       default:

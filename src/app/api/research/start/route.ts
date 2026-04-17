@@ -3,6 +3,8 @@ import { createServiceClient } from '@/lib/supabase';
 import { rateLimit } from '@/lib/rate-limit';
 import { runResearchAgent, wordCount, type AgentEvent } from '@/lib/research-agent';
 import { sendResendEmail } from '@/lib/resend-client';
+import { indexDoc } from '@/lib/doc-indexer';
+import { isEmbeddingConfigured } from '@/lib/embeddings';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -91,6 +93,18 @@ export async function POST(req: NextRequest) {
             subject: `Deep Research — ${ticker ?? 'Memo'} — ${wc} words`,
             text: `Your research memo is ready.\n\nTopic: ${topic}\nTicker: ${ticker ?? 'n/a'}\nWords: ${wc}\nSources: ${result.sources_cited.length}\nCost: $${result.total_cost_usd.toFixed(4)}\nRuntime: ${result.total_runtime_seconds}s\n\nRead it: ${process.env.NEXT_PUBLIC_APP_URL ?? ''}/research/${memoId}`,
           }).catch(() => {});
+
+          // Auto-index into doc_chunks for Phase 6 semantic search.
+          if (isEmbeddingConfigured().ready) {
+            indexDoc({
+              doc_type: 'research',
+              source_id: memoId,
+              content: result.memo_markdown,
+              ticker: ticker || null,
+              source_url: `${process.env.NEXT_PUBLIC_APP_URL ?? ''}/research/${memoId}`,
+              metadata: { topic, word_count: wc, source: 'deep_research_memo' },
+            }).catch(() => {});
+          }
         }
 
         send({
