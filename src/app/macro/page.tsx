@@ -4,6 +4,9 @@ import { useState, useEffect } from 'react';
 import { AppShell } from '@/components/layout/AppShell';
 import { ErrorBoundary } from '@/components/ErrorBoundary';
 import { Globe } from 'lucide-react';
+import { PredictionMarketsCard } from '@/components/macro/PredictionMarketsCard';
+
+const PREDICTION_MARKETS_ENABLED = process.env.NEXT_PUBLIC_FEATURE_PREDICTION_MARKETS === 'true';
 
 interface FactorDetail {
   score: number;
@@ -151,6 +154,12 @@ export default function MacroPage() {
             Macro Regime Dashboard
           </h1>
         </div>
+
+        {PREDICTION_MARKETS_ENABLED && (
+          <ErrorBoundary label="prediction-markets">
+            <PredictionMarketsCard />
+          </ErrorBoundary>
+        )}
 
         {loading ? (
           <LoadingSkeleton />
