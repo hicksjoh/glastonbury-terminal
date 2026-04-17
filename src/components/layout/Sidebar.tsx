@@ -132,7 +132,8 @@ export function Sidebar({ isOpen, isMobile, onClose, compact, onToggleCompact }:
   return (
     <aside aria-label="Sidebar navigation" style={{
       width: sidebarWidth,
-      minHeight: '100vh',
+      height: '100vh',
+      maxHeight: '100vh',
       backgroundColor: '#1a1a24',
       borderRight: '1px solid #2a2a3a',
       display: 'flex',
@@ -144,6 +145,7 @@ export function Sidebar({ isOpen, isMobile, onClose, compact, onToggleCompact }:
       zIndex: 40,
       overflowY: isCompact ? 'visible' : 'auto',
       overflowX: isCompact ? 'visible' : 'hidden',
+      overscrollBehavior: 'contain',
       transform: isMobile && !isOpen ? 'translateX(-100%)' : 'translateX(0)',
       transition: 'width 200ms ease, padding 200ms ease, transform 0.3s ease',
     }}>
