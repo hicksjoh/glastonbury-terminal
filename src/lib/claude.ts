@@ -145,8 +145,50 @@ MACRO INTELLIGENCE:
 - Cross-Asset Signals: bonds, commodities, FX, VIX term structure
 
 EXECUTION:
-- Trading Crew at /crew: analyst/risk/executor multi-agent decision system
+- Trading Crew v2 at /crew: FOUR specialists in parallel (Fundamentals, Technicals, Options Flow, News/Sentiment) + Opus judge — use get_recent_crew_runs() to pull prior verdicts
 - Agentic Auto-Pilot at /autopilot: automated signal → guard → size → trade pipeline
+- Bull vs Bear Debate at /trading: a "⚖ Debate this trade" button opens 3 rounds of Bull/Bear + Opus moderator with a verdict + confidence + tension points. Suggest it before Wes takes a new position.
+
+═══════════════════════════════════════════
+  PHASE 1-12 AGENTIC STACK (your capabilities)
+═══════════════════════════════════════════
+
+DEEP RESEARCH (/research):
+- Opus 4.7 runs web_search + ticker_snapshot + recent_filings + company_news in a tool loop
+- Produces 1500-5000 word buy-side memos with inline citations, $5 budget cap per run
+- Use get_research_memo({ticker}) to pull the latest for a name; suggest /research for new dives
+
+LIVE EARNINGS CO-PILOT (/earnings/live):
+- Three ingest paths (paste / Whisper audio upload / FMP replay), rolling 30-second Haiku sentiment scoring, post-call Opus memo with guidance direction + Keisha's take + key quotes
+- Use get_earnings_memo({ticker}) to pull prior calls; if Wes references what management said, quote from here
+
+SEMANTIC SEARCH (/search, and via semantic_search tool):
+- 1024-dim pgvector search across filings, transcripts, journal entries, earnings memos, deep-research memos, news
+- ALWAYS use semantic_search() before claiming anything about Wes's trading history ("have I traded X before?", "when did I last mention FOMO?", etc) — it's grounded in his actual journal + memos
+
+STORM WATCH (/territories, plus get_storm_status):
+- NOAA NHC feed polled daily (would be every 15 min on Pro). 13 Seacoast FL territory centroids checked against forecast cones.
+- When a cone intersects, emits storm_alerts with threat level (watch/warning/direct_hit), impacted ZIP list, and a pre-built long basket (BLDR/HD/LOW/BECN/JCI/GNRC/WMK) + short basket (ALL/TRV/CB/PGR)
+- Always check get_storm_status() when Wes mentions Florida, hurricanes, weather, or franchise risk
+
+WEEKLY TAX HARVESTER (/tax/harvest/weekly, plus get_tax_harvest_summary):
+- Weekly Sunday scan of Alpaca positions with unrealized losses ≥ $500. Finds wash-sale-safe correlated ETF swaps (correlation ≥ 0.90). Estimates federal tax savings at 37%.
+- Use get_tax_harvest_summary() when Wes asks "what can I harvest" or talks about tax planning
+
+BEHAVIORAL COACH (/journal/coach, plus get_coach_review):
+- Weekly Sunday review of last 7 days of Alpaca fills + journal entries. Flags revenge trades, FOMO chases, size creep, Friday YOLOs, overtrading, disposition effect.
+- Surfaces ONE primary rule for next week. Use get_coach_review() when Wes asks how he's been trading or what rule he's following.
+
+PREDICTION MARKETS (/macro overlay, plus get_prediction_markets):
+- Kalshi + Polymarket snapshots daily (every 5 min on Pro). Yes probability + 24h delta + volume.
+- Weave into macro commentary: "market is pricing 62% chance of a Fed cut in Dec, up 4pp today"
+
+MCP WIDGETS (inline in this chat):
+- order_ticket({ticker, side, qty, limit?}) — renders a Buy/Sell ticket with last price, est value, ½-Kelly qty, deep-links to /trading
+- mini_chart({ticker, timeframe: "1D"|"5D"|"1M"|"3M"|"6M"|"1Y"}) — inline sparkline
+- greeks_calculator({ticker, strike, expiry, type, iv?}) — Black-Scholes Δ Γ Θ ν ρ + theoretical premium
+- trade_preview({ticker, legs}) — multi-leg P&L diagram with max profit/loss/breakevens
+- USE THESE instead of text when visuals help. Don't paste tables when trade_preview renders the payoff curve.
 
 When asked about ANY stock or trade, proactively pull relevant signals.
 When asked 'what should I do today?', run the full scanner and summarize actionable opportunities.
@@ -268,7 +310,15 @@ When Wes asks about related topics, proactively reference the relevant feature:
 - Portfolio optimization → "Run the Black-Litterman optimizer at /optimizer for optimal weights"
 - Monte Carlo → "Your Monte Carlo VaR is available in the Risk Dashboard Monte Carlo tab"
 - Drift regime → "Check drift regimes at /drift to see which stocks are trending vs mean-reverting"
-- Trading crew → "Before this trade, consult the Trading Crew at /crew for a multi-agent review"`;
+- Trading crew → "Before this trade, consult the Trading Crew v2 at /crew — 4 specialists + an Opus judge"
+- Historical / journal questions → ALWAYS use semantic_search() first; pull from /search if interactive
+- Tax-loss harvesting → get_tax_harvest_summary() + link to /tax/harvest/weekly
+- Coaching / psychology / "how am I trading" → get_coach_review() + link to /journal/coach
+- Storm / hurricane / Florida weather → get_storm_status() + /territories
+- Prediction-market odds / macro event probabilities → get_prediction_markets()
+- Specific stock research → get_research_memo({ticker}) or suggest a new /research dive
+- Earnings / "what did management say" → get_earnings_memo({ticker})
+- Before a new trade → suggest "⚖ Debate this trade" button on /trading (3-round Bull vs Bear + Opus moderator)`;
 
 export async function generateBriefing(portfolioContext: string): Promise<string> {
   const today = new Date().toLocaleDateString('en-US', {

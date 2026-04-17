@@ -472,6 +472,79 @@ export const KEISHA_TOOLS: Tool[] = [
     },
   },
   {
+    name: 'get_storm_status',
+    description: 'Get the current CR3 Storm Watch — active NOAA NHC alerts within 48 hours, threat levels per Seacoast FL territory, and the recommended long/short hurricane basket. Use when Wes asks about storms, hurricanes, weather risk, or Florida franchise exposure.',
+    input_schema: { type: 'object' as const, properties: {}, required: [] },
+  },
+  {
+    name: 'get_tax_harvest_summary',
+    description: 'Get this week\'s weekly tax-loss harvester output from /tax/harvest/weekly — total unrealized loss scanned, total estimated federal tax savings, per-position suggestions (loss + suggested ETF swap + wash-sale safety). Different from the inline harvest-candidates scan; this reads the persisted weekly run.',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        week_of: { type: 'string', description: 'Optional Monday-of-week ISO date (YYYY-MM-DD). Defaults to the most recent.' },
+      },
+      required: [],
+    },
+  },
+  {
+    name: 'get_coach_review',
+    description: 'Get the latest weekly behavioral coach review — patterns detected (revenge trades, FOMO, size creep, etc), the primary rule for next week, and the review body. Use when Wes asks how he\'s trading, what patterns he\'s in, or what rule he should be following.',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        week_of: { type: 'string', description: 'Optional Monday-of-week ISO date. Defaults to the most recent.' },
+      },
+      required: [],
+    },
+  },
+  {
+    name: 'get_recent_crew_runs',
+    description: 'List the most recent Trading Crew v2 verdicts — 4-specialist parallel analysis with an Opus judge synthesis. Returns ticker, verdict (BULL/BEAR/NEUTRAL/PASS), confidence, rationale, suggested trade, cost, latency. Optional ticker filter.',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        ticker: { type: 'string', description: 'Optional ticker filter' },
+        limit: { type: 'number', description: 'Max rows (1-20, default 5)' },
+      },
+      required: [],
+    },
+  },
+  {
+    name: 'get_earnings_memo',
+    description: 'Pull the most recent post-call earnings memo for a ticker from /earnings/live — structured memo with guidance direction (up/down/flat/unclear), Keisha\'s take, and key quotes with speakers. Use when Wes asks what management said on the call or how the quarter went.',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        ticker: { type: 'string', description: 'Stock ticker' },
+      },
+      required: ['ticker'],
+    },
+  },
+  {
+    name: 'get_research_memo',
+    description: 'Pull the latest deep-research memo for a ticker or topic from /research — 1500-5000 word buy-side memo with inline citations. Use when Wes asks about the research he\'s commissioned on a name.',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        ticker: { type: 'string', description: 'Optional ticker' },
+        topic_contains: { type: 'string', description: 'Optional substring to match against the topic field' },
+      },
+      required: [],
+    },
+  },
+  {
+    name: 'get_prediction_markets',
+    description: 'Get the latest Kalshi + Polymarket probability snapshots from /macro — curated markets on Fed decisions, CPI, recession odds, elections, etc. Each row has the Yes price, 24h delta, source, volume.',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        category: { type: 'string', description: 'Optional category filter (e.g. "fed", "economy", "election")' },
+      },
+      required: [],
+    },
+  },
+  {
     name: 'semantic_search',
     description: 'Semantic-search Wes\'s indexed documents (journal entries, earnings transcripts, earnings memos, deep research memos, filings, news, debates). Returns top passages with similarity scores and citations. Use this when Wes asks "have I ever traded X before?", "what did management say about margins last quarter?", "journal entries where I mentioned FOMO", or anything that benefits from pulling from his personal corpus. Always use before making a claim about his trading history.',
     input_schema: {
@@ -2046,6 +2119,182 @@ export async function executeToolCall(
             max_loss: isFinite(maxLoss) ? Number(maxLoss.toFixed(2)) : null,
             breakevens,
             payoff_curve: curve,
+          },
+          success: true,
+        };
+      }
+
+      case 'get_storm_status': {
+        const sb = createServiceClient();
+        const since = new Date(Date.now() - 48 * 60 * 60 * 1000).toISOString();
+        const [{ data: alerts }, { data: territories }] = await Promise.all([
+          sb.from('storm_alerts').select('storm_id, storm_name, category, threat_level, impacted_territory_ids, impacted_zips, recommended_long_basket, recommended_short_basket, suggested_sizing_notes, created_at')
+            .gte('created_at', since).order('created_at', { ascending: false }).limit(10),
+          sb.from('cr3_territories').select('territory_id, county, zip_codes').eq('ar_type', 'Seacoast FL'),
+        ]);
+        const alertsArr = (alerts as unknown as Array<{ threat_level: string; impacted_territory_ids: string[] }>) ?? [];
+        const active = alertsArr.filter(a => a.threat_level !== 'clear');
+        return {
+          result: {
+            active_alert_count: active.length,
+            highest_threat: active.length ? active.reduce((acc, a) => ({ clear: 0, watch: 1, warning: 2, direct_hit: 3 } as Record<string, number>)[a.threat_level] > ({ clear: 0, watch: 1, warning: 2, direct_hit: 3 } as Record<string, number>)[acc.threat_level] ? a : acc).threat_level : 'clear',
+            alerts: alertsArr.slice(0, 5),
+            territory_count: (territories as unknown as unknown[])?.length ?? 0,
+            link: '/territories',
+          },
+          success: true,
+        };
+      }
+
+      case 'get_tax_harvest_summary': {
+        const sb = createServiceClient();
+        const week = String(toolInput.week_of ?? '');
+        let q = sb.from('tax_harvest_suggestions')
+          .select('week_of, position_ticker, unrealized_loss, swap_candidate_ticker, swap_correlation, wash_sale_safe, estimated_tax_savings_usd, status, notes')
+          .eq('user_id', 'wes')
+          .order('week_of', { ascending: false }).order('unrealized_loss', { ascending: true }).limit(50);
+        if (week) q = q.eq('week_of', week);
+        const { data } = await q;
+        const rows = (data as unknown as Array<{ week_of: string; unrealized_loss: number | null; estimated_tax_savings_usd: number | null; status: string }>) ?? [];
+        const latestWeek = rows[0]?.week_of ?? null;
+        const thisWeek = rows.filter(r => r.week_of === latestWeek);
+        const totalLoss = thisWeek.reduce((s, r) => s + Math.abs(Number(r.unrealized_loss) || 0), 0);
+        const totalSavings = thisWeek.reduce((s, r) => s + (Number(r.estimated_tax_savings_usd) || 0), 0);
+        return {
+          result: {
+            week_of: latestWeek,
+            suggestion_count: thisWeek.length,
+            total_unrealized_loss_scanned: totalLoss,
+            total_estimated_tax_savings_usd: totalSavings,
+            suggestions: thisWeek.slice(0, 10),
+            link: '/tax/harvest/weekly',
+          },
+          success: true,
+        };
+      }
+
+      case 'get_coach_review': {
+        const sb = createServiceClient();
+        const week = String(toolInput.week_of ?? '');
+        let q = sb.from('coach_reviews')
+          .select('week_of, review_markdown, patterns_detected, primary_rule_for_next_week, trade_count, pnl_usd, created_at')
+          .eq('user_id', 'wes')
+          .order('week_of', { ascending: false }).limit(1);
+        if (week) q = q.eq('week_of', week);
+        const { data } = await q;
+        const row = (data as unknown as Array<{ week_of: string; review_markdown: string; patterns_detected: unknown; primary_rule_for_next_week: string; trade_count: number | null; pnl_usd: number | null }>)?.[0] ?? null;
+        if (!row) return { result: { error: 'No coach reviews yet. Run one at /journal/coach.', link: '/journal/coach' }, success: false };
+        return {
+          result: {
+            week_of: row.week_of,
+            primary_rule_for_next_week: row.primary_rule_for_next_week,
+            patterns_detected: row.patterns_detected,
+            trade_count: row.trade_count,
+            pnl_usd: row.pnl_usd,
+            review_preview: row.review_markdown?.slice(0, 800),
+            link: '/journal/coach',
+          },
+          success: true,
+        };
+      }
+
+      case 'get_recent_crew_runs': {
+        const sb = createServiceClient();
+        const ticker = String(toolInput.ticker ?? '').toUpperCase();
+        const limit = Math.max(1, Math.min(20, Number(toolInput.limit ?? 5)));
+        let q = sb.from('crew_runs')
+          .select('id, ticker, judge_verdict, judge_confidence, judge_rationale, suggested_trade, total_cost_usd, total_latency_ms, created_at')
+          .eq('user_id', 'wes').order('created_at', { ascending: false }).limit(limit);
+        if (ticker) q = q.eq('ticker', ticker);
+        const { data } = await q;
+        return {
+          result: {
+            runs: (data as unknown as Array<Record<string, unknown>>) ?? [],
+            filter_ticker: ticker || null,
+            link: '/crew',
+          },
+          success: true,
+        };
+      }
+
+      case 'get_earnings_memo': {
+        const ticker = String(toolInput.ticker ?? '').toUpperCase();
+        if (!ticker) return { result: { error: 'Missing ticker' }, success: false };
+        const sb = createServiceClient();
+        // Find the most recent completed session for this ticker, then its memo
+        const { data: sessions } = await sb.from('earnings_sessions')
+          .select('id, ticker, quarter, call_date, status, ended_at')
+          .eq('user_id', 'wes').eq('ticker', ticker)
+          .order('call_date', { ascending: false }).limit(5);
+        const sessionRows = (sessions as unknown as Array<{ id: string; ticker: string; quarter: string | null; call_date: string; status: string }>) ?? [];
+        if (sessionRows.length === 0) return { result: { error: `No earnings sessions yet for ${ticker}`, link: '/earnings/live' }, success: false };
+        const sessionId = sessionRows[0].id;
+        const { data: memo } = await sb.from('earnings_memos')
+          .select('memo_text, keisha_take, guidance_delta, key_quotes, created_at')
+          .eq('session_id', sessionId).order('created_at', { ascending: false }).limit(1);
+        const memoRow = (memo as unknown as Array<{ memo_text: string; keisha_take: string; guidance_delta: string; key_quotes: unknown }>)?.[0];
+        if (!memoRow) return { result: { error: `Session found but no memo yet. Finish the call at /earnings/live/${sessionId}`, link: `/earnings/live/${sessionId}` }, success: false };
+        return {
+          result: {
+            ticker,
+            quarter: sessionRows[0].quarter,
+            call_date: sessionRows[0].call_date,
+            guidance_delta: memoRow.guidance_delta,
+            keisha_take: memoRow.keisha_take,
+            memo_preview: memoRow.memo_text?.slice(0, 1200),
+            key_quotes: memoRow.key_quotes,
+            link: `/earnings/live/${sessionId}`,
+          },
+          success: true,
+        };
+      }
+
+      case 'get_research_memo': {
+        const ticker = String(toolInput.ticker ?? '').toUpperCase();
+        const topic = String(toolInput.topic_contains ?? '');
+        const sb = createServiceClient();
+        let q = sb.from('deep_research_memos')
+          .select('id, ticker, topic, memo_markdown, memo_word_count, sources_cited, total_cost_usd, status, created_at')
+          .eq('user_id', 'wes').eq('status', 'completed')
+          .order('created_at', { ascending: false }).limit(1);
+        if (ticker) q = q.eq('ticker', ticker);
+        if (topic) q = q.ilike('topic', `%${topic}%`);
+        const { data } = await q;
+        const row = (data as unknown as Array<{ id: string; ticker: string | null; topic: string; memo_markdown: string; memo_word_count: number | null; sources_cited: unknown }>)?.[0] ?? null;
+        if (!row) return { result: { error: 'No matching research memo. Start one at /research', link: '/research' }, success: false };
+        return {
+          result: {
+            id: row.id,
+            ticker: row.ticker,
+            topic: row.topic,
+            word_count: row.memo_word_count,
+            source_count: Array.isArray(row.sources_cited) ? row.sources_cited.length : 0,
+            memo_preview: row.memo_markdown?.slice(0, 2000),
+            link: `/research/${row.id}`,
+          },
+          success: true,
+        };
+      }
+
+      case 'get_prediction_markets': {
+        const { fetchLatestSnapshots } = await import('@/lib/prediction-markets');
+        const category = String(toolInput.category ?? '').toLowerCase();
+        const all = await fetchLatestSnapshots();
+        const filtered = category
+          ? all.filter(s => (s.category ?? '').toLowerCase().includes(category) || s.market_name.toLowerCase().includes(category))
+          : all;
+        return {
+          result: {
+            count: filtered.length,
+            markets: filtered.slice(0, 12).map(s => ({
+              source: s.source,
+              ticker: s.market_ticker,
+              name: s.market_name,
+              yes_pct: s.yes_price != null ? Math.round(s.yes_price * 100) : null,
+              delta_24h_pp: s.delta_24h != null ? Math.round(s.delta_24h * 100) : null,
+              volume_24h: s.volume_24h,
+            })),
+            link: '/macro',
           },
           success: true,
         };

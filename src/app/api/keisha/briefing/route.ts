@@ -124,17 +124,43 @@ async function fetchTopNews(): Promise<{ title: string; site?: string; published
 
 async function buildContext(userId: string) {
   const supabase = createServiceClient();
+  const fortyEightHrAgo = new Date(Date.now() - 48 * 60 * 60 * 1000).toISOString();
 
-  const [account, positions, watchlist, vixQuoteFmp, marketPulse, topNews, journal, territoriesRes] = await Promise.all([
+  const [
+    account, positions, watchlist, vixQuoteFmp, marketPulse, topNews, journal, territoriesRes,
+    // Phase 7-12 signals
+    stormAlertsRes, coachReviewRes, harvestRes, recentCrewRes, latestResearchRes, latestEarningsMemoRes, predictionRes,
+  ] = await Promise.all([
     fetchAlpacaJSON<AlpacaAccount>('/v2/account'),
     fetchAlpacaJSON<AlpacaPosition[]>('/v2/positions'),
     supabase.from('watchlist').select('symbol, company_name, current_price, notes').limit(15),
-    // VIX: FMP first (^VIX); fall back to Finnhub (^VIX ticker works there too)
     fetchFmpJSON<FmpQuote[]>('/api/v3/quote/%5EVIX'),
     fetchQuotes(['SPY', 'QQQ', 'DIA', 'IWM']),
     fetchTopNews(),
     supabase.from('trade_journal').select('ticker, direction, strategy, entry_date, exit_date, pnl, notes').order('created_at', { ascending: false }).limit(5),
     supabase.from('cr3_territories').select('territory_id, region, county').eq('ar_type', 'Seacoast FL'),
+
+    // P7: active storm alerts in last 48h
+    supabase.from('storm_alerts').select('storm_id, storm_name, threat_level, impacted_territory_ids, created_at')
+      .gte('created_at', fortyEightHrAgo).order('created_at', { ascending: false }).limit(5),
+    // P10: latest coach review
+    supabase.from('coach_reviews').select('week_of, primary_rule_for_next_week, patterns_detected, pnl_usd, trade_count')
+      .eq('user_id', userId).order('week_of', { ascending: false }).limit(1),
+    // P8: this week's tax harvest summary
+    supabase.from('tax_harvest_suggestions').select('week_of, unrealized_loss, estimated_tax_savings_usd, status')
+      .eq('user_id', userId).eq('status', 'suggested').order('week_of', { ascending: false }).limit(20),
+    // P3: recent Trading Crew verdicts
+    supabase.from('crew_runs').select('ticker, judge_verdict, judge_confidence, created_at')
+      .eq('user_id', userId).eq('status', 'completed').order('created_at', { ascending: false }).limit(3),
+    // P5: latest deep-research memo topic
+    supabase.from('deep_research_memos').select('ticker, topic, memo_word_count, created_at')
+      .eq('user_id', userId).eq('status', 'completed').order('created_at', { ascending: false }).limit(1),
+    // P4: most recent earnings memo
+    supabase.from('earnings_memos').select('session_id, guidance_delta, created_at')
+      .order('created_at', { ascending: false }).limit(1),
+    // P11: top prediction-market shifts by |delta_24h|
+    supabase.from('prediction_market_snapshots').select('source, market_ticker, market_name, yes_price, delta_24h, snapshot_at')
+      .order('snapshot_at', { ascending: false }).limit(40),
   ]);
 
   // VIX fallback to Finnhub if FMP was rate-limited
@@ -197,6 +223,57 @@ async function buildContext(userId: string) {
       goal_2026_usd: 580_000,
       goal_cumulative_2032_usd: 50_000_000,
     },
+
+    // ── Phase 7-12 signals — surfaces the full agentic stack in the briefing
+    storm_watch: (() => {
+      const alerts = (stormAlertsRes?.data as unknown as Array<{ storm_id: string; storm_name: string; threat_level: string; impacted_territory_ids: string[] }>) ?? [];
+      const active = alerts.filter(a => a.threat_level !== 'clear');
+      return {
+        active_count: active.length,
+        highest_threat: active[0]?.threat_level ?? 'clear',
+        storms: active.slice(0, 3).map(a => ({ name: a.storm_name, threat: a.threat_level, territories: a.impacted_territory_ids.length })),
+      };
+    })(),
+    coach_rule: (() => {
+      const row = (coachReviewRes?.data as unknown as Array<{ week_of: string; primary_rule_for_next_week: string; pnl_usd: number | null; trade_count: number | null }>)?.[0];
+      return row ? { week_of: row.week_of, rule: row.primary_rule_for_next_week, last_week_pnl: row.pnl_usd, last_week_trades: row.trade_count } : null;
+    })(),
+    tax_harvest: (() => {
+      const rows = (harvestRes?.data as unknown as Array<{ week_of: string; unrealized_loss: number | null; estimated_tax_savings_usd: number | null }>) ?? [];
+      const latestWeek = rows[0]?.week_of ?? null;
+      const thisWeek = rows.filter(r => r.week_of === latestWeek);
+      return thisWeek.length === 0 ? null : {
+        week_of: latestWeek,
+        pending_suggestions: thisWeek.length,
+        total_unrealized_loss: thisWeek.reduce((s, r) => s + Math.abs(Number(r.unrealized_loss) || 0), 0),
+        total_estimated_savings: thisWeek.reduce((s, r) => s + (Number(r.estimated_tax_savings_usd) || 0), 0),
+      };
+    })(),
+    recent_crew_runs: ((recentCrewRes?.data as unknown as Array<{ ticker: string; judge_verdict: string; judge_confidence: number | null; created_at: string }>) ?? []).map(r => ({
+      ticker: r.ticker, verdict: r.judge_verdict, confidence: r.judge_confidence, created_at: r.created_at,
+    })),
+    latest_research_memo: (() => {
+      const row = (latestResearchRes?.data as unknown as Array<{ ticker: string | null; topic: string; memo_word_count: number | null; created_at: string }>)?.[0];
+      return row ? { ticker: row.ticker, topic: row.topic, word_count: row.memo_word_count, created_at: row.created_at } : null;
+    })(),
+    latest_earnings_guidance: (() => {
+      const row = (latestEarningsMemoRes?.data as unknown as Array<{ session_id: string; guidance_delta: string; created_at: string }>)?.[0];
+      return row ? { session_id: row.session_id, guidance: row.guidance_delta, created_at: row.created_at } : null;
+    })(),
+    prediction_markets: (() => {
+      const rows = (predictionRes?.data as unknown as Array<{ source: string; market_ticker: string; market_name: string; yes_price: number | null; delta_24h: number | null; snapshot_at: string }>) ?? [];
+      // Dedupe to latest per ticker, then sort by |delta_24h|
+      const seen = new Set<string>();
+      const latest = rows.filter(r => { if (seen.has(r.market_ticker)) return false; seen.add(r.market_ticker); return true; });
+      const withDelta = latest.filter(r => r.delta_24h != null);
+      withDelta.sort((a, b) => Math.abs(Number(b.delta_24h)) - Math.abs(Number(a.delta_24h)));
+      return withDelta.slice(0, 5).map(r => ({
+        source: r.source,
+        name: r.market_name.slice(0, 80),
+        yes_pct: r.yes_price != null ? Math.round(r.yes_price * 100) : null,
+        delta_24h_pp: r.delta_24h != null ? Math.round(r.delta_24h * 100) : null,
+      }));
+    })(),
   };
 }
 
@@ -207,16 +284,23 @@ LIVE CONTEXT (JSON):
 ${JSON.stringify(ctx, null, 2)}
 
 BRIEFING FORMAT (keep each section tight; cite the exact numbers above):
-1. Lead — the single most important thing to know right now (1 sentence).
+1. Lead — the single most important thing to know right now (1 sentence). Escalate to storm_watch if highest_threat is warning or direct_hit.
 2. Portfolio Status — overnight P&L, equity, top positions.
-3. Market Pulse — SPY/QQQ/DIA/IWM moves + VIX level and what it means.
-4. News Edge — 1-2 headlines from top_news that actually matter for Wes's book.
-5. Watchlist Signal — pull one name from the watchlist worth watching today.
-6. CR3 Foundation Check — progress against the $580K 2026 foundation goal.
-7. Three Plays — three concrete, specific moves for today.
-8. Close — one line of energy to start the day.
+3. Market Pulse — SPY/QQQ/DIA/IWM moves + VIX level.
+4. Agentic Stack Status — in 2-3 sentences, surface any of these that are active:
+   • storm_watch.active_count > 0 → name the storm + threat level + impacted territory count
+   • tax_harvest.pending_suggestions > 0 → total estimated savings ($) and direct Wes to /tax/harvest/weekly
+   • coach_rule.rule present → quote this week's rule verbatim as a reminder
+   • recent_crew_runs with BULL/BEAR verdicts → name the ticker + verdict
+   • latest_research_memo → topic + word_count
+   • prediction_markets with |delta_24h_pp| ≥ 5 → name the market + shift
+5. News Edge — 1-2 headlines from top_news that matter for Wes's book.
+6. Watchlist Signal — one name from the watchlist worth watching today.
+7. CR3 Foundation Check — progress against the $580K 2026 foundation goal. Note if storm_watch flags any Florida territory.
+8. Three Plays — three concrete, specific moves for today.
+9. Close — one line of energy.
 
-Keep total under 300 words. No filler.`;
+Keep total under 350 words. No filler. When directing Wes to a page, use the real path (/tax/harvest/weekly, /journal/coach, /crew, /research, /territories, /macro, /earnings/live).`;
 }
 
 async function maybeServeCache(userId: string): Promise<{ text: string; id: string; model: string; createdAt: string } | null> {
