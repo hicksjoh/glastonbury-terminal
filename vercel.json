@@ -16,7 +16,7 @@
     },
     {
       "path": "/api/cron/storm-watch",
-      "schedule": "*/15 * * * *"
+      "schedule": "0 12 * * *"
     },
     {
       "path": "/api/cron/tax-harvest",
@@ -28,7 +28,7 @@
     },
     {
       "path": "/api/cron/prediction-snapshot",
-      "schedule": "*/5 * * * *"
+      "schedule": "0 13 * * *"
     }
   ]
 }
