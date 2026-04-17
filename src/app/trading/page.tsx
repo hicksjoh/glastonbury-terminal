@@ -9,6 +9,10 @@ import { exportToCSV } from '@/lib/export';
 import { SkeletonTable } from '@/components/Skeleton';
 import Link from 'next/link';
 import TradeGuard from '@/components/TradeGuard';
+import { DebateModal } from '@/components/trading/DebateModal';
+
+const DEBATE_MODE_ENABLED = process.env.NEXT_PUBLIC_FEATURE_DEBATE_MODE === 'true';
+import TaxImpactBanner from '@/components/trade/TaxImpactBanner';
 import PortfolioChart from '@/components/PortfolioChart';
 import OptionsChain from '@/components/options/OptionsChain';
 import OptionsOrderForm from '@/components/options/OptionsOrderForm';
@@ -81,6 +85,7 @@ function TradingPage() {
   const [positionsLoading, setPositionsLoading] = useState(true);
   const [account, setAccount] = useState<AccountData>({ equity: '0', cash: '0', buying_power: '0' });
   const [form, setForm] = useState<OrderForm>({ symbol: '', side: 'buy', qty: '', type: 'market', limitPrice: '' });
+  const [debateOpen, setDebateOpen] = useState(false);
   const [step, setStep] = useState<'form' | 'guard' | 'confirm' | 'submitted'>('form');
   const [apiConnected, setApiConnected] = useState(false);
 
@@ -464,8 +469,23 @@ function TradingPage() {
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 24, marginBottom: 24 }}>
             {/* Stock Order Form */}
             <div className="terminal-card">
-              <div style={{ fontSize: 14, fontWeight: 700, marginBottom: 20 }}>
-                {step === 'submitted' ? 'Order Submitted' : step === 'confirm' ? 'Confirm Order' : step === 'guard' ? 'Keisha Guard Check' : 'Place Order'}
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
+                <div style={{ fontSize: 14, fontWeight: 700 }}>
+                  {step === 'submitted' ? 'Order Submitted' : step === 'confirm' ? 'Confirm Order' : step === 'guard' ? 'Keisha Guard Check' : 'Place Order'}
+                </div>
+                {DEBATE_MODE_ENABLED && form.symbol && step === 'form' && (
+                  <button
+                    onClick={() => setDebateOpen(true)}
+                    style={{
+                      padding: '6px 12px', fontSize: 11, fontWeight: 700,
+                      background: 'linear-gradient(135deg, rgba(74,222,128,0.18), rgba(248,113,113,0.18))',
+                      border: '1px solid #8a5cf6', borderRadius: 6, color: '#8a5cf6', cursor: 'pointer',
+                    }}
+                    title="Open a Bull vs Bear debate grounded in real data"
+                  >
+                    ⚖ Debate this trade
+                  </button>
+                )}
               </div>
 
               {step === 'form' && (
@@ -930,6 +950,11 @@ function TradingPage() {
                       </div>
                     ))}
                   </div>
+                  <TaxImpactBanner
+                    symbol={form.symbol}
+                    side={form.side as 'buy' | 'sell'}
+                    qty={parseInt(form.qty) || 0}
+                  />
                   <div style={{ display: 'flex', gap: 8 }}>
                     <button
                       onClick={() => setStep('form')}
@@ -1289,6 +1314,14 @@ function TradingPage() {
             setSelectedOption(null);
           }}
           onCancel={() => setConfirmOrder(null)}
+        />
+      )}
+
+      {DEBATE_MODE_ENABLED && debateOpen && form.symbol && (
+        <DebateModal
+          ticker={form.symbol.toUpperCase()}
+          proposedTrade={{ side: (form.side === 'sell' ? 'sell' : 'buy') as 'buy' | 'sell', qty: Number(form.qty) || undefined, entry: form.limitPrice || undefined }}
+          onClose={() => setDebateOpen(false)}
         />
       )}
       </ErrorBoundary>
