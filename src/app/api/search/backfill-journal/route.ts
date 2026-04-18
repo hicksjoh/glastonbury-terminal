@@ -11,7 +11,6 @@ export const maxDuration = 300;
 type JournalRow = {
   id: string;
   ticker: string | null;
-  symbol: string | null;
   direction: string | null;
   strategy: string | null;
   entry_date: string | null;
@@ -24,7 +23,7 @@ type JournalRow = {
 
 function buildContent(row: JournalRow): string {
   const parts: string[] = [];
-  parts.push(`Ticker: ${row.ticker ?? row.symbol ?? 'n/a'}`);
+  parts.push(`Ticker: ${row.ticker ?? 'n/a'}`);
   if (row.direction) parts.push(`Direction: ${row.direction}`);
   if (row.strategy) parts.push(`Strategy: ${row.strategy}`);
   if (row.entry_date) parts.push(`Entry date: ${row.entry_date}${row.entry_price ? ` @ $${row.entry_price}` : ''}`);
@@ -51,7 +50,7 @@ export async function POST(_req: NextRequest) {
     const sb = createServiceClient();
     const { data, error } = await sb
       .from('trade_journal')
-      .select('id, ticker, symbol, direction, strategy, entry_date, exit_date, entry_price, exit_price, pnl, notes');
+      .select('id, ticker, direction, strategy, entry_date, exit_date, entry_price, exit_price, pnl, notes');
     if (error) return NextResponse.json({ error: error.message }, { status: 500 });
     const rows = (data as unknown as JournalRow[]) ?? [];
     if (rows.length === 0) return NextResponse.json({ indexed: 0, total: 0 });
@@ -67,7 +66,7 @@ export async function POST(_req: NextRequest) {
           doc_type: 'journal',
           source_id: r.id,
           content,
-          ticker: (r.ticker ?? r.symbol) || null,
+          ticker: r.ticker || null,
           metadata: { entry_date: r.entry_date, pnl: r.pnl },
         });
         indexed += 1;
