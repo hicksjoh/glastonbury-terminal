@@ -1,7 +1,13 @@
 import { NextResponse } from 'next/server';
 import { createServiceClient } from '@/lib/supabase';
+import { rateLimit } from '@/lib/rate-limit';
 
 export async function GET() {
+  const rl = rateLimit('tax-main', 30, 60000);
+  if (!rl.allowed) {
+    return NextResponse.json({ success: false, error: 'Rate limit exceeded' }, { status: 429 });
+  }
+
   try {
     const supabase = createServiceClient();
     const currentYear = new Date().getFullYear();

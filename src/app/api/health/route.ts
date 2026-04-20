@@ -22,10 +22,14 @@ export async function GET() {
     checks.alpaca = process.env.ALPACA_API_KEY ? 'error' : 'unconfigured';
   }
 
-  // Check FMP (verify with a real call)
+  // Check FMP — probe the same /stable endpoint the rest of the app uses.
+  // Legacy /api/v3/quote/ returns 403 on newer FMP plans, producing false "error".
   try {
     if (process.env.FMP_API_KEY) {
-      const res = await fetch(`https://financialmodelingprep.com/api/v3/quote/%5EGSPC?apikey=${process.env.FMP_API_KEY}`);
+      const res = await fetch(
+        `https://financialmodelingprep.com/stable/quote?symbol=%5EGSPC&apikey=${process.env.FMP_API_KEY}`,
+        { signal: AbortSignal.timeout(4000) },
+      );
       checks.fmp = res.ok ? 'ok' : 'error';
     } else {
       checks.fmp = 'unconfigured';

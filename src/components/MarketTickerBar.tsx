@@ -58,6 +58,9 @@ export default function MarketTickerBar() {
     return () => clearInterval(interval);
   }, []);
 
+  // When we have no tickers (loading or empty response), avoid saying
+  // "Markets closed" here — the Market Pulse card already conveys that,
+  // and the duplicate message reads like a bug.
   if (loading || tickers.length === 0) {
     return (
       <div style={{
@@ -71,7 +74,7 @@ export default function MarketTickerBar() {
         color: '#666',
         fontFamily: "'JetBrains Mono', monospace",
       }}>
-        {loading ? 'Loading market data...' : 'Markets closed'}
+        {loading ? 'Loading market data\u2026' : 'Live quotes unavailable'}
       </div>
     );
   }

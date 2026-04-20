@@ -23,11 +23,14 @@ interface NarrativeData {
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
 function isMarketHours(): boolean {
+  // Widened to 4am–8pm ET to cover pre-market and after-hours, when the
+  // narrative can still move. Old 6–18 window missed the pre-market open
+  // and left narratives stale for the first few hours of the day.
   const now = new Date();
   const et = new Date(now.toLocaleString('en-US', { timeZone: 'America/New_York' }));
   const hour = et.getHours();
   const day = et.getDay();
-  return day >= 1 && day <= 5 && hour >= 6 && hour <= 18;
+  return day >= 1 && day <= 5 && hour >= 4 && hour < 20;
 }
 
 function timeAgo(ts: string): string {
@@ -36,7 +39,17 @@ function timeAgo(ts: string): string {
   if (mins < 1) return 'just now';
   if (mins < 60) return `${mins}m ago`;
   const hrs = Math.floor(mins / 60);
-  return `${hrs}h ago`;
+  if (hrs < 24) return `${hrs}h ago`;
+  // After 24h, show an absolute timestamp — "48h ago" reads like a bug,
+  // "Fri, Apr 17, 4:05 PM" reads like the last market close.
+  return new Date(ts).toLocaleString('en-US', {
+    weekday: 'short', month: 'short', day: 'numeric',
+    hour: 'numeric', minute: '2-digit',
+  });
+}
+
+function isStale(ts: string): boolean {
+  return Date.now() - new Date(ts).getTime() > 12 * 60 * 60 * 1000;
 }
 
 const SENTIMENT_CONFIG: Record<string, { color: string; label: string }> = {
@@ -69,11 +82,12 @@ function MarketNarrativeInner() {
   const [error, setError] = useState<string | null>(null);
   const refreshTimer = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  const fetchNarrative = useCallback(async () => {
+  const fetchNarrative = useCallback(async (opts?: { force?: boolean }) => {
     try {
       setLoading(true);
       setError(null);
-      const res = await fetch('/api/narrative', { signal: AbortSignal.timeout(30000) });
+      const url = opts?.force ? '/api/narrative?refresh=true' : '/api/narrative';
+      const res = await fetch(url, { signal: AbortSignal.timeout(30000) });
       if (!res.ok) {
         const body = await res.json().catch(() => ({}));
         throw new Error((body as Record<string, string>).error || `HTTP ${res.status}`);
@@ -164,7 +178,7 @@ function MarketNarrativeInner() {
           </span>
         </div>
         <button
-          onClick={fetchNarrative}
+          onClick={() => fetchNarrative({ force: true })}
           disabled={loading}
           aria-label="Refresh market narrative"
           style={{
@@ -181,10 +195,19 @@ function MarketNarrativeInner() {
         </button>
       </div>
 
-      {/* Market closed note */}
-      {marketClosed && (
+      {/* Market closed / stale note */}
+      {marketClosed && !isStale(data.timestamp) && (
         <div style={{ fontSize: 11, color: '#555', marginBottom: 8, fontStyle: 'italic' }}>
           Markets closed — showing last available narrative
+        </div>
+      )}
+      {isStale(data.timestamp) && (
+        <div style={{
+          fontSize: 11, color: '#f0c674', marginBottom: 8,
+          display: 'flex', alignItems: 'center', gap: 6,
+        }}>
+          <span>&#9888;</span>
+          <span>Narrative is stale — last updated {timeAgo(data.timestamp)}. Hit refresh for the latest.</span>
         </div>
       )}
 

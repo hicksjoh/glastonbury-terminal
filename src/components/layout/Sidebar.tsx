@@ -411,7 +411,6 @@ export function Sidebar({ isOpen, isMobile, onClose, compact, onToggleCompact }:
               ? Shortcuts
             </div>
           </div>
-          <div>Paper Trading Active</div>
           <div style={{ color: '#2a2a3a', fontSize: 10, marginTop: 4 }}>v4.0 &bull; 2026</div>
         </div>
       )}

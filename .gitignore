@@ -45,3 +45,6 @@ next-env.d.ts
 /playwright/.cache/
 e2e/.auth-state.json
 .github/workflows/
+
+# supabase CLI scratch
+/supabase/.temp/

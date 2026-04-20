@@ -2,6 +2,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import dynamic from 'next/dynamic';
 import { Sidebar } from './Sidebar';
+import { TradingModeBanner } from './TradingModeBanner';
 import { NotificationBell } from '@/components/NotificationBell';
 import { RegimeBadge } from '@/components/RegimeBadge';
 import { ShortcutsHelp } from '@/components/ShortcutsHelp';
@@ -61,6 +62,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', minHeight: '100vh', backgroundColor: '#08080d' }}>
+      <TradingModeBanner />
       <MarketTickerBar />
       <div style={{ display: 'flex', flex: 1 }}>
         {isMobile && (

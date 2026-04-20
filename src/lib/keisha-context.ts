@@ -174,6 +174,7 @@ function applyDomainOverrides(needs: ContextNeeds, domain: string): ContextNeeds
   }
   if (domain === 'tax') {
     needs.needsSupabase = true;
+    needs.needsAlpaca = true;
   }
   return needs;
 }

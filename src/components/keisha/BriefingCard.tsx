@@ -57,13 +57,27 @@ export function BriefingCard() {
   const [, setTick] = useState(0);
 
   const sourceRef = useRef<EventSource | null>(null);
+  // Watchdog: forces an error state if the stream goes silent. Kept in a ref
+  // so re-entrancy doesn't leak timers across retries.
+  const watchdogRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const lastTokenAtRef = useRef<number>(0);
+  const STREAM_OVERALL_TIMEOUT_MS = 45_000;
+  const STREAM_IDLE_TIMEOUT_MS = 20_000;
+
+  const clearWatchdog = useCallback(() => {
+    if (watchdogRef.current) {
+      clearTimeout(watchdogRef.current);
+      watchdogRef.current = null;
+    }
+  }, []);
 
   const closeStream = useCallback(() => {
     if (sourceRef.current) {
       sourceRef.current.close();
       sourceRef.current = null;
     }
-  }, []);
+    clearWatchdog();
+  }, [clearWatchdog]);
 
   const startStream = useCallback((opts?: { refresh?: boolean }) => {
     closeStream();
@@ -72,12 +86,31 @@ export function BriefingCard() {
     setCached(false);
     setModelUsed(null);
     setStatus('streaming');
+    lastTokenAtRef.current = Date.now();
 
     const qs = new URLSearchParams();
     if (opts?.refresh) qs.set('refresh', 'true');
     const url = `/api/keisha/briefing${qs.toString() ? `?${qs.toString()}` : ''}`;
     const es = new EventSource(url);
     sourceRef.current = es;
+
+    // Watchdog: fire if the stream opens but never produces tokens, OR
+    // if it stalls mid-stream for longer than the idle threshold.
+    const startedAt = Date.now();
+    const tick = () => {
+      const now = Date.now();
+      const sinceStart = now - startedAt;
+      const sinceToken = now - lastTokenAtRef.current;
+      if (sourceRef.current !== es) return; // stream already replaced
+      if (sinceStart > STREAM_OVERALL_TIMEOUT_MS || sinceToken > STREAM_IDLE_TIMEOUT_MS) {
+        setError('Briefing timed out — tap retry');
+        setStatus('error');
+        closeStream();
+        return;
+      }
+      watchdogRef.current = setTimeout(tick, 2_000);
+    };
+    watchdogRef.current = setTimeout(tick, 2_000);
 
     es.onmessage = (e) => {
       let payload: StreamEvent;
@@ -91,11 +124,14 @@ export function BriefingCard() {
           setCached(!!payload.cached);
           if (payload.createdAt) setFetchedAt(new Date(payload.createdAt));
           if (payload.model) setModelUsed(payload.model);
+          lastTokenAtRef.current = Date.now();
           break;
         case 'model':
           setModelUsed(payload.model);
+          lastTokenAtRef.current = Date.now();
           break;
         case 'token':
+          lastTokenAtRef.current = Date.now();
           setText(prev => prev + payload.text);
           break;
         case 'done':

@@ -391,9 +391,13 @@ export default function DashboardPage() {
   // $50M progress
   const fiftyMPct = (totalNetWorth / 50000000) * 100;
 
-  // VIX status
+  // VIX status. Source is FMP via /api/market-ticker — not Finnhub. The
+  // empty-state label used to say "Configure Finnhub" which was misleading.
   const vixColor = vix <= 0 ? '#6b6b80' : vix > 30 ? '#f87171' : vix > 20 ? '#f0c674' : '#4ade80';
   const vixLabel = vix > 30 ? 'High vol' : vix > 20 ? 'Elevated' : 'Low vol';
+  const vixEmptyLabel = connectionStatus['FMP'] === 'error'
+    ? 'Market data unavailable'
+    : 'Awaiting next tick';
 
   // ═══════════════════════════════════════════════════════
   //  RENDER
@@ -619,7 +623,7 @@ export default function DashboardPage() {
             <div style={{ fontSize: 20, fontWeight: 700, color: vixColor, fontFamily: "'JetBrains Mono', monospace" }}>
               {vix > 0 ? vix.toFixed(1) : (loading ? '...' : 'N/A')}
             </div>
-            <div style={{ fontSize: 11, color: '#555', marginTop: 4 }}>{vix > 0 ? vixLabel : (loading ? '' : 'Configure Finnhub')}</div>
+            <div style={{ fontSize: 11, color: '#555', marginTop: 4 }}>{vix > 0 ? vixLabel : (loading ? '' : vixEmptyLabel)}</div>
           </GlassCard>
         </div>
         </ErrorBoundary>

@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import type { OrderPreview } from './OptionsOrderForm';
 import { daysToExpiration } from '@/lib/options/symbols';
+import TaxImpactBanner from '@/components/trade/TaxImpactBanner';
 
 interface OrderConfirmationProps {
   order: OrderPreview;
@@ -151,6 +152,14 @@ export default function OrderConfirmation({ order, onConfirm, onCancel }: OrderC
           ))}
         </div>
       )}
+
+      {/* Tax Impact */}
+      <TaxImpactBanner
+        symbol={order.underlying}
+        side={isBuy ? 'buy' : 'sell'}
+        qty={order.contracts * 100}
+        compact
+      />
 
       {/* Error */}
       {result === 'error' && (
