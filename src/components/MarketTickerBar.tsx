@@ -54,8 +54,26 @@ export default function MarketTickerBar() {
     };
 
     fetchTickers();
-    const interval = setInterval(fetchTickers, 10000); // 10-second refresh
-    return () => clearInterval(interval);
+    // 60s instead of 10s — the server now caches for 120s anyway, so
+    // faster polling just burns client CPU without fresher data.
+    const interval = setInterval(() => {
+      // Skip polling when the tab isn't visible. Saves API calls for
+      // users who leave the dashboard parked in a background tab.
+      if (typeof document !== 'undefined' && document.hidden) return;
+      fetchTickers();
+    }, 60_000);
+
+    // Re-fetch immediately when the user comes back to the tab so the
+    // prices aren't stuck at whatever they were before they went away.
+    const onVisibility = () => {
+      if (!document.hidden) fetchTickers();
+    };
+    document.addEventListener('visibilitychange', onVisibility);
+
+    return () => {
+      clearInterval(interval);
+      document.removeEventListener('visibilitychange', onVisibility);
+    };
   }, []);
 
   // When we have no tickers (loading or empty response), avoid saying

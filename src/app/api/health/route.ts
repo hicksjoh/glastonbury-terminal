@@ -3,10 +3,24 @@ import { getAllRateLimitStats } from '@/lib/rate-limiter';
 import { getAllCircuitStats } from '@/lib/circuit-breaker';
 import { getRecentApiLogs } from '@/lib/api-client';
 import { checkEnvironment } from '@/lib/env-check';
+import { getCached, setCache } from '@/lib/server-cache';
 
 type ServiceStatus = 'ok' | 'error' | 'unconfigured' | 'degraded';
 
+// The health endpoint is called from the dashboard's Connections widget on
+// every mount. Each call pings Alpaca / FMP / Supabase / Claude — which
+// meant a tab refresh was burning 4 upstream API calls *per refresh*.
+// FMP in particular rate-limits aggressively on the free tier. Cache the
+// full health payload briefly so a fresh dashboard load doesn't DDoS us.
+const HEALTH_CACHE_KEY = 'health:full';
+const HEALTH_CACHE_TTL_MS = 60 * 1000;
+
 export async function GET() {
+  const cached = getCached<unknown>(HEALTH_CACHE_KEY);
+  if (cached) {
+    return NextResponse.json(cached, { status: 200 });
+  }
+
   const checks: Record<string, ServiceStatus> = {};
 
   // Check Alpaca
@@ -105,7 +119,7 @@ export async function GET() {
   else if (errorCount <= 2) status = 'degraded';
   else status = 'critical';
 
-  return NextResponse.json({
+  const payload = {
     status,
     timestamp: new Date().toISOString(),
     version: '2.0.0',
@@ -126,5 +140,8 @@ export async function GET() {
       missingRequired: envCheck.missing.filter(m => m.required).length,
     },
     uptime: process.uptime(),
-  }, { status: status === 'critical' ? 503 : 200 });
+  };
+
+  setCache(HEALTH_CACHE_KEY, payload, HEALTH_CACHE_TTL_MS);
+  return NextResponse.json(payload, { status: status === 'critical' ? 503 : 200 });
 }

@@ -56,7 +56,10 @@ export async function GET() {
     );
 
     const payload = { tickers: results.filter(Boolean) };
-    setCache(cacheKey, payload, TTL.REALTIME);
+    // 2 minutes instead of 10s — FMP free tier can't sustain 6 calls/10s
+    // across a long-lived dashboard. Prices are stale by max 2 min, which
+    // is fine for a non-HFT use case, and it drops our call rate ~12x.
+    setCache(cacheKey, payload, 120 * 1000);
     return NextResponse.json(payload);
   } catch (error) {
     console.error('Market ticker error:', error);
