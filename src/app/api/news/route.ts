@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getCached, setCache, TTL } from '@/lib/server-cache';
 import { buildMeta } from '@/lib/api-meta';
+import { signImageUrl } from '@/lib/img-proxy';
 
 const ALPACA_DATA_URL = 'https://data.alpaca.markets';
 
@@ -44,7 +45,7 @@ export async function GET(req: NextRequest) {
       url: n.url,
       symbols: n.symbols || [],
       created_at: n.created_at,
-      image: (n.images as Array<{ url: string }> | undefined)?.[0]?.url || null,
+      image: signImageUrl((n.images as Array<{ url: string }> | undefined)?.[0]?.url || null),
     }));
 
     const payload = { articles };

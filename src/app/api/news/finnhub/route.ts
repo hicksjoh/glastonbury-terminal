@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { apiFetchWithFallback } from '@/lib/api-client';
 import { buildMeta } from '@/lib/api-meta';
+import { signImageUrl } from '@/lib/img-proxy';
 
 interface FinnhubNewsItem {
   headline?: string;
@@ -36,7 +37,7 @@ export async function GET() {
         url: n.url || '',
         symbols: n.related ? String(n.related).split(',').filter(Boolean) : [],
         created_at: n.datetime ? new Date(n.datetime * 1000).toISOString() : new Date().toISOString(),
-        image: n.image || null,
+        image: signImageUrl(n.image || null),
         newsSource: 'finnhub',
       }));
 

@@ -17,6 +17,7 @@ const PUBLIC_API_ROUTES = [
   '/api/briefing/scheduled',
   '/api/portfolio/snapshot',
   '/api/push/subscribe',
+  '/api/img',
 ];
 
 export async function middleware(request: NextRequest) {
