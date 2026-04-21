@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getCached, setCache, TTL } from '@/lib/server-cache';
+import { getSectorPerformance as getSectorPerformanceStable } from '@/lib/fmp-client';
 
 const FMP_V3 = 'https://financialmodelingprep.com/api/v3';
 const FMP_KEY = process.env.FMP_API_KEY || '';
@@ -81,20 +82,12 @@ async function fetchSectorStocksViaScreener(sector: string): Promise<QuoteData[]
 }
 
 async function fetchSectorPerformance(): Promise<{ sector: string; changesPercentage: string }[] | null> {
-  try {
-    const res = await fetch(`${FMP_V3}/sectors-performance?apikey=${FMP_KEY}`);
-    if (!res.ok) return null;
-    const data = await res.json();
-    if (!Array.isArray(data)) return null;
-    return data
-      .filter((d: { sector: string; changesPercentage: string }) => d.sector && d.changesPercentage)
-      .map((d: { sector: string; changesPercentage: string }) => ({
-        sector: SECTOR_NAME_MAP[d.sector] || d.sector,
-        changesPercentage: parseFloat(d.changesPercentage).toFixed(2),
-      }));
-  } catch {
-    return null;
-  }
+  const rows = await getSectorPerformanceStable().catch(() => []);
+  if (rows.length === 0) return null;
+  return rows.map(r => ({
+    sector: SECTOR_NAME_MAP[r.sector] || r.sector,
+    changesPercentage: r.changesPercentage.toFixed(2),
+  }));
 }
 
 export async function GET(req: NextRequest) {

@@ -8,6 +8,7 @@ import {
   getMarketLosers,
   getEarningsCalendar,
 } from '@/lib/market-intel';
+import { getSectorPerformance } from '@/lib/fmp-client';
 import { sendPushNotification } from '@/lib/web-push';
 import type { PushSubscriptionData } from '@/lib/web-push';
 
@@ -76,25 +77,9 @@ async function gatherMarketData(portfolioSymbols: string[]) {
     }
   } catch { /* VIX optional */ }
 
-  // Fetch sector performance from FMP
-  let sectors: { sector: string; changesPercentage: number }[] = [];
-  try {
-    const fmpKey = process.env.FMP_API_KEY;
-    if (fmpKey) {
-      const res = await fetch(
-        `https://financialmodelingprep.com/stable/sector-performance?apikey=${fmpKey}`
-      );
-      if (res.ok) {
-        const data = await res.json();
-        if (Array.isArray(data)) {
-          sectors = data.map((s: { sector: string; changesPercentage: string }) => ({
-            sector: s.sector,
-            changesPercentage: parseFloat(s.changesPercentage),
-          }));
-        }
-      }
-    }
-  } catch { /* sectors optional */ }
+  // Fetch sector performance via the /stable client (handles new endpoint
+  // path + aggregates across exchanges — see src/lib/fmp-client.ts).
+  const sectors = await getSectorPerformance().catch(() => []);
 
   return {
     gainers: gainers.slice(0, 5),

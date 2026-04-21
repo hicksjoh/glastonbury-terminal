@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import Anthropic from '@anthropic-ai/sdk';
 import { getCached, setCache, TTL } from '@/lib/server-cache';
 import { rateLimit } from '@/lib/rate-limit';
+import { getSectorPerformance } from '@/lib/fmp-client';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -49,17 +50,12 @@ async function fetchRegime(): Promise<{ regime: string; vix: number; confidence:
 }
 
 async function fetchSectorPerf(): Promise<string> {
-  try {
-    const res = await fetch(`${FMP_BASE}/sector-performance?apikey=${process.env.FMP_API_KEY}`, {
-      signal: AbortSignal.timeout(10000),
-    });
-    if (!res.ok) return 'Sector data unavailable';
-    const data = await res.json() as Array<{ sector: string; changesPercentage: string }>;
-    if (!Array.isArray(data) || data.length === 0) return 'No sector data';
-    return data.slice(0, 5).map(s => `${s.sector}: ${s.changesPercentage}`).join(', ');
-  } catch {
-    return 'Sector data unavailable';
-  }
+  const sectors = await getSectorPerformance().catch(() => []);
+  if (sectors.length === 0) return 'Sector data unavailable';
+  return sectors
+    .slice(0, 5)
+    .map(s => `${s.sector}: ${s.changesPercentage >= 0 ? '+' : ''}${s.changesPercentage.toFixed(2)}%`)
+    .join(', ');
 }
 
 // ─── Route ──────────────────────────────────────────────────────────────────
