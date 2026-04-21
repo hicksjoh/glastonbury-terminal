@@ -6,10 +6,13 @@ import {
   miamiMockStorm,
   persistAlertCandidates,
 } from '@/lib/storm-engine';
+import { pingHealthcheck } from '@/lib/healthchecks';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60;
+
+const HC_SLUG = 'cron-storm-watch';
 
 // Vercel cron + CRON_SECRET auth.
 // GET is what Vercel uses by default; POST is supported for manual runs.
@@ -27,28 +30,37 @@ async function handle(req: NextRequest): Promise<NextResponse> {
     }
   }
 
-  const mock = req.nextUrl.searchParams.get('mock');
-  const storms = mock === 'miami' ? [miamiMockStorm()] : await fetchNhcActiveStorms();
-  const zipMap = await loadTerritoryZips();
-  const candidates = evaluateStorms(storms, zipMap);
+  await pingHealthcheck(HC_SLUG, 'start');
 
-  const persisted = await persistAlertCandidates(candidates);
+  try {
+    const mock = req.nextUrl.searchParams.get('mock');
+    const storms = mock === 'miami' ? [miamiMockStorm()] : await fetchNhcActiveStorms();
+    const zipMap = await loadTerritoryZips();
+    const candidates = evaluateStorms(storms, zipMap);
 
-  return NextResponse.json({
-    ok: true,
-    mock: !!mock,
-    stormsSeen: storms.length,
-    candidates: candidates.length,
-    created: persisted.created,
-    unchanged: persisted.unchanged,
-    candidatesSummary: candidates.map(c => ({
-      storm_id: c.storm_id,
-      storm_name: c.storm_name,
-      threat_level: c.threat_level,
-      impacted_territories: c.impacted_territory_ids.length,
-      impacted_zips: c.impacted_zips.length,
-    })),
-  });
+    const persisted = await persistAlertCandidates(candidates);
+
+    await pingHealthcheck(HC_SLUG, 'success');
+
+    return NextResponse.json({
+      ok: true,
+      mock: !!mock,
+      stormsSeen: storms.length,
+      candidates: candidates.length,
+      created: persisted.created,
+      unchanged: persisted.unchanged,
+      candidatesSummary: candidates.map(c => ({
+        storm_id: c.storm_id,
+        storm_name: c.storm_name,
+        threat_level: c.threat_level,
+        impacted_territories: c.impacted_territory_ids.length,
+        impacted_zips: c.impacted_zips.length,
+      })),
+    });
+  } catch (err) {
+    await pingHealthcheck(HC_SLUG, 'fail');
+    return NextResponse.json({ error: (err as Error).message }, { status: 500 });
+  }
 }
 
 export const GET = handle;

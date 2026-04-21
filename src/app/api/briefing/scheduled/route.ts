@@ -9,6 +9,9 @@ import {
   getEarningsCalendar,
 } from '@/lib/market-intel';
 import { getSectorPerformance } from '@/lib/fmp-client';
+import { pingHealthcheck } from '@/lib/healthchecks';
+
+const HC_SLUG = 'briefing-scheduled';
 import { sendPushNotification } from '@/lib/web-push';
 import type { PushSubscriptionData } from '@/lib/web-push';
 
@@ -148,6 +151,8 @@ async function runScheduledBriefing(req: NextRequest) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
+  await pingHealthcheck(HC_SLUG, 'start');
+
   try {
     // Gather all data in parallel
     const [portfolio, market] = await Promise.all([
@@ -232,6 +237,8 @@ async function runScheduledBriefing(req: NextRequest) {
       console.error('Push notification error:', pushErr);
     }
 
+    await pingHealthcheck(HC_SLUG, 'success');
+
     return NextResponse.json({
       success: true,
       briefing: briefingContent,
@@ -248,6 +255,7 @@ async function runScheduledBriefing(req: NextRequest) {
   } catch (error) {
     const msg = error instanceof Error ? error.message : 'Unknown error';
     console.error('Scheduled briefing error:', msg);
+    await pingHealthcheck(HC_SLUG, 'fail');
     return NextResponse.json({ error: msg }, { status: 500 });
   }
 }
