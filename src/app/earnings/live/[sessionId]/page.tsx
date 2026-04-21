@@ -49,7 +49,10 @@ function sentColor(score: number | null): string {
 function WorkspaceInner() {
   const router = useRouter();
   const params = useParams<{ sessionId: string }>();
-  const sessionId = params.sessionId;
+  // params is typed as nullable by next/navigation — in practice it is
+  // populated for this dynamic route, but TS's strict mode (tightened
+  // by `next build`'s generated .next/types/) requires a fallback.
+  const sessionId = params?.sessionId ?? '';
 
   const [session, setSession] = useState<Session | null>(null);
   const [chunks, setChunks] = useState<Chunk[]>([]);

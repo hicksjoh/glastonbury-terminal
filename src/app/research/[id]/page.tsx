@@ -28,6 +28,7 @@ const STATUS_COLOR: Record<Memo['status'], string> = {
 
 function MemoPage() {
   const params = useParams<{ id: string }>();
+  const memoId = params?.id ?? '';
   const router = useRouter();
   const [memo, setMemo] = useState<Memo | null>(null);
   const [loading, setLoading] = useState(true);
@@ -35,7 +36,7 @@ function MemoPage() {
 
   const load = useCallback(async () => {
     try {
-      const res = await fetch(`/api/research/${params.id}`);
+      const res = await fetch(`/api/research/${memoId}`);
       const body = await res.json();
       if (!res.ok) { setError(body.error ?? 'Not found'); return; }
       setMemo(body.memo);
@@ -44,7 +45,7 @@ function MemoPage() {
     } finally {
       setLoading(false);
     }
-  }, [params.id]);
+  }, [memoId]);
 
   useEffect(() => { load(); }, [load]);
 

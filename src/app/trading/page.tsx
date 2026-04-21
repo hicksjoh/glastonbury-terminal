@@ -76,7 +76,7 @@ export default function TradingPageWrapper() {
 
 function TradingPage() {
   const searchParams = useSearchParams();
-  const initialTab = searchParams.get('tab') === 'options' ? 'options' : 'stocks';
+  const initialTab = searchParams?.get('tab') === 'options' ? 'options' : 'stocks';
   const [activeTab, setActiveTab] = useState<'stocks' | 'options'>(initialTab);
 
   useEffect(() => { document.title = 'Trading | Glastonbury Terminal'; }, []);
