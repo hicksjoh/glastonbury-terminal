@@ -1,5 +1,6 @@
 import { NextRequest } from 'next/server';
 import { anthropic, KEISHA_SYSTEM_PROMPT, CLAUDE_MODEL_PRIMARY } from '@/lib/claude';
+import { cachedSystem } from '@/lib/prompts';
 import { rateLimit } from '@/lib/rate-limit';
 import { sanitizeInput } from '@/lib/sanitize';
 import {
@@ -149,9 +150,10 @@ export async function POST(req: NextRequest) {
       weekday: 'long', year: 'numeric', month: 'long', day: 'numeric',
     });
 
-    const systemWithContext = `${KEISHA_SYSTEM_PROMPT}
-
-═══════════════════════════════════════════
+    // Split into cached static block + dynamic context so Anthropic prompt
+    // caching (cache_control: ephemeral on the static block) can kick in
+    // across sequential Keisha streaming messages.
+    const dynamicContext = `═══════════════════════════════════════════
   LIVE DATA (as of ${today})
 ═══════════════════════════════════════════
 ${portfolioContext}
@@ -236,7 +238,7 @@ IMPORTANT RULES:
             const stream = await anthropic.messages.stream({
               model: CLAUDE_MODEL_PRIMARY,
               max_tokens: 4096,
-              system: systemWithContext,
+              system: cachedSystem(KEISHA_SYSTEM_PROMPT, dynamicContext),
               messages: currentMessages,
               tools: KEISHA_TOOLS,
             });
