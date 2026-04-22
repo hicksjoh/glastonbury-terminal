@@ -46,19 +46,145 @@ export async function getQuote(symbol: string): Promise<FmpQuote | null> {
   }
 }
 
+// /stable/quote's batch form (comma-separated symbols) is a paid-tier
+// endpoint on the current FMP plan (returns 402). We fan-out single calls
+// via Promise.all to keep the contract while staying within the standard
+// quote quota. Callers that care about performance should cache upstream.
 export async function getQuotes(symbols: string[]): Promise<FmpQuote[]> {
   if (symbols.length === 0) return [];
+  const results = await Promise.all(symbols.map(s => getQuote(s)));
+  return results.filter((q): q is FmpQuote => q !== null);
+}
+
+// ─── Profile ─────────────────────────────────────────────────────────
+
+export interface FmpProfile {
+  symbol: string;
+  companyName?: string;
+  price: number;
+  marketCap: number;
+  beta: number;
+  lastDividend?: number;
+  range?: string;
+  change: number;
+  industry?: string;
+  sector?: string;
+  country?: string;
+  description?: string;
+  website?: string;
+  image?: string;
+  ceo?: string;
+  fullTimeEmployees?: string;
+}
+
+export async function getProfile(symbol: string): Promise<FmpProfile | null> {
   const k = key();
-  if (!k) return [];
-  // /stable/quote accepts comma-separated symbols
-  const url = `${FMP_STABLE}/quote?symbol=${symbols.map(encodeURIComponent).join(',')}&apikey=${k}`;
+  if (!k) return null;
+  const url = `${FMP_STABLE}/profile?symbol=${encodeURIComponent(symbol)}&apikey=${k}`;
   try {
     const res = await fmpFetch(url);
-    if (!res.ok) return [];
+    if (!res.ok) return null;
     const data = await res.json();
-    return Array.isArray(data) ? (data as FmpQuote[]) : [];
+    if (!Array.isArray(data) || data.length === 0) return null;
+    return data[0] as FmpProfile;
   } catch {
-    return [];
+    return null;
+  }
+}
+
+// ─── Stock price change (1D/5D/1M/3M/YTD/1Y/3Y/5Y/10Y/max %) ────────
+
+export interface FmpStockPriceChange {
+  symbol: string;
+  '1D'?: number;
+  '5D'?: number;
+  '1M'?: number;
+  '3M'?: number;
+  '6M'?: number;
+  ytd?: number;
+  '1Y'?: number;
+  '3Y'?: number;
+  '5Y'?: number;
+  '10Y'?: number;
+  max?: number;
+}
+
+export async function getStockPriceChange(
+  symbol: string,
+): Promise<FmpStockPriceChange | null> {
+  const k = key();
+  if (!k) return null;
+  const url = `${FMP_STABLE}/stock-price-change?symbol=${encodeURIComponent(symbol)}&apikey=${k}`;
+  try {
+    const res = await fmpFetch(url);
+    if (!res.ok) return null;
+    const data = await res.json();
+    if (!Array.isArray(data) || data.length === 0) return null;
+    return data[0] as FmpStockPriceChange;
+  } catch {
+    return null;
+  }
+}
+
+// ─── Historical prices (EOD OHLCV) ──────────────────────────────────
+
+export interface FmpHistoricalBar {
+  date: string;
+  open: number;
+  high: number;
+  low: number;
+  close: number;
+  volume: number;
+  change?: number;
+  changePercent?: number;
+  vwap?: number;
+}
+
+export interface FmpHistoricalResponse {
+  symbol: string;
+  /** Sorted descending by date (most recent first), matching /api/v3 shape. */
+  historical: FmpHistoricalBar[];
+}
+
+/**
+ * /stable replacement for the legacy `/api/v3/historical-price-full/{symbol}`
+ * endpoint. Returns the same `{symbol, historical: [...]}` shape so call sites
+ * that destructure `data.historical` continue to work.
+ *
+ * Options:
+ *   `timeseries` — how many days back. Passed to FMP as `limit`. Undefined = full history.
+ *   `light` — use the cheaper `historical-price-eod/light` endpoint (date + close + volume only).
+ */
+export async function getHistoricalPrices(
+  symbol: string,
+  options: { timeseries?: number; light?: boolean } = {},
+): Promise<FmpHistoricalResponse | null> {
+  const k = key();
+  if (!k) return null;
+  const variant = options.light ? 'light' : 'full';
+  const qs = new URLSearchParams({ symbol, apikey: k });
+  if (options.timeseries) qs.set('limit', String(options.timeseries));
+  const url = `${FMP_STABLE}/historical-price-eod/${variant}?${qs.toString()}`;
+  try {
+    const res = await fmpFetch(url);
+    if (!res.ok) return null;
+    const data = await res.json();
+    if (!Array.isArray(data)) return null;
+    const historical: FmpHistoricalBar[] = data.map((row: Record<string, unknown>) => ({
+      date: String(row.date ?? ''),
+      open: Number(row.open ?? row.price ?? 0),
+      high: Number(row.high ?? row.price ?? 0),
+      low: Number(row.low ?? row.price ?? 0),
+      close: Number(row.close ?? row.price ?? 0),
+      volume: Number(row.volume ?? 0),
+      change: row.change != null ? Number(row.change) : undefined,
+      changePercent:
+        row.changePercent != null ? Number(row.changePercent) : undefined,
+      vwap: row.vwap != null ? Number(row.vwap) : undefined,
+    }));
+    return { symbol, historical };
+  } catch {
+    return null;
   }
 }
 

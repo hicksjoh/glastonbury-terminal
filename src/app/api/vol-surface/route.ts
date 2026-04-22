@@ -6,6 +6,7 @@ import {
   termStructure,
   findMispricing,
 } from '@/lib/volatility-surface';
+import { getQuote } from '@/lib/fmp-client';
 
 const FMP_KEY = process.env.FMP_API_KEY;
 
@@ -111,20 +112,18 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    // Fetch current stock price from FMP
-    const quoteRes = await fetch(
-      `https://financialmodelingprep.com/api/v3/quote/${symbol}?apikey=${FMP_KEY}`,
-      { next: { revalidate: 60 } }
-    );
+    // Fetch current stock price via /stable client
+    const q = await getQuote(symbol);
 
-    if (!quoteRes.ok) {
+    if (!q) {
       return NextResponse.json(
         { error: `Failed to fetch quote for ${symbol}` },
         { status: 502 }
       );
     }
 
-    const quoteData = await quoteRes.json();
+    // Normalize to the legacy [{...}] shape used below.
+    const quoteData = [q];
 
     if (!quoteData || quoteData.length === 0) {
       return NextResponse.json(

@@ -4,6 +4,7 @@ import { sanitizeSymbol } from '@/lib/sanitize';
 import type { RenderCard, TradeCardData, PortfolioCardData, OptionsCardData, GuardCardData, GEXCardData, InsiderCardData } from '@/types/keisha';
 import { runTradeGuard } from '@/lib/trade-guard-engine';
 import { runGEXAnalysis } from '@/lib/gex-engine';
+import { getQuote, getProfile } from '@/lib/fmp-client';
 import {
   type FilingStatus,
   TAX_DISCLAIMER,
@@ -625,22 +626,15 @@ export async function executeToolCall(
             };
 
             // Try FMP for extra stats (marketCap, yearHigh/Low) — non-blocking
-            const fmpKey = process.env.FMP_API_KEY;
-            if (fmpKey) {
-              try {
-                const fmpRes = await fetch(
-                  `https://financialmodelingprep.com/api/v3/quote/${symbol}?apikey=${fmpKey}`,
-                  { signal: AbortSignal.timeout(3000) },
-                );
-                const fmpData = await fmpRes.json();
-                if (Array.isArray(fmpData) && fmpData[0]) {
-                  result.marketCap = fmpData[0].marketCap;
-                  result.yearHigh = fmpData[0].yearHigh;
-                  result.yearLow = fmpData[0].yearLow;
-                  result.pe = fmpData[0].pe;
-                }
-              } catch { /* FMP unavailable — Alpaca data is sufficient */ }
-            }
+            try {
+              const q = await getQuote(symbol);
+              if (q) {
+                result.marketCap = q.marketCap;
+                result.yearHigh = q.yearHigh;
+                result.yearLow = q.yearLow;
+                // FmpQuote from /stable does not expose `pe` — leave undefined.
+              }
+            } catch { /* FMP unavailable — Alpaca data is sufficient */ }
 
             return { result, success: true };
           }
@@ -648,19 +642,16 @@ export async function executeToolCall(
           console.error(`Alpaca snapshot failed for ${symbol}:`, alpacaErr);
         }
 
-        // Fallback: FMP only
-        const fmpKey = process.env.FMP_API_KEY;
-        if (fmpKey) {
-          const res = await fetch(`https://financialmodelingprep.com/api/v3/quote/${symbol}?apikey=${fmpKey}`);
-          const data = await res.json();
-          if (Array.isArray(data) && data[0]) {
-            const quote = data[0];
+        // Fallback: FMP /stable via fmp-client
+        const quote = await getQuote(symbol);
+        if (quote) {
+          {
             return {
               result: {
                 symbol,
                 price: quote.price,
                 change: quote.change,
-                changePct: quote.changesPercentage,
+                changePct: quote.changePercentage,
                 volume: quote.volume,
                 marketCap: quote.marketCap,
                 dayHigh: quote.dayHigh,
@@ -751,14 +742,10 @@ export async function executeToolCall(
         let companyName = symbol;
         let currentPrice = null;
         try {
-          const fmpKey = process.env.FMP_API_KEY;
-          if (fmpKey) {
-            const res = await fetch(`https://financialmodelingprep.com/api/v3/profile/${symbol}?apikey=${fmpKey}`);
-            const data = await res.json();
-            if (Array.isArray(data) && data[0]) {
-              companyName = data[0].companyName || symbol;
-              currentPrice = data[0].price;
-            }
+          const profile = await getProfile(symbol);
+          if (profile) {
+            companyName = profile.companyName || symbol;
+            currentPrice = profile.price;
           }
         } catch { /* non-critical */ }
 

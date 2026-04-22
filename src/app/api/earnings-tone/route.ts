@@ -86,12 +86,22 @@ export async function GET(req: NextRequest) {
       // Cache miss or Supabase not configured — continue
     }
 
-    // Fetch transcript from FMP
-    const transcriptUrl = `https://financialmodelingprep.com/api/v3/earning_call_transcript/${symbol}?quarter=${quarter}&year=${year}&apikey=${FMP_KEY}`;
+    // /stable/earning-call-transcript is a paid-tier endpoint on the current
+    // plan; if the plan later upgrades this will work automatically. Until
+    // then we degrade to "no transcript" instead of a hard error.
+    const transcriptUrl = `https://financialmodelingprep.com/stable/earning-call-transcript?symbol=${symbol}&quarter=${quarter}&year=${year}&apikey=${FMP_KEY}`;
     const transcriptRes = await fetch(transcriptUrl);
 
     if (!transcriptRes.ok) {
-      return NextResponse.json({ error: 'Failed to fetch transcript from FMP' }, { status: 502 });
+      return NextResponse.json({
+        symbol,
+        quarter,
+        year,
+        hasTranscript: false,
+        toneAnalysis: null,
+        note: 'Transcript endpoint not available on current FMP plan tier',
+        lastUpdated: new Date().toISOString(),
+      });
     }
 
     const transcriptData = await transcriptRes.json();

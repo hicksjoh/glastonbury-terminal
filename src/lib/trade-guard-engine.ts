@@ -6,6 +6,7 @@
 import { checkBehavioralGuards, type TradeContext, type PortfolioContext } from '@/lib/behavioral-guard';
 import { calculateKelly, type KellyInput } from '@/lib/kelly-sizer';
 import { detectRegime, getRegimeAdvice, getRegimeLabel } from '@/lib/regime-detector';
+import { getQuote, getStockPriceChange } from '@/lib/fmp-client';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -121,25 +122,13 @@ async function getAlpacaPortfolio() {
 }
 
 async function getVIX(): Promise<number | null> {
-  try {
-    const fmpKey = process.env.FMP_API_KEY;
-    if (!fmpKey) return null;
-    const res = await fetch(`https://financialmodelingprep.com/api/v3/quote/%5EVIX?apikey=${fmpKey}`);
-    if (!res.ok) return null;
-    const data = await res.json();
-    return data[0]?.price || null;
-  } catch { return null; }
+  const q = await getQuote('^VIX');
+  return q?.price ?? null;
 }
 
 async function getStockChange5D(symbol: string): Promise<number | null> {
-  try {
-    const fmpKey = process.env.FMP_API_KEY;
-    if (!fmpKey) return null;
-    const res = await fetch(`https://financialmodelingprep.com/api/v3/stock-price-change/${symbol}?apikey=${fmpKey}`);
-    if (!res.ok) return null;
-    const data = await res.json();
-    return data[0]?.['5D'] || null;
-  } catch { return null; }
+  const change = await getStockPriceChange(symbol);
+  return change?.['5D'] ?? null;
 }
 
 // ─── Core Engine ─────────────────────────────────────────────────────────────

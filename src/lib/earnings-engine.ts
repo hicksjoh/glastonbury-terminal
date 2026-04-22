@@ -104,7 +104,10 @@ export async function fetchFmpTranscript(ticker: string, year: number, quarter: 
   const key = process.env.FMP_API_KEY;
   if (!key) return null;
   try {
-    const url = `https://financialmodelingprep.com/api/v3/earning_call_transcript/${encodeURIComponent(ticker)}?year=${year}&quarter=${quarter}&apikey=${key}`;
+    // /stable/earning-call-transcript is a paid-tier endpoint on the current
+    // plan (returns 402 Restricted Endpoint). We still attempt it so an
+    // upgraded plan just starts working. 402/404 → null and callers degrade.
+    const url = `https://financialmodelingprep.com/stable/earning-call-transcript?symbol=${encodeURIComponent(ticker)}&year=${year}&quarter=${quarter}&apikey=${key}`;
     const res = await fetch(url, { signal: AbortSignal.timeout(15_000) });
     if (!res.ok) return null;
     const body = await res.json();

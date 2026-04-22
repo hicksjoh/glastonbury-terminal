@@ -1,23 +1,15 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createServiceClient } from '@/lib/supabase';
 import { driftRegimeScan } from '@/lib/drift-regime';
-
-const FMP_KEY = process.env.FMP_API_KEY || '';
-const FMP_V3 = 'https://financialmodelingprep.com/api/v3';
+import { getHistoricalPrices } from '@/lib/fmp-client';
 
 const DEFAULT_SYMBOLS = ['SPY', 'QQQ', 'AAPL', 'MSFT', 'NVDA', 'TSLA', 'AMZN', 'GOOGL', 'META'];
 
 async function fetchHistoricalPrices(symbol: string): Promise<number[]> {
-  const url = `${FMP_V3}/historical-price-full/${symbol}?timeseries=120&apikey=${FMP_KEY}`;
-  const res = await fetch(url);
-  if (!res.ok) return [];
-
-  const data = await res.json();
-  const historical = data?.historical;
-  if (!Array.isArray(historical) || historical.length === 0) return [];
-
-  // FMP returns newest first — reverse to chronological order
-  return historical.map((d: { close: number }) => d.close).reverse();
+  const data = await getHistoricalPrices(symbol, { timeseries: 120, light: true });
+  if (!data || data.historical.length === 0) return [];
+  // fmp-client returns newest-first — reverse to chronological order
+  return data.historical.map(d => d.close).reverse();
 }
 
 export async function GET(request: NextRequest) {

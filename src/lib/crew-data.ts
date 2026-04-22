@@ -4,6 +4,8 @@
  * degrade gracefully when one upstream is down.
  */
 
+import { getQuote, getProfile } from '@/lib/fmp-client';
+
 const ALPACA_DATA = process.env.ALPACA_DATA_URL || 'https://data.alpaca.markets';
 const ALPACA_KEY = process.env.ALPACA_API_KEY || '';
 const ALPACA_SECRET = process.env.ALPACA_API_SECRET || process.env.ALPACA_SECRET_KEY || '';
@@ -148,19 +150,12 @@ export async function fetchQuote(symbol: string): Promise<Quote | null> {
       }
     } catch { /* fallthrough */ }
   }
-  if (FMP_KEY) {
-    try {
-      const res = await fetch(`https://financialmodelingprep.com/api/v3/quote/${encodeURIComponent(symbol)}?apikey=${FMP_KEY}`, {
-        signal: AbortSignal.timeout(4000),
-      });
-      if (res.ok) {
-        const body = await res.json();
-        if (Array.isArray(body) && body[0]?.price) {
-          return { price: body[0].price, change_pct: body[0].changesPercentage, prev_close: body[0].previousClose ?? null };
-        }
-      }
-    } catch { /* noop */ }
-  }
+  try {
+    const q = await getQuote(symbol);
+    if (q?.price) {
+      return { price: q.price, change_pct: q.changePercentage, prev_close: null };
+    }
+  } catch { /* noop */ }
   return null;
 }
 
@@ -173,26 +168,18 @@ export type CompanyProfile = {
 };
 
 export async function fetchCompanyProfile(symbol: string): Promise<CompanyProfile | null> {
-  if (FMP_KEY) {
-    try {
-      const res = await fetch(`https://financialmodelingprep.com/api/v3/profile/${encodeURIComponent(symbol)}?apikey=${FMP_KEY}`, {
-        signal: AbortSignal.timeout(4000),
-      });
-      if (res.ok) {
-        const body = await res.json();
-        const p = Array.isArray(body) ? body[0] : null;
-        if (p) {
-          return {
-            name: p.companyName ?? null,
-            industry: p.industry ?? null,
-            market_cap: p.mktCap ?? null,
-            pe: p.pe ?? null,
-            description: p.description?.slice(0, 600) ?? null,
-          };
-        }
-      }
-    } catch { /* noop */ }
-  }
+  try {
+    const p = await getProfile(symbol);
+    if (p) {
+      return {
+        name: p.companyName ?? null,
+        industry: p.industry ?? null,
+        market_cap: p.marketCap ?? null,
+        pe: null, // `/stable/profile` on current tier does not return pe
+        description: p.description?.slice(0, 600) ?? null,
+      };
+    }
+  } catch { /* noop */ }
   if (FINNHUB_KEY) {
     try {
       const res = await fetch(`https://finnhub.io/api/v1/stock/profile2?symbol=${encodeURIComponent(symbol)}&token=${FINNHUB_KEY}`, {
@@ -217,9 +204,12 @@ export async function fetchCompanyProfile(symbol: string): Promise<CompanyProfil
 export type Filing = { form: string; filed_date: string; url: string | null; title?: string | null };
 
 export async function fetchRecentFilings(symbol: string, limit = 5): Promise<Filing[]> {
+  // FMP /stable dropped sec-filings on the current tier (404). Fall through
+  // to empty — callers should consider SEC EDGAR direct via src/app/api/edgar.
+  // TODO(F6/Wave 2): wire the 13F-whale-mirror EDGAR client as the source here too.
   if (!FMP_KEY) return [];
   try {
-    const res = await fetch(`https://financialmodelingprep.com/api/v3/sec_filings/${encodeURIComponent(symbol)}?limit=${limit}&apikey=${FMP_KEY}`, {
+    const res = await fetch(`https://financialmodelingprep.com/stable/sec_filings/${encodeURIComponent(symbol)}?limit=${limit}&apikey=${FMP_KEY}`, {
       signal: AbortSignal.timeout(4000),
     });
     if (!res.ok) return [];

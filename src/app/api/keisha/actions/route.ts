@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createServiceClient } from '@/lib/supabase';
 import { rateLimit } from '@/lib/rate-limit';
 import { sanitizeSymbol } from '@/lib/sanitize';
+import { getQuote, getProfile } from '@/lib/fmp-client';
 
 interface ActionRequest {
   action: string;
@@ -29,18 +30,14 @@ export async function POST(req: NextRequest) {
           return NextResponse.json({ success: true, message: `${symbol} is already on your watchlist` });
         }
 
-        // Fetch current price and company info from FMP
+        // Fetch current price and company info via /stable client
         let companyName = symbol;
         let currentPrice = null;
         try {
-          const fmpKey = process.env.FMP_API_KEY;
-          if (fmpKey) {
-            const res = await fetch(`https://financialmodelingprep.com/api/v3/profile/${symbol}?apikey=${fmpKey}`);
-            const data = await res.json();
-            if (Array.isArray(data) && data[0]) {
-              companyName = data[0].companyName || symbol;
-              currentPrice = data[0].price;
-            }
+          const p = await getProfile(symbol);
+          if (p) {
+            companyName = p.companyName || symbol;
+            currentPrice = p.price;
           }
         } catch {}
 
@@ -154,23 +151,17 @@ export async function POST(req: NextRequest) {
         const symbol = sanitizeSymbol(params.symbol || '');
         if (!symbol) return NextResponse.json({ error: 'Missing symbol' }, { status: 400 });
 
-        const fmpKey = process.env.FMP_API_KEY;
-        if (!fmpKey) return NextResponse.json({ error: 'FMP API key not configured' }, { status: 500 });
-
-        const res = await fetch(`https://financialmodelingprep.com/api/v3/quote/${symbol}?apikey=${fmpKey}`);
-        const data = await res.json();
-
-        if (!Array.isArray(data) || !data[0]) {
+        const quote = await getQuote(symbol);
+        if (!quote) {
           return NextResponse.json({ error: `No data for ${symbol}` }, { status: 404 });
         }
 
-        const quote = data[0];
         return NextResponse.json({
           success: true,
           symbol,
           price: quote.price,
           change: quote.change,
-          changePct: quote.changesPercentage,
+          changePct: quote.changePercentage,
           volume: quote.volume,
           marketCap: quote.marketCap,
           dayHigh: quote.dayHigh,
