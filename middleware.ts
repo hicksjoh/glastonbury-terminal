@@ -12,6 +12,7 @@ const PUBLIC_API_ROUTES = [
   '/api/portfolio/snapshot',
   '/api/push/subscribe',
   '/api/img',
+  '/api/mcp',  // MCP server; gates on MCP_AUTH_TOKEN bearer internally (F1)
   '/monitoring',  // Sentry tunnel route (see next.config.js tunnelRoute)
 ];
 

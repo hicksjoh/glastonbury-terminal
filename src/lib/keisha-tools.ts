@@ -753,7 +753,6 @@ export async function executeToolCall(
           symbol,
           company_name: companyName,
           current_price: currentPrice,
-          added_at: new Date().toISOString(),
         });
 
         if (error) return { result: { error: error.message }, success: false };

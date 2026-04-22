@@ -45,7 +45,6 @@ export async function POST(req: NextRequest) {
           symbol,
           company_name: companyName,
           current_price: currentPrice,
-          added_at: new Date().toISOString(),
         });
 
         if (error) return NextResponse.json({ error: error.message }, { status: 500 });
