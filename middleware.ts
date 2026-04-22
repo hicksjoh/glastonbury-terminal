@@ -1,16 +1,9 @@
 import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
+import { verifySessionJwt, SESSION_COOKIE_NAME } from '@/lib/session';
 
-async function sha256(input: string): Promise<string> {
-  const data = new TextEncoder().encode(input);
-  const hashBuffer = await crypto.subtle.digest('SHA-256', data);
-  return Array.from(new Uint8Array(hashBuffer))
-    .map(b => b.toString(16).padStart(2, '0'))
-    .join('');
-}
-
-// API routes that don't require gt-auth cookie authentication
-// NOTE: briefing/scheduled and portfolio/snapshot handle their own CRON_SECRET auth
+// API routes that don't require gt-auth cookie authentication.
+// NOTE: briefing/scheduled and portfolio/snapshot handle their own CRON_SECRET auth.
 const PUBLIC_API_ROUTES = [
   '/api/auth/login',
   '/api/health',
@@ -18,39 +11,40 @@ const PUBLIC_API_ROUTES = [
   '/api/portfolio/snapshot',
   '/api/push/subscribe',
   '/api/img',
+  '/monitoring',  // Sentry tunnel route (see next.config.js tunnelRoute)
 ];
 
 export async function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
 
-  // Skip static files
   if (pathname.startsWith('/_next/') || pathname.includes('.')) {
     return NextResponse.next();
   }
 
-  // Allow public API routes without auth (they handle their own auth if needed)
   if (PUBLIC_API_ROUTES.some(route => pathname.startsWith(route))) {
     return NextResponse.next();
   }
 
-  const APP_PASSWORD = process.env.APP_PASSWORD;
-  if (!APP_PASSWORD) {
-    // Fail-closed: no hardcoded fallback — env var MUST be set
+  // Fail-closed: if APP_PASSWORD is missing we cannot authenticate anyone.
+  // Redirect pages to /login and return 500 for API calls.
+  if (!process.env.APP_PASSWORD) {
     if (pathname.startsWith('/api/')) {
       return NextResponse.json({ error: 'Server misconfigured' }, { status: 500 });
     }
     return NextResponse.redirect(new URL('/login', request.url));
   }
-  const authCookie = request.cookies.get('gt-auth');
 
-  // Check hashed token
-  const isAuthenticated = authCookie?.value
-    ? authCookie.value === await sha256(`gt:${APP_PASSWORD}`)
-    : false;
+  // Verify the JWT session cookie. A null payload means: no cookie, expired,
+  // tampered, wrong secret, or legacy SHA-256 cookie from the pre-S1 era —
+  // all of which force a re-login.
+  const authCookie = request.cookies.get(SESSION_COOKIE_NAME);
+  const session = await verifySessionJwt(authCookie?.value);
+  const isAuthenticated = session !== null;
 
   // Protected API routes: return 401 JSON instead of redirect
   if (pathname.startsWith('/api/')) {
-    // Allow server-to-server calls with internal key (e.g., Keisha tool execution)
+    // Server-to-server bypass: still supports INTERNAL_API_KEY for Keisha
+    // tool execution + any other internal callers.
     const internalKey = request.headers.get('x-internal-key');
     const expectedKey = process.env.INTERNAL_API_KEY;
     if (expectedKey && internalKey === expectedKey) {
@@ -62,16 +56,10 @@ export async function middleware(request: NextRequest) {
     return NextResponse.next();
   }
 
-  // Authenticated page requests
-  if (isAuthenticated) {
-    return NextResponse.next();
-  }
-
-  // Redirect to login if not on login page
+  if (isAuthenticated) return NextResponse.next();
   if (pathname !== '/login') {
     return NextResponse.redirect(new URL('/login', request.url));
   }
-
   return NextResponse.next();
 }
 

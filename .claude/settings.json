@@ -91,7 +91,7 @@
       "Edit(.env.production)",
       "Write(.env.production)",
       "Edit(supabase/schema.sql)",
-      "Edit(src/middleware.ts)",
+      "Edit(middleware.ts)",
       "Bash(rm -rf *)",
       "Bash(rm -fr *)",
       "Bash(rm -rf /*)",
