@@ -5,7 +5,7 @@ import {
   CLAUDE_MODEL_FALLBACK,
 } from '@/lib/claude';
 import { createServiceClient } from '@/lib/supabase';
-import { rateLimit } from '@/lib/rate-limit';
+import { checkRateLimitDurable } from '@/lib/rate-limit-durable';
 import {
   fetchBars,
   fetchQuote,
@@ -416,7 +416,8 @@ async function persistRun(args: {
 
 // ── Route handler ────────────────────────────────────────────────────────────
 export async function POST(req: NextRequest) {
-  const { allowed } = rateLimit('crew-analyze', 8, 60_000);
+  // Durable rate limit: 8 per minute across all Vercel instances.
+  const { allowed } = await checkRateLimitDurable('crew-analyze', 'wes', 8, 60);
   if (!allowed) return new Response('Too many requests', { status: 429 });
 
   let body: { ticker?: string };

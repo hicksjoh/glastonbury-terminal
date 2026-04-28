@@ -1,6 +1,6 @@
 import { NextRequest } from 'next/server';
 import { createServiceClient } from '@/lib/supabase';
-import { rateLimit } from '@/lib/rate-limit';
+import { checkRateLimitDurable } from '@/lib/rate-limit-durable';
 import { runDebate, type ProposedTrade, type DebateEvent } from '@/lib/debate-engine';
 
 export const runtime = 'nodejs';
@@ -12,7 +12,8 @@ const sseEncode = (o: unknown) => `data: ${JSON.stringify(o)}\n\n`;
 // POST /api/debate/run  body: { ticker, proposedTrade? }
 // Streams the full debate via SSE. Persists to trade_debates on completion.
 export async function POST(req: NextRequest) {
-  const { allowed } = rateLimit('debate-run', 6, 300_000);
+  // Durable rate limit: 6 per 5 min, cross-instance.
+  const { allowed } = await checkRateLimitDurable('debate-run', 'wes', 6, 300);
   if (!allowed) return new Response('Too many requests', { status: 429 });
 
   let body: { ticker?: string; proposedTrade?: ProposedTrade };

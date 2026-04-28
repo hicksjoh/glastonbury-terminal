@@ -21,7 +21,11 @@ const securityHeaders = [
       // `*.ingest.sentry.io` and `*.sentry.io` added so the browser client
       // can ship errors + traces to Sentry. If you self-host Sentry, swap
       // these for your ingest domain.
-      "connect-src 'self' https://paper-api.alpaca.markets https://data.alpaca.markets wss://stream.data.alpaca.markets https://*.supabase.co https://financialmodelingprep.com https://api.anthropic.com https://finnhub.io wss://*.supabase.co https://*.ingest.sentry.io https://*.sentry.io",
+      // Phase 1-12 connect-src additions: server-side calls bypass CSP, but listed here so any future
+      // client-side fetches don't get blocked by the browser. Includes Voyage (P6 embeddings),
+      // OpenAI (P4 Whisper + embeddings fallback), ElevenLabs (P2 voice WS + REST), Kalshi/Polymarket
+      // (P11 prediction markets), NHC (P7 storm cone images), Resend (notifications), Healthchecks (cron).
+      "connect-src 'self' https://paper-api.alpaca.markets https://data.alpaca.markets wss://stream.data.alpaca.markets https://*.supabase.co https://financialmodelingprep.com https://api.anthropic.com https://finnhub.io wss://*.supabase.co https://*.ingest.sentry.io https://*.sentry.io https://api.voyageai.com https://api.openai.com https://api.elevenlabs.io wss://api.elevenlabs.io https://api.elections.kalshi.com https://gamma-api.polymarket.com https://www.nhc.noaa.gov https://api.resend.com https://hc-ping.com",
       "frame-src 'self' https://s3.tradingview.com https://*.tradingview.com",
       "frame-ancestors 'none'",
       "worker-src 'self' blob:",
