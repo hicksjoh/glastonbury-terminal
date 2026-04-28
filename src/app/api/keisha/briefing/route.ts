@@ -1,11 +1,12 @@
 import { NextRequest } from 'next/server';
+import { getQuote, getQuotes } from '@/lib/fmp-client';
 import {
   anthropic,
   CLAUDE_MODEL_PRIMARY,
   CLAUDE_MODEL_FALLBACK,
 } from '@/lib/claude';
 import { createServiceClient } from '@/lib/supabase';
-import { rateLimit } from '@/lib/rate-limit';
+import { checkRateLimitDurable } from '@/lib/rate-limit-durable';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -90,10 +91,11 @@ type FinnhubQuote = { c: number; d: number; dp: number; h: number; l: number; o:
 type FinnhubNews = { category: string; datetime: number; headline: string; id: number; image: string; related: string; source: string; summary: string; url: string };
 
 async function fetchQuotes(symbols: string[]): Promise<{ symbol: string; price: number; change_pct: number }[] | null> {
-  // Prefer FMP (one request, multiple symbols). Fall back to Finnhub (one request per symbol).
-  const fmp = await fetchFmpJSON<FmpQuote[]>(`/api/v3/quote/${symbols.join(',')}`);
-  if (Array.isArray(fmp) && fmp.length > 0) {
-    return fmp.map(q => ({ symbol: q.symbol, price: q.price, change_pct: q.changesPercentage }));
+  // /stable/quote batch form is paid on the current tier; use the fan-out
+  // helper in fmp-client. Finnhub remains as the fallback for completeness.
+  const fmp = await getQuotes(symbols);
+  if (fmp.length > 0) {
+    return fmp.map(q => ({ symbol: q.symbol, price: q.price, change_pct: q.changePercentage }));
   }
   const quotes = await Promise.all(
     symbols.map(async sym => {
@@ -106,10 +108,8 @@ async function fetchQuotes(symbols: string[]): Promise<{ symbol: string; price: 
 }
 
 async function fetchTopNews(): Promise<{ title: string; site?: string; published?: string; symbol?: string }[]> {
-  const fmp = await fetchFmpJSON<FmpNews[]>('/api/v3/stock_news?limit=8');
-  if (Array.isArray(fmp) && fmp.length > 0) {
-    return fmp.slice(0, 8).map(n => ({ title: n.title, site: n.site, published: n.publishedDate, symbol: n.symbol }));
-  }
+  // FMP /stable stock-news is paid-tier on the current plan — skip straight
+  // to Finnhub's free news feed which is already wired as the fallback below.
   const fh = await fetchFinnhubJSON<FinnhubNews[]>('/api/v1/news?category=general');
   if (Array.isArray(fh) && fh.length > 0) {
     return fh.slice(0, 8).map(n => ({
@@ -134,7 +134,7 @@ async function buildContext(userId: string) {
     fetchAlpacaJSON<AlpacaAccount>('/v2/account'),
     fetchAlpacaJSON<AlpacaPosition[]>('/v2/positions'),
     supabase.from('watchlist').select('symbol, company_name, current_price, notes').limit(15),
-    fetchFmpJSON<FmpQuote[]>('/api/v3/quote/%5EVIX'),
+    getQuote('^VIX').then(q => q ? [{ symbol: q.symbol, price: q.price, changesPercentage: q.changePercentage, name: q.name }] : null),
     fetchQuotes(['SPY', 'QQQ', 'DIA', 'IWM']),
     fetchTopNews(),
     supabase.from('trade_journal').select('ticker, direction, strategy, entry_date, exit_date, pnl, notes').order('created_at', { ascending: false }).limit(5),
@@ -356,12 +356,15 @@ async function persistBriefing(args: {
 }
 
 export async function GET(req: NextRequest) {
-  const { allowed } = rateLimit('keisha-briefing', 10, 60_000);
+  const userId = req.nextUrl.searchParams.get('user') || 'wes';
+
+  // Durable rate limit: 10 per minute, cross-instance. Pre-cache check is
+  // cheap, but the post-cache Opus call is expensive — we want this enforced
+  // even when Vercel scales horizontally.
+  const { allowed } = await checkRateLimitDurable('keisha-briefing', userId, 10, 60);
   if (!allowed) {
     return new Response('Too many requests', { status: 429 });
   }
-
-  const userId = req.nextUrl.searchParams.get('user') || 'wes';
   const forceRefresh = req.nextUrl.searchParams.get('refresh') === 'true';
 
   const encoder = new TextEncoder();
@@ -370,21 +373,48 @@ export async function GET(req: NextRequest) {
       const send = (obj: unknown) => controller.enqueue(encoder.encode(sseEncode(obj)));
       const safeClose = () => { try { controller.close(); } catch { /* already closed */ } };
 
+      // Lease tracking — released in finally so even crashes don't deadlock.
+      let leaseId: string | null = null;
+      const sb = createServiceClient();
+
+      const replayFromCache = async (): Promise<boolean> => {
+        const cached = await maybeServeCache(userId);
+        if (!cached) return false;
+        send({ type: 'meta', cached: true, model: cached.model, briefingId: cached.id, createdAt: cached.createdAt });
+        const chunkSize = 80;
+        for (let i = 0; i < cached.text.length; i += chunkSize) {
+          send({ type: 'token', text: cached.text.slice(i, i + chunkSize) });
+        }
+        send({ type: 'done', cached: true, briefingId: cached.id });
+        safeClose();
+        return true;
+      };
+
       try {
         // ── Cache check ───────────────────────────────────────────────
-        if (!forceRefresh) {
-          const cached = await maybeServeCache(userId);
-          if (cached) {
-            send({ type: 'meta', cached: true, model: cached.model, briefingId: cached.id, createdAt: cached.createdAt });
-            // Chunk the cached text so the UI still streams
-            const chunkSize = 80;
-            for (let i = 0; i < cached.text.length; i += chunkSize) {
-              send({ type: 'token', text: cached.text.slice(i, i + chunkSize) });
-            }
-            send({ type: 'done', cached: true, briefingId: cached.id });
-            safeClose();
-            return;
+        if (!forceRefresh && await replayFromCache()) return;
+
+        // ── Briefing-lease lock (Fix 2): RPC returns TABLE(lease_id uuid).
+        // Empty array means another request holds the (un-expired) lease, so
+        // this request waits, then replays the cache once the leader writes.
+        const { data: leaseRows } = await sb.rpc('try_acquire_briefing_lease', {
+          p_user_id: userId,
+          p_ttl_seconds: 90,
+        });
+        const rows = (leaseRows as unknown as Array<{ lease_id: string }> | null) ?? [];
+        leaseId = rows[0]?.lease_id ?? null;
+
+        if (!leaseId) {
+          // Someone else is generating right now. Poll the cache for up to 30s.
+          send({ type: 'meta', cached: false, waiting: true });
+          const deadline = Date.now() + 30_000;
+          while (Date.now() < deadline) {
+            await new Promise(r => setTimeout(r, 1000));
+            if (await replayFromCache()) return;
           }
+          send({ type: 'error', message: 'Another briefing is already generating — try again in a moment.' });
+          safeClose();
+          return;
         }
 
         // ── Build context + prompt ────────────────────────────────────
@@ -454,6 +484,12 @@ export async function GET(req: NextRequest) {
         const message = err instanceof Error ? err.message : 'Unknown error';
         send({ type: 'error', message });
       } finally {
+        // Always release the briefing lease so we don't block the next
+        // legitimate request even on errors / abort / SDK exceptions.
+        if (leaseId) {
+          try { await sb.rpc('release_briefing_lease', { p_user_id: userId, p_lease_id: leaseId }); }
+          catch { /* best-effort */ }
+        }
         safeClose();
       }
     },

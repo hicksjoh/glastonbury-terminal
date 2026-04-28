@@ -1,9 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { takePredictionSnapshot } from '@/lib/prediction-markets';
+import { pingHealthcheck } from '@/lib/healthchecks';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60;
+
+const HC_SLUG = 'cron-prediction-snapshot';
 
 async function handle(req: NextRequest): Promise<NextResponse> {
   const cronSecret = process.env.CRON_SECRET;
@@ -15,8 +18,11 @@ async function handle(req: NextRequest): Promise<NextResponse> {
     if (!ok && !hasCookieAuth) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
+  await pingHealthcheck(HC_SLUG, 'start');
+
   try {
     const result = await takePredictionSnapshot();
+    await pingHealthcheck(HC_SLUG, 'success');
     return NextResponse.json({
       ok: true,
       inserted: result.inserted,
@@ -29,6 +35,7 @@ async function handle(req: NextRequest): Promise<NextResponse> {
       })),
     });
   } catch (err) {
+    await pingHealthcheck(HC_SLUG, 'fail');
     return NextResponse.json({ error: (err as Error).message }, { status: 500 });
   }
 }

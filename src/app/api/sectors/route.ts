@@ -1,7 +1,16 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getCached, setCache, TTL } from '@/lib/server-cache';
+import {
+  getSectorPerformance as getSectorPerformanceStable,
+  getQuote,
+} from '@/lib/fmp-client';
 
-const FMP_V3 = 'https://financialmodelingprep.com/api/v3';
+// NOTE: FMP retired all /api/v3 endpoints for this account tier as of
+// Aug 31 2025 (they return 403 "Legacy Endpoint"). Quote calls are routed
+// through the /stable client (src/lib/fmp-client.ts). The sector
+// screener no longer has a /stable equivalent — we fall through to the
+// representative-stocks path below when `fetchSectorStocksViaScreener`
+// returns empty.
 const FMP_KEY = process.env.FMP_API_KEY || '';
 
 // Sector representative stocks — used for drill-down and fallback performance
@@ -42,59 +51,32 @@ interface QuoteData {
 }
 
 async function fetchQuote(symbol: string): Promise<QuoteData | null> {
-  try {
-    const res = await fetch(
-      `${FMP_V3}/quote/${encodeURIComponent(symbol)}?apikey=${FMP_KEY}`,
-      { next: { revalidate: 300 } }
-    );
-    if (!res.ok) return null;
-    const data = await res.json();
-    if (!Array.isArray(data) || data.length === 0) return null;
-    const q = data[0];
-    return { ...q, changePercentage: q.changePercentage ?? q.changesPercentage ?? 0 } as QuoteData;
-  } catch {
-    return null;
-  }
+  const q = await getQuote(symbol);
+  if (!q) return null;
+  return {
+    symbol: q.symbol,
+    name: q.name,
+    price: q.price,
+    change: q.change,
+    changePercentage: q.changePercentage,
+    marketCap: q.marketCap,
+  };
 }
 
-async function fetchSectorStocksViaScreener(sector: string): Promise<QuoteData[]> {
-  try {
-    const res = await fetch(
-      `${FMP_V3}/stock-screener?sector=${encodeURIComponent(sector)}&limit=5&sort=changesPercentage&order=desc&apikey=${FMP_KEY}`,
-      { next: { revalidate: 300 } }
-    );
-    if (!res.ok) return [];
-    const data = await res.json();
-    if (!Array.isArray(data)) return [];
-    return data.map((d: Record<string, unknown>) => ({
-      symbol: d.symbol as string,
-      name: (d.companyName || d.name || '') as string,
-      price: (d.price || 0) as number,
-      changePercentage: ((d.changePercentage ?? d.changesPercentage ?? 0) as number),
-      changesPercentage: ((d.changesPercentage ?? d.changePercentage ?? 0) as number),
-      change: (d.change || 0) as number,
-      marketCap: (d.marketCap || 0) as number,
-    }));
-  } catch {
-    return [];
-  }
+// FMP's /stable tier has no direct stock-screener. Return empty so the
+// caller falls through to representative-stocks-per-sector. If we ever
+// add Polygon screening this is where it plugs in.
+async function fetchSectorStocksViaScreener(_sector: string): Promise<QuoteData[]> {
+  return [];
 }
 
 async function fetchSectorPerformance(): Promise<{ sector: string; changesPercentage: string }[] | null> {
-  try {
-    const res = await fetch(`${FMP_V3}/sectors-performance?apikey=${FMP_KEY}`);
-    if (!res.ok) return null;
-    const data = await res.json();
-    if (!Array.isArray(data)) return null;
-    return data
-      .filter((d: { sector: string; changesPercentage: string }) => d.sector && d.changesPercentage)
-      .map((d: { sector: string; changesPercentage: string }) => ({
-        sector: SECTOR_NAME_MAP[d.sector] || d.sector,
-        changesPercentage: parseFloat(d.changesPercentage).toFixed(2),
-      }));
-  } catch {
-    return null;
-  }
+  const rows = await getSectorPerformanceStable().catch(() => []);
+  if (rows.length === 0) return null;
+  return rows.map(r => ({
+    sector: SECTOR_NAME_MAP[r.sector] || r.sector,
+    changesPercentage: r.changesPercentage.toFixed(2),
+  }));
 }
 
 export async function GET(req: NextRequest) {

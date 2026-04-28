@@ -46,8 +46,8 @@ type TimeRange = '1D' | '1W' | '1M' | '3M' | '6M' | '1Y' | 'ALL';
 type ChartType = 'candlestick' | 'line' | 'area';
 
 export default function StockDetailPage() {
-  const params = useParams();
-  const symbol = (params.symbol as string)?.toUpperCase();
+  const params = useParams<{ symbol: string }>();
+  const symbol = (params?.symbol ?? '').toUpperCase();
   const chartContainerRef = useRef<HTMLDivElement>(null);
   const [data, setData] = useState<StockData | null>(null);
   const [loading, setLoading] = useState(true);

@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { pearsonCorrelation, correlationMatrix, diversificationScore } from '@/lib/correlation';
+import { getHistoricalPrices } from '@/lib/fmp-client';
 
 const FMP_KEY = process.env.FMP_API_KEY;
 
@@ -17,14 +18,10 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ error: 'At least 2 symbols required' }, { status: 400 });
     }
 
-    // Fetch historical prices for all symbols in parallel
-    const pricePromises = symbols.map(symbol =>
-      fetch(`https://financialmodelingprep.com/api/v3/historical-price-full/${symbol}?timeseries=${period}&apikey=${FMP_KEY}`)
-        .then(res => res.ok ? res.json() : null)
-        .catch(() => null)
+    // Fetch historical prices for all symbols in parallel via the /stable client.
+    const priceResults = await Promise.all(
+      symbols.map(symbol => getHistoricalPrices(symbol, { timeseries: period, light: true })),
     );
-
-    const priceResults = await Promise.all(pricePromises);
 
     // Calculate daily returns for each symbol
     const allReturns: number[][] = [];
@@ -76,10 +73,9 @@ export async function GET(req: NextRequest) {
     if (spyIndex === -1) {
       // Fetch SPY data for beta calculation
       try {
-        const spyRes = await fetch(`https://financialmodelingprep.com/api/v3/historical-price-full/SPY?timeseries=${period}&apikey=${FMP_KEY}`);
-        if (spyRes.ok) {
-          const spyData = await spyRes.json();
-          const spyHist = spyData?.historical;
+        const spyData = await getHistoricalPrices('SPY', { timeseries: period, light: true });
+        if (spyData) {
+          const spyHist = spyData.historical;
           if (Array.isArray(spyHist) && spyHist.length > 10) {
             const spyPrices = spyHist.reverse().map((d: { close: number }) => d.close);
             const spyReturns: number[] = [];

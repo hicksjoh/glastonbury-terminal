@@ -1,3 +1,5 @@
+import { getQuote } from '@/lib/fmp-client';
+
 // ─── Shared GEX Analysis Runner ─────────────────────────────────────────────
 
 export interface GEXAnalysisResult {
@@ -102,14 +104,8 @@ export async function runGEXAnalysis(symbol: string): Promise<GEXAnalysisResult>
   } catch { /* fallback below */ }
 
   if (spotPrice === 0) {
-    const fmpKey = process.env.FMP_API_KEY || '';
-    if (fmpKey) {
-      try {
-        const res = await fetch(`https://financialmodelingprep.com/api/v3/quote/${symbol}?apikey=${fmpKey}`);
-        const data = await res.json();
-        if (Array.isArray(data) && data[0]) spotPrice = data[0].price || 0;
-      } catch { /* use default */ }
-    }
+    const q = await getQuote(symbol);
+    if (q?.price) spotPrice = q.price;
   }
 
   if (spotPrice === 0) {

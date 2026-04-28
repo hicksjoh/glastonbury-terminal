@@ -104,7 +104,10 @@ export async function fetchFmpTranscript(ticker: string, year: number, quarter: 
   const key = process.env.FMP_API_KEY;
   if (!key) return null;
   try {
-    const url = `https://financialmodelingprep.com/api/v3/earning_call_transcript/${encodeURIComponent(ticker)}?year=${year}&quarter=${quarter}&apikey=${key}`;
+    // /stable/earning-call-transcript is a paid-tier endpoint on the current
+    // plan (returns 402 Restricted Endpoint). We still attempt it so an
+    // upgraded plan just starts working. 402/404 → null and callers degrade.
+    const url = `https://financialmodelingprep.com/stable/earning-call-transcript?symbol=${encodeURIComponent(ticker)}&year=${year}&quarter=${quarter}&apikey=${key}`;
     const res = await fetch(url, { signal: AbortSignal.timeout(15_000) });
     if (!res.ok) return null;
     const body = await res.json();
@@ -148,27 +151,22 @@ export async function transcribeAudioFile(file: File): Promise<string | null> {
 }
 
 // ── Persistence helpers ─────────────────────────────────────────────────────
+// Uses the append_earnings_chunks Postgres RPC (advisory-xact-lock per session)
+// to prevent the concurrent-ingest seq collision found in adversarial QA. The
+// RPC is atomic; the prior in-app read-max-then-increment was racy.
 export async function insertChunks(sessionId: string, rawChunks: RawChunk[]): Promise<number> {
   if (rawChunks.length === 0) return 0;
   const sb = createServiceClient();
-  const { data: existing } = await sb
-    .from('earnings_transcript_chunks')
-    .select('seq')
-    .eq('session_id', sessionId)
-    .order('seq', { ascending: false })
-    .limit(1);
-  const baseSeq = ((existing as unknown as { seq: number }[])?.[0]?.seq ?? -1) + 1;
-  const rows = rawChunks.map((c, i) => ({
-    session_id: sessionId,
-    seq: baseSeq + i,
-    speaker: c.speaker,
-    chunk_text: c.text,
-    sentiment_score: null,
-    sentiment_tags: null,
-  }));
-  const { error } = await sb.from('earnings_transcript_chunks').insert(rows);
+  const payload = rawChunks
+    .filter(c => c.text && c.text.trim().length > 0)
+    .map(c => ({ speaker: c.speaker ?? '', text: c.text }));
+  if (payload.length === 0) return 0;
+  const { data, error } = await sb.rpc('append_earnings_chunks', {
+    p_session_id: sessionId,
+    p_chunks: payload,
+  });
   if (error) return 0;
-  return rows.length;
+  return Number(data) || 0;
 }
 
 // ── Memo generation ─────────────────────────────────────────────────────────

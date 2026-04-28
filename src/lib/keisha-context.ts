@@ -1,6 +1,7 @@
 import { createServiceClient } from '@/lib/supabase';
 import { buildMarketContext } from '@/lib/market-intel';
 import { getRegimeUIConfig, mapApiRegime, regimeContextString } from '@/lib/ui-regime-adapter';
+import { getQuote } from '@/lib/fmp-client';
 
 // ── Common words to exclude from symbol detection ────────────────────────────
 export const COMMON_WORDS = new Set([
@@ -616,14 +617,8 @@ export async function logRecommendation(
 
         let price = null;
         try {
-          const fmpKey = process.env.FMP_API_KEY;
-          if (fmpKey) {
-            const priceRes = await fetch(`https://financialmodelingprep.com/api/v3/quote/${symbol}?apikey=${fmpKey}`);
-            const priceData = await priceRes.json();
-            if (Array.isArray(priceData) && priceData[0]?.price) {
-              price = priceData[0].price;
-            }
-          }
+          const q = await getQuote(symbol);
+          if (q?.price) price = q.price;
         } catch { /* ignore */ }
 
         await (supabase as any).from('keisha_recommendations').insert({

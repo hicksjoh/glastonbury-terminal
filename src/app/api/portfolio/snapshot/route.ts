@@ -1,6 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getAccount, getPositions } from '@/lib/alpaca';
 import { createServiceClient } from '@/lib/supabase';
+import { pingHealthcheck } from '@/lib/healthchecks';
+
+const HC_SLUG = 'portfolio-snapshot';
 
 // ─── Auth check (same pattern as briefing/scheduled) ──────
 function isAuthorized(req: NextRequest): boolean {
@@ -17,6 +20,8 @@ export async function POST(req: NextRequest) {
   if (!isAuthorized(req)) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
+
+  await pingHealthcheck(HC_SLUG, 'start');
 
   try {
     const supabase = createServiceClient();
@@ -81,8 +86,11 @@ export async function POST(req: NextRequest) {
 
     if (error) {
       console.error('Supabase snapshot insert error:', error);
+      await pingHealthcheck(HC_SLUG, 'fail');
       return NextResponse.json({ error: 'Failed to save snapshot', details: error.message }, { status: 500 });
     }
+
+    await pingHealthcheck(HC_SLUG, 'success');
 
     return NextResponse.json({
       success: true,
@@ -102,6 +110,7 @@ export async function POST(req: NextRequest) {
   } catch (error) {
     const msg = error instanceof Error ? error.message : 'Unknown error';
     console.error('Portfolio snapshot error:', msg);
+    await pingHealthcheck(HC_SLUG, 'fail');
     return NextResponse.json({ error: msg }, { status: 500 });
   }
 }

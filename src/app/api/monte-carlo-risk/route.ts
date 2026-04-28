@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { runMonteCarlo, stressTest, MCPosition } from '@/lib/monte-carlo-risk';
 import { createServiceClient } from '@/lib/supabase';
+import { getHistoricalPrices } from '@/lib/fmp-client';
 
 const ALPACA_BASE = process.env.ALPACA_BASE_URL || 'https://paper-api.alpaca.markets';
 const ALPACA_KEY = process.env.ALPACA_API_KEY_ID || '';
@@ -87,15 +88,10 @@ export async function POST(req: NextRequest) {
     await Promise.all(
       symbols.map(async (symbol) => {
         try {
-          const res = await fetch(
-            `https://financialmodelingprep.com/api/v3/historical-price-full/${symbol}?timeseries=252&apikey=${FMP_KEY}`
-          );
-          if (!res.ok) return;
+          const data = await getHistoricalPrices(symbol, { timeseries: 252, light: true });
+          if (!data || data.historical.length < 2) return;
 
-          const data: FMPHistorical = await res.json();
-          if (!data.historical || data.historical.length < 2) return;
-
-          // FMP returns newest-first; reverse to chronological
+          // /stable client returns newest-first; reverse to chronological
           const prices = [...data.historical].reverse();
           const returns: number[] = [];
           for (let i = 1; i < prices.length; i++) {

@@ -6,24 +6,17 @@ import {
   generateSignal,
   backtestPair,
 } from '@/lib/pairs-trading';
+import { getHistoricalPrices } from '@/lib/fmp-client';
 
 const FMP_KEY = process.env.FMP_API_KEY;
 
 async function fetchPrices(symbol: string, lookback: number): Promise<number[]> {
-  const url = `https://financialmodelingprep.com/api/v3/historical-price-full/${symbol}?timeseries=${lookback}&apikey=${FMP_KEY}`;
-  const res = await fetch(url, { next: { revalidate: 300 } });
-
-  if (!res.ok) {
-    throw new Error(`FMP request failed for ${symbol}: ${res.status}`);
-  }
-
-  const data = await res.json();
-  if (!data.historical || !Array.isArray(data.historical)) {
+  const data = await getHistoricalPrices(symbol, { timeseries: lookback, light: true });
+  if (!data || data.historical.length === 0) {
     throw new Error(`No historical data returned for ${symbol}`);
   }
-
-  // FMP returns newest-first; reverse to chronological order
-  return data.historical.map((d: { close: number }) => d.close).reverse();
+  // fmp-client returns newest-first; reverse to chronological order
+  return data.historical.map(d => d.close).reverse();
 }
 
 // ─── Scanner Mode ────────────────────────────────────────────────────────────

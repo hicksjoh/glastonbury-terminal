@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { equilibriumReturns, blackLitterman, efficientFrontier, View } from '@/lib/black-litterman';
 import { correlationMatrix } from '@/lib/correlation';
 import { anthropic, CLAUDE_MODEL_FALLBACK } from '@/lib/claude';
+import { getHistoricalPrices } from '@/lib/fmp-client';
 
 const ALPACA_BASE_URL = process.env.ALPACA_BASE_URL || 'https://paper-api.alpaca.markets';
 const FMP_KEY = process.env.FMP_API_KEY;
@@ -88,22 +89,15 @@ async function fetchAlpacaPositions(): Promise<{
 }
 
 async function fetchHistoricalPrices(symbol: string): Promise<number[]> {
-  const url = `https://financialmodelingprep.com/api/v3/historical-price-full/${symbol}?timeseries=252&apikey=${FMP_KEY}`;
-  const res = await fetch(url);
-
-  if (!res.ok) {
-    throw new Error(`FMP API error for ${symbol}: ${res.status} ${res.statusText}`);
+  const data = await getHistoricalPrices(symbol, { timeseries: 252, light: true });
+  if (!data) {
+    throw new Error(`FMP API failed for ${symbol}`);
   }
-
-  const data = await res.json();
-  const historical: FMPHistoricalEntry[] = data.historical || [];
-
-  if (historical.length < 10) {
-    throw new Error(`Insufficient historical data for ${symbol}: only ${historical.length} days`);
+  if (data.historical.length < 10) {
+    throw new Error(`Insufficient historical data for ${symbol}: only ${data.historical.length} days`);
   }
-
-  // FMP returns newest first, reverse for chronological order
-  return historical.map((h) => h.close).reverse();
+  // /stable client returns newest first, reverse for chronological order
+  return data.historical.map((h) => h.close).reverse();
 }
 
 async function generateAIViews(

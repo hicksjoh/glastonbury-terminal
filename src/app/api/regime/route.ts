@@ -1,25 +1,15 @@
 import { NextResponse } from 'next/server';
 import { createServiceClient } from '@/lib/supabase';
-
-const FMP_KEY = process.env.FMP_API_KEY || '';
-const FMP_V3 = 'https://financialmodelingprep.com/api/v3';
+import { getQuote } from '@/lib/fmp-client';
 
 async function fetchVIX(): Promise<number | null> {
-  try {
-    const res = await fetch(`${FMP_V3}/quote/^VIX?apikey=${FMP_KEY}`);
-    if (!res.ok) return null;
-    const data = await res.json();
-    return data?.[0]?.price || null;
-  } catch { return null; }
+  const q = await getQuote('^VIX');
+  return q?.price ?? null;
 }
 
 async function fetchSPYMomentum(): Promise<number | null> {
-  try {
-    const res = await fetch(`${FMP_V3}/quote/SPY?apikey=${FMP_KEY}`);
-    if (!res.ok) return null;
-    const data = await res.json();
-    return data?.[0]?.changesPercentage || null;
-  } catch { return null; }
+  const q = await getQuote('SPY');
+  return q?.changePercentage ?? null;
 }
 
 function detectRegime(vix: number | null, momentum: number | null): { regime: string; confidence: number } {

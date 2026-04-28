@@ -1,10 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { createHash, timingSafeEqual } from 'crypto';
+import { timingSafeEqual } from 'crypto';
 import { rateLimit } from '@/lib/rate-limit';
-
-function hashToken(password: string): string {
-  return createHash('sha256').update(`gt:${password}`).digest('hex');
-}
+import {
+  createSessionJwt,
+  SESSION_COOKIE_NAME,
+  SESSION_MAX_AGE_SECONDS,
+} from '@/lib/session';
 
 function safeCompare(a: string, b: string): boolean {
   const bufA = Buffer.from(a);
@@ -25,13 +26,17 @@ export async function POST(req: NextRequest) {
     }
 
     if (typeof password === 'string' && safeCompare(password, APP_PASSWORD)) {
-      const token = hashToken(APP_PASSWORD);
+      // Issue a signed JWT session. Rotating SESSION_SECRET invalidates
+      // every outstanding session immediately — the big upgrade over the
+      // legacy SHA-256 cookie which was a permanent static key.
+      const token = await createSessionJwt({ sub: 'wes' });
       const res = NextResponse.json({ success: true });
-      res.cookies.set('gt-auth', token, {
+      res.cookies.set(SESSION_COOKIE_NAME, token, {
         httpOnly: true,
         secure: process.env.NODE_ENV === 'production',
         sameSite: 'lax',
-        maxAge: 60 * 60 * 24 * 30, // 30 days
+        maxAge: SESSION_MAX_AGE_SECONDS,
+        path: '/',
       });
       return res;
     }

@@ -2,13 +2,13 @@ import { NextRequest, NextResponse } from 'next/server';
 import { anthropic, CLAUDE_MODEL_FALLBACK } from '@/lib/claude';
 import { createServiceClient } from '@/lib/supabase';
 import { rateLimit } from '@/lib/rate-limit';
+import { getQuote } from '@/lib/fmp-client';
 
 const ALPACA_BASE_URL = process.env.ALPACA_BASE_URL || 'https://paper-api.alpaca.markets';
 const ALPACA_HEADERS = {
   'APCA-API-KEY-ID': process.env.ALPACA_API_KEY!,
   'APCA-API-SECRET-KEY': process.env.ALPACA_SECRET_KEY!,
 };
-const FMP_KEY = process.env.FMP_API_KEY || '';
 
 export async function POST(req: NextRequest) {
   const { allowed } = rateLimit('agent-crew', 10, 60000);
@@ -178,18 +178,9 @@ export async function POST(req: NextRequest) {
   }
 }
 
-// ── Helper: Fetch stock quote from FMP ─────────────────────────────────────
+// ── Helper: Fetch stock quote via /stable client ───────────────────────────
 async function fetchQuote(symbol: string) {
-  try {
-    const res = await fetch(
-      `https://financialmodelingprep.com/api/v3/quote/${symbol}?apikey=${FMP_KEY}`
-    );
-    if (!res.ok) return null;
-    const data = await res.json();
-    return data?.[0] ?? null;
-  } catch {
-    return null;
-  }
+  return await getQuote(symbol);
 }
 
 // ── Helper: Fetch portfolio positions from Alpaca ──────────────────────────

@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { getHistoricalPrices } from '@/lib/fmp-client';
 
 // ── Types ──────────────────────────────────────────────────────────
 interface BacktestRequest {
@@ -385,18 +386,15 @@ export async function POST(request: Request) {
       );
     }
 
-    // Fetch historical data from FMP
-    const url = `https://financialmodelingprep.com/api/v3/historical-price-full/${encodeURIComponent(symbol.toUpperCase())}?apikey=${apiKey}`;
-    const fmpRes = await fetch(url, { next: { revalidate: 3600 } });
+    // Fetch historical data via /stable client (full OHLCV with change pct).
+    const fmpData = await getHistoricalPrices(symbol.toUpperCase(), { light: false });
 
-    if (!fmpRes.ok) {
+    if (!fmpData) {
       return NextResponse.json(
-        { error: `FMP API returned ${fmpRes.status}: ${fmpRes.statusText}` },
+        { error: `FMP API failed for ${symbol}` },
         { status: 502 },
       );
     }
-
-    const fmpData = (await fmpRes.json()) as FMPHistoricalResponse;
 
     if (!fmpData.historical || fmpData.historical.length === 0) {
       return NextResponse.json(

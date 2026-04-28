@@ -1,6 +1,6 @@
 import { NextRequest } from 'next/server';
 import { createServiceClient } from '@/lib/supabase';
-import { rateLimit } from '@/lib/rate-limit';
+import { checkRateLimitDurable } from '@/lib/rate-limit-durable';
 import { runResearchAgent, wordCount, type AgentEvent } from '@/lib/research-agent';
 import { sendResendEmail } from '@/lib/resend-client';
 import { indexDoc } from '@/lib/doc-indexer';
@@ -18,17 +18,36 @@ const sseEncode = (o: unknown) => `data: ${JSON.stringify(o)}\n\n`;
 
 // POST /api/research/start — create memo row, run agent inline, stream progress via SSE
 export async function POST(req: NextRequest) {
-  const { allowed } = rateLimit('research-start', 4, 300_000); // 4 per 5 min
+  // Durable rate limit: 4 per 5 min, enforced across all Vercel instances.
+  const { allowed } = await checkRateLimitDurable('research-start', 'wes', 4, 300);
   if (!allowed) return new Response('Too many requests', { status: 429 });
 
   let body: { topic?: string; ticker?: string; prompt?: string; budgetSeconds?: number; budgetCostUsd?: number };
   try { body = await req.json(); } catch { return new Response('Bad JSON', { status: 400 }); }
 
-  const topic = (body.topic ?? '').trim() || (body.ticker ? `${body.ticker} deep dive` : '');
+  // ── Input validation (matches /api/crew/analyze + /api/debate/run) ────────
+  // Caps prevent prompt-injection bill bombs: even at the per-run $5 cap, a
+  // 100KB topic burnt ~$1.50 of input tokens before the agent could shut down.
+  const TOPIC_MAX = 500;
+  const PROMPT_MAX = 4000;
+  const TICKER_RE = /^[A-Z.\-]{1,8}$/;
+
+  const rawTicker = (body.ticker ?? '').trim().toUpperCase();
+  if (rawTicker && !TICKER_RE.test(rawTicker)) {
+    return new Response('Invalid ticker (must match /^[A-Z.\\-]{1,8}$/)', { status: 400 });
+  }
+  const ticker = rawTicker || null;
+
+  const topic = (body.topic ?? '').trim().slice(0, TOPIC_MAX) || (ticker ? `${ticker} deep dive` : '');
+  if ((body.topic ?? '').length > TOPIC_MAX) {
+    return new Response(`topic exceeds ${TOPIC_MAX} chars`, { status: 400 });
+  }
   const prompt = (body.prompt ?? '').trim();
+  if (prompt.length > PROMPT_MAX) {
+    return new Response(`prompt exceeds ${PROMPT_MAX} chars`, { status: 400 });
+  }
   if (!topic && !prompt) return new Response('Missing topic or prompt', { status: 400 });
 
-  const ticker = (body.ticker ?? '').trim().toUpperCase() || null;
   const budgetSeconds = Math.min(DEFAULT_BUDGET_SECONDS, Math.max(60, body.budgetSeconds ?? DEFAULT_BUDGET_SECONDS));
   const budgetCostUsd = Math.min(DEFAULT_BUDGET_COST, Math.max(0.25, body.budgetCostUsd ?? DEFAULT_BUDGET_COST));
 
