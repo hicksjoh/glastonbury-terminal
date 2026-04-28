@@ -14,6 +14,8 @@ const PUBLIC_API_ROUTES = [
   '/api/push/subscribe',
   '/api/img',
   '/api/mcp',  // MCP server; gates on MCP_AUTH_TOKEN bearer internally (F1)
+  '/api/share/',  // F17 tokenized read-only dashboards — token IS the auth
+  '/share/',  // F17 share-page UI — public read-only
   '/monitoring',  // Sentry tunnel route (see next.config.js tunnelRoute)
 ];
 
