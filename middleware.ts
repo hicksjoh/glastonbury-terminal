@@ -9,6 +9,7 @@ const PUBLIC_API_ROUTES = [
   '/api/health',
   '/api/briefing/scheduled',
   '/api/briefing/morning-push',
+  '/api/cron/weekly-report',
   '/api/portfolio/snapshot',
   '/api/push/subscribe',
   '/api/img',

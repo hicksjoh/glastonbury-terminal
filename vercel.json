@@ -17,6 +17,11 @@
       "schedule": "30 13 * * 1-5"
     },
     {
+      "_comment_weekly_report": "Sunday 7 PM EDT — F13 weekly summary email (NW delta, trade indicators, prediction markets)",
+      "path": "/api/cron/weekly-report",
+      "schedule": "0 23 * * 0"
+    },
+    {
       "path": "/api/portfolio/snapshot",
       "schedule": "0 22 * * 1-5"
     },
