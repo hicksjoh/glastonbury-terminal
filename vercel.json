@@ -7,17 +7,14 @@
   },
   "crons": [
     {
-      "_comment_morning_push": "6:30 AM EDT — lightweight zero-latency push (no Claude)",
       "path": "/api/briefing/morning-push",
       "schedule": "30 10 * * 1-5"
     },
     {
-      "_comment_briefing": "9:30 AM EDT — full Claude-powered deep briefing (was 6:30 AM, moved to give morning-push the prime slot)",
       "path": "/api/briefing/scheduled",
       "schedule": "30 13 * * 1-5"
     },
     {
-      "_comment_weekly_report": "Sunday 7 PM EDT — F13 weekly summary email (NW delta, trade indicators, prediction markets)",
       "path": "/api/cron/weekly-report",
       "schedule": "0 23 * * 0"
     },
