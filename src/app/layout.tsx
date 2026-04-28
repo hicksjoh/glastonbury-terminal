@@ -2,6 +2,7 @@ import type { Metadata } from 'next';
 import { Inter } from 'next/font/google';
 import './globals.css';
 import CommandBar from '@/components/CommandBar';
+import MarketTickerBar from '@/components/MarketTickerBar';
 import { Providers } from './providers';
 
 const inter = Inter({ subsets: ['latin'] });
@@ -46,6 +47,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         </a>
         <Providers>
           <CommandBar />
+          <MarketTickerBar />
           {children}
         </Providers>
         <script
