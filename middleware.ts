@@ -24,10 +24,19 @@ const PUBLIC_API_ROUTES = [
   '/monitoring',  // Sentry tunnel route (see next.config.js tunnelRoute)
 ];
 
-// Static assets ONLY. We used to use pathname.includes('.') here, but that
-// silently bypassed auth for dotted symbols like /stock/BRK.B. Now we match
-// known asset extensions explicitly.
-const STATIC_ASSET_RE = /\.(ico|png|jpg|jpeg|gif|svg|webp|avif|css|js|map|json|xml|txt|woff2?|ttf|otf|eot)$/i;
+// Static assets ONLY. Tightened twice on 2026-04-28 (Codex review):
+//   Round 1: replaced `pathname.includes('.')` (which let dotted symbols
+//            like /stock/BRK.B bypass auth) with /\.(ico|png|...)$/i.
+//   Round 2: that regex still matched any pathname ending in those
+//            extensions — including dynamic routes like /api/stock/AAPL.json
+//            and /stock/AAPL.json — which would have skipped middleware.
+// The current regex is anchored to a single root-level segment with no
+// embedded slashes, exactly the shape Next.js serves out of /public
+// (e.g. /favicon.ico, /robots.txt, /icon-192.png, /manifest.json,
+// /site.webmanifest, /sw.js, /offline.html). Anything with a slash after
+// the first segment goes through auth even if the URL "looks static."
+// /_next/* bundles are still bypassed via the prefix check below.
+const STATIC_ASSET_RE = /^\/[^/]+\.(ico|png|jpg|jpeg|gif|svg|webp|avif|css|js|map|json|xml|txt|html|woff2?|ttf|otf|eot|webmanifest)$/i;
 
 export async function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
