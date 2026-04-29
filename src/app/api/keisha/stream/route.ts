@@ -1,5 +1,5 @@
 import { NextRequest } from 'next/server';
-import { anthropic, KEISHA_SYSTEM_PROMPT, CLAUDE_MODEL_PRIMARY } from '@/lib/claude';
+import { KEISHA_SYSTEM_PROMPT } from '@/lib/claude';
 import { cachedSystem } from '@/lib/prompts';
 import { rateLimit } from '@/lib/rate-limit';
 import { sanitizeInput } from '@/lib/sanitize';
@@ -8,70 +8,13 @@ import {
   logRecommendation,
   logConversation,
 } from '@/lib/keisha-context';
-import {
-  KEISHA_TOOLS,
-  DANGEROUS_TOOLS,
-  MAX_TOOL_ITERATIONS,
-  executeToolCall,
-  buildRenderCard,
-} from '@/lib/keisha-tools';
-import type { MessageParam, ToolResultBlockParam } from '@anthropic-ai/sdk/resources/messages';
+import { runKeishaAgent } from '@/lib/keisha/agent';
+import { buildPreferencesBlock, type KeishaSettings } from '@/lib/keisha/preferences';
+import { createPendingOrder } from '@/lib/keisha/pending-orders';
+import type { MessageParam } from '@anthropic-ai/sdk/resources/messages';
 
 // ═════════════════════════════════════════════════════════════════════════════
-//  Settings → System Prompt Helpers
-// ═════════════════════════════════════════════════════════════════════════════
-
-function getRiskLabel(value: number): string {
-  if (value <= 33) return 'Conservative';
-  if (value <= 66) return 'Moderate';
-  return 'Aggressive';
-}
-
-function getRiskDescription(value: number): string {
-  if (value <= 33) return 'prioritize capital preservation, smaller positions, wide stops';
-  if (value <= 66) return 'balanced risk/reward, standard position sizing';
-  return 'willing to take bigger positions, tighter stops, higher conviction plays';
-}
-
-function getCommStyleInstruction(style: string): string {
-  if (style === 'brief') return 'Keep responses concise (under 150 words). Skip preambles. Lead with the answer.';
-  return 'Give thorough analysis with supporting data, scenarios, and reasoning.';
-}
-
-function getExplanationInstruction(level?: string): string {
-  switch (level) {
-    case 'technical':
-      return 'Respond with full technical detail. Use precise trading terminology, Greek letter names, quant metrics. Assume the user is an expert trader.';
-    case 'plain_talk':
-      return 'Explain everything in plain, everyday English. No jargon. Use analogies and real-world comparisons. Example: Instead of "theta decay is accelerating", say "your option is losing value faster each day — like ice cream melting quicker as the day gets hotter." Keep sentences short and conversational.';
-    default: // balanced
-      return 'Use proper trading terminology but include brief parenthetical explanations for technical terms. Example: "GEX flipped negative (market makers are no longer cushioning price moves, so expect bigger swings)".';
-  }
-}
-
-function buildPreferencesBlock(settings?: { riskTolerance?: number; commStyle?: string; paperMode?: boolean; explanationLevel?: string }): string {
-  const risk = settings?.riskTolerance ?? 50;
-  const style = settings?.commStyle ?? 'detailed';
-  const paper = settings?.paperMode ?? true;
-  const explainLevel = settings?.explanationLevel ?? 'balanced';
-
-  const riskLabel = getRiskLabel(risk);
-  const riskDesc = getRiskDescription(risk);
-  const commInstruction = getCommStyleInstruction(style);
-  const modeLabel = paper ? 'paper' : 'live';
-  const modeWarning = paper ? '' : ' — LIVE TRADING ENABLED. Double-confirm all orders with Wes before execution.';
-  const explanationInstruction = getExplanationInstruction(explainLevel);
-
-  return `
-USER PREFERENCES:
-- Risk Tolerance: ${riskLabel} (${risk}/100) — ${riskDesc}
-- Communication Style: ${style} — ${commInstruction}
-- Explanation Level: ${explainLevel} — ${explanationInstruction}
-- Trading Mode: ${modeLabel}${modeWarning}`;
-}
-
-// ═════════════════════════════════════════════════════════════════════════════
-//  Action Button Helpers
+//  Action Button Helpers (streaming-only UX)
 // ═════════════════════════════════════════════════════════════════════════════
 
 function getActionButtons(
@@ -88,7 +31,6 @@ function getActionButtons(
         { label: `Options Chain for ${sym}`, action: 'lookup_options', params: { symbol: sym } },
       ] : [];
     case 'batch_lookup': {
-      // Emit buttons for each symbol in the results
       const buttons: Array<{ label: string; action: string; params: Record<string, unknown> }> = [];
       const symbols: string[] = [];
       if (Array.isArray(input.symbols)) {
@@ -111,18 +53,20 @@ function getActionButtons(
         { label: 'Run Full Briefing', action: '/brief', params: {} },
       ];
     case 'scan_watchlist':
-      return []; // The scan results themselves are actionable
+      return [];
     case 'lookup_options':
-      return sym ? [
-        { label: `Sell Covered Call on ${sym}`, action: 'place_order', params: { symbol: sym, side: 'sell' } },
-      ] : [];
+      // No place_order shortcut here — covered-call decisions need to go
+      // through Keisha's agent so the trade is guarded, sized, and lands
+      // a proper pending-order confirmation. A bare {symbol, side} button
+      // would skip all of that.
+      return [];
     default:
       return [];
   }
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
-//  POST Handler — Keisha Supreme (Streaming + Tool Use + Agentic Loop)
+//  POST Handler — Keisha Supreme (SSE streaming, shared agent loop)
 // ═════════════════════════════════════════════════════════════════════════════
 
 export async function POST(req: NextRequest) {
@@ -201,7 +145,7 @@ IMPORTANT RULES:
 3. Always show your work with specific numbers
 4. If asked about state tax, note that you only calculate federal
 5. If asked about something beyond tax math (legal interpretation, audit risk), say "That's beyond tax math — talk to your CPA"
-6. Proactively surface tax suggestions when you see opportunities` : ''}${buildPreferencesBlock(settings)}`;
+6. Proactively surface tax suggestions when you see opportunities` : ''}${buildPreferencesBlock(settings as KeishaSettings | undefined)}`;
 
     const conversationHistory: MessageParam[] = messages.map(
       (m: { role: string; content: string }) => ({
@@ -217,7 +161,7 @@ IMPORTANT RULES:
         lastMsg.content = [
           { type: 'image', source: { type: 'base64', media_type: image.mediaType, data: image.base64 } },
           { type: 'text', text: typeof lastMsg.content === 'string' ? lastMsg.content : '' },
-        ] as any;
+        ] as unknown as MessageParam['content'];
       }
     }
 
@@ -226,196 +170,48 @@ IMPORTANT RULES:
 
     const readableStream = new ReadableStream({
       async start(controller) {
+        const send = (data: unknown) => {
+          controller.enqueue(encoder.encode(`data: ${JSON.stringify(data)}\n\n`));
+        };
+
         try {
-          let currentMessages = [...conversationHistory];
-          let fullText = '';
-          let suggestions: string[] = [];
+          const { finalText, suggestions } = await runKeishaAgent({
+            messages: conversationHistory,
+            system: cachedSystem(KEISHA_SYSTEM_PROMPT, dynamicContext),
+            createPendingConfirmation: (p) =>
+              createPendingOrder(supabase, {
+                toolName: p.type,
+                params: p.params,
+                conversationId: conversationId ?? null,
+              }),
+            onTextDelta: (text) => send({ text }),
+            onToolStart: () => send({ toolsRunning: true }),
+            onToolResult: (action) => {
+              send({
+                action: { type: action.type, params: action.input, result: action.result, success: action.success },
+                ...(action.renderCard ? { renderCard: action.renderCard } : {}),
+              });
+              const buttons = getActionButtons(action.type, action.input, action.result);
+              if (buttons.length > 0) send({ actionButtons: buttons });
+            },
+            onPendingConfirmation: (pending) => {
+              send({ pendingConfirmation: pending });
+            },
+          });
 
-          for (let iteration = 0; iteration < MAX_TOOL_ITERATIONS; iteration++) {
-            // ── Run agentic iteration ─────────────────────────────────
-            const isLastPossibleIteration = iteration === MAX_TOOL_ITERATIONS - 1;
-
-            const stream = await anthropic.messages.stream({
-              model: CLAUDE_MODEL_PRIMARY,
-              max_tokens: 4096,
-              system: cachedSystem(KEISHA_SYSTEM_PROMPT, dynamicContext),
-              messages: currentMessages,
-              tools: KEISHA_TOOLS,
-            });
-
-            // Collect tool_use blocks from this iteration
-            const toolUseBlocks: Array<{ id: string; name: string; input: Record<string, unknown> }> = [];
-            let currentToolBlock: { id: string; name: string; inputJson: string } | null = null;
-            let iterationText = '';
-            let stopReason = '';
-
-            for await (const event of stream) {
-              // Stream text deltas to client in real-time
-              if (event.type === 'content_block_delta') {
-                if (event.delta.type === 'text_delta') {
-                  const text = event.delta.text;
-                  iterationText += text;
-                  fullText += text;
-                  controller.enqueue(
-                    encoder.encode(`data: ${JSON.stringify({ text })}\n\n`),
-                  );
-                }
-                // Accumulate tool input JSON
-                if (event.delta.type === 'input_json_delta' && currentToolBlock) {
-                  currentToolBlock.inputJson += event.delta.partial_json;
-                }
-              }
-
-              // Track tool_use block starts
-              if (event.type === 'content_block_start' && event.content_block.type === 'tool_use') {
-                currentToolBlock = {
-                  id: event.content_block.id,
-                  name: event.content_block.name,
-                  inputJson: '',
-                };
-              }
-
-              // Tool block complete
-              if (event.type === 'content_block_stop' && currentToolBlock) {
-                try {
-                  const input = JSON.parse(currentToolBlock.inputJson || '{}');
-                  toolUseBlocks.push({
-                    id: currentToolBlock.id,
-                    name: currentToolBlock.name,
-                    input,
-                  });
-                } catch {
-                  toolUseBlocks.push({
-                    id: currentToolBlock.id,
-                    name: currentToolBlock.name,
-                    input: {},
-                  });
-                }
-                currentToolBlock = null;
-              }
-
-              if (event.type === 'message_delta') {
-                stopReason = (event as any).delta?.stop_reason || '';
-              }
-            }
-
-            // ── No tool calls — done ──────────────────────────────────
-            if (toolUseBlocks.length === 0) break;
-
-            // ── Process tool calls ────────────────────────────────────
-            // Notify client that tools are being executed
-            controller.enqueue(
-              encoder.encode(`data: ${JSON.stringify({ toolsRunning: true })}\n\n`),
-            );
-
-            const assistantContent: any[] = [];
-            if (iterationText) {
-              assistantContent.push({ type: 'text', text: iterationText });
-            }
-            for (const tb of toolUseBlocks) {
-              assistantContent.push({
-                type: 'tool_use',
-                id: tb.id,
-                name: tb.name,
-                input: tb.input,
-              } as any);
-            }
-
-            const toolResults: any[] = [];
-
-            for (const tb of toolUseBlocks) {
-              // suggest_followups — not a real action
-              if (tb.name === 'suggest_followups') {
-                const sugs = tb.input.suggestions;
-                if (Array.isArray(sugs)) {
-                  suggestions = sugs.map(s => String(s)).slice(0, 3);
-                }
-                toolResults.push({
-                  type: 'tool_result',
-                  tool_use_id: tb.id,
-                  content: 'Suggestions noted.',
-                } as any);
-                continue;
-              }
-
-              // Dangerous tools — pending confirmation
-              if (DANGEROUS_TOOLS.has(tb.name)) {
-                controller.enqueue(
-                  encoder.encode(`data: ${JSON.stringify({
-                    pendingConfirmation: { type: tb.name, params: tb.input },
-                  })}\n\n`),
-                );
-                toolResults.push({
-                  type: 'tool_result',
-                  tool_use_id: tb.id,
-                  content: JSON.stringify({
-                    pending: true,
-                    message: `Order requires Wes's confirmation. A confirmation prompt has been sent to the UI.`,
-                  }),
-                } as any);
-                continue;
-              }
-
-              // Execute safe tool
-              const { result, success } = await executeToolCall(tb.name, tb.input);
-
-              // Build inline rich card if applicable
-              const renderCard = buildRenderCard(tb.name, tb.input, result, success);
-
-              // Stream action result to client
-              controller.enqueue(
-                encoder.encode(`data: ${JSON.stringify({
-                  action: { type: tb.name, params: tb.input, result, success },
-                  ...(renderCard ? { renderCard } : {}),
-                })}\n\n`),
-              );
-
-              // Emit contextual action buttons based on the tool that just ran
-              const buttons = getActionButtons(tb.name, tb.input, result);
-              if (buttons.length > 0) {
-                controller.enqueue(
-                  encoder.encode(`data: ${JSON.stringify({ actionButtons: buttons })}\n\n`),
-                );
-              }
-
-              toolResults.push({
-                type: 'tool_result',
-                tool_use_id: tb.id,
-                content: JSON.stringify(result),
-              } as any);
-            }
-
-            // ── Feed results back for next iteration ──────────────────
-            currentMessages = [
-              ...currentMessages,
-              { role: 'assistant' as const, content: assistantContent },
-              { role: 'user' as const, content: toolResults },
-            ];
-
-            // If this was the last possible turn or end_turn, break
-            if (stopReason === 'end_turn' || isLastPossibleIteration) break;
-          }
-
-          // ── Send done event with suggestions ────────────────────────
-          controller.enqueue(
-            encoder.encode(`data: ${JSON.stringify({
-              done: true,
-              suggestions: suggestions.length > 0 ? suggestions : undefined,
-            })}\n\n`),
-          );
+          send({
+            done: true,
+            suggestions: suggestions.length > 0 ? suggestions : undefined,
+          });
 
           // ── Background logging ──────────────────────────────────────
-          logRecommendation(supabase, fullText).catch(() => {});
-          logConversation(supabase, userMessage, fullText).catch(() => {});
+          logRecommendation(supabase, finalText).catch(() => {});
+          logConversation(supabase, userMessage, finalText).catch(() => {});
 
           controller.close();
         } catch (err) {
           console.error('Stream error:', err);
-          controller.enqueue(
-            encoder.encode(`data: ${JSON.stringify({
-              error: err instanceof Error ? err.message : 'Stream error',
-            })}\n\n`),
-          );
+          send({ error: err instanceof Error ? err.message : 'Stream error' });
           controller.close();
         }
       },

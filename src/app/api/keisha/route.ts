@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { anthropic, KEISHA_SYSTEM_PROMPT, CLAUDE_MODEL_PRIMARY } from '@/lib/claude';
+import { KEISHA_SYSTEM_PROMPT } from '@/lib/claude';
 import { cachedSystem } from '@/lib/prompts';
 import { rateLimit } from '@/lib/rate-limit';
 import { sanitizeInput } from '@/lib/sanitize';
@@ -8,70 +8,13 @@ import {
   logRecommendation,
   logConversation,
 } from '@/lib/keisha-context';
-import {
-  KEISHA_TOOLS,
-  DANGEROUS_TOOLS,
-  MAX_TOOL_ITERATIONS,
-  executeToolCall,
-  buildRenderCard,
-} from '@/lib/keisha-tools';
-import type { MessageParam, TextBlockParam, ToolUseBlockParam, ToolResultBlockParam } from '@anthropic-ai/sdk/resources/messages';
+import { runKeishaAgent } from '@/lib/keisha/agent';
+import { buildPreferencesBlock, type KeishaSettings } from '@/lib/keisha/preferences';
+import { createPendingOrder } from '@/lib/keisha/pending-orders';
+import type { MessageParam } from '@anthropic-ai/sdk/resources/messages';
 
 // ═════════════════════════════════════════════════════════════════════════════
-//  Settings → System Prompt Helpers
-// ═════════════════════════════════════════════════════════════════════════════
-
-function getRiskLabel(value: number): string {
-  if (value <= 33) return 'Conservative';
-  if (value <= 66) return 'Moderate';
-  return 'Aggressive';
-}
-
-function getRiskDescription(value: number): string {
-  if (value <= 33) return 'prioritize capital preservation, smaller positions, wide stops';
-  if (value <= 66) return 'balanced risk/reward, standard position sizing';
-  return 'willing to take bigger positions, tighter stops, higher conviction plays';
-}
-
-function getCommStyleInstruction(style: string): string {
-  if (style === 'brief') return 'Keep responses concise (under 150 words). Skip preambles. Lead with the answer.';
-  return 'Give thorough analysis with supporting data, scenarios, and reasoning.';
-}
-
-function getExplanationInstruction(level?: string): string {
-  switch (level) {
-    case 'technical':
-      return 'Respond with full technical detail. Use precise trading terminology, Greek letter names, quant metrics. Assume the user is an expert trader.';
-    case 'plain_talk':
-      return 'Explain everything in plain, everyday English. No jargon. Use analogies and real-world comparisons. Example: Instead of "theta decay is accelerating", say "your option is losing value faster each day — like ice cream melting quicker as the day gets hotter." Keep sentences short and conversational.';
-    default: // balanced
-      return 'Use proper trading terminology but include brief parenthetical explanations for technical terms. Example: "GEX flipped negative (market makers are no longer cushioning price moves, so expect bigger swings)".';
-  }
-}
-
-function buildPreferencesBlock(settings?: { riskTolerance?: number; commStyle?: string; paperMode?: boolean; explanationLevel?: string }): string {
-  const risk = settings?.riskTolerance ?? 50;
-  const style = settings?.commStyle ?? 'detailed';
-  const paper = settings?.paperMode ?? true;
-  const explainLevel = settings?.explanationLevel ?? 'balanced';
-
-  const riskLabel = getRiskLabel(risk);
-  const riskDesc = getRiskDescription(risk);
-  const commInstruction = getCommStyleInstruction(style);
-  const modeLabel = paper ? 'paper' : 'live';
-  const modeWarning = paper ? '' : ' — LIVE TRADING ENABLED. Double-confirm all orders with Wes before execution.';
-  const explanationInstruction = getExplanationInstruction(explainLevel);
-
-  return `
-USER PREFERENCES:
-- Risk Tolerance: ${riskLabel} (${risk}/100) — ${riskDesc}
-- Communication Style: ${style} — ${commInstruction}
-- Explanation Level: ${explainLevel} — ${explanationInstruction}
-- Trading Mode: ${modeLabel}${modeWarning}`;
-}
-
-// ═════════════════════════════════════════════════════════════════════════════
-//  POST Handler — Keisha Supreme (Tool Use + Agentic Loop)
+//  POST Handler — Keisha Supreme (JSON response, shared agent loop)
 // ═════════════════════════════════════════════════════════════════════════════
 
 export async function POST(req: NextRequest) {
@@ -113,7 +56,7 @@ TOOL USAGE RULES:
 - ALWAYS call check_trade_guard BEFORE suggesting or placing any order — show the guard results to Wes
 - If check_trade_guard returns STOP, strongly advise against the trade and explain why
 - If check_trade_guard returns CAUTION, present the warnings clearly and let Wes decide
-- For non-destructive tools (lookups, watchlist, alerts), execute immediately when relevant${buildPreferencesBlock(settings)}`;
+- For non-destructive tools (lookups, watchlist, alerts), execute immediately when relevant${buildPreferencesBlock(settings as KeishaSettings | undefined)}`;
 
     // ── Build conversation history ─────────────────────────────────────
     const conversationHistory: MessageParam[] = messages.map(
@@ -130,98 +73,21 @@ TOOL USAGE RULES:
         lastMsg.content = [
           { type: 'image', source: { type: 'base64', media_type: image.mediaType, data: image.base64 } },
           { type: 'text', text: typeof lastMsg.content === 'string' ? lastMsg.content : '' },
-        ] as any;
+        ] as unknown as MessageParam['content'];
       }
     }
 
-    // ── Agentic Loop — iterate until Claude gives a final text response ─
-    let currentMessages = [...conversationHistory];
-    const actionResults: { type: string; result: unknown; success: boolean }[] = [];
-    const pendingConfirmations: { type: string; params: Record<string, unknown> }[] = [];
-    let suggestions: string[] = [];
-    let finalText = '';
-
-    for (let i = 0; i < MAX_TOOL_ITERATIONS; i++) {
-      const response = await anthropic.messages.create({
-        model: CLAUDE_MODEL_PRIMARY,
-        max_tokens: 4096,
-        system: cachedSystem(KEISHA_SYSTEM_PROMPT, dynamicContext),
-        messages: currentMessages,
-        tools: KEISHA_TOOLS,
-      });
-
-      // ── Extract text and tool_use blocks ────────────────────────────
-      const textBlocks = response.content.filter(b => b.type === 'text');
-      const toolBlocks = response.content.filter(b => b.type === 'tool_use');
-
-      // Accumulate text
-      for (const block of textBlocks) {
-        if (block.type === 'text') finalText += block.text;
-      }
-
-      // No tool calls — we're done
-      if (toolBlocks.length === 0 || response.stop_reason === 'end_turn') {
-        // If stop_reason is end_turn but there are tool blocks, process them first
-        if (toolBlocks.length === 0) break;
-      }
-
-      // ── Process tool calls ──────────────────────────────────────────
-      const toolResults: ToolResultBlockParam[] = [];
-
-      for (const block of toolBlocks) {
-        if (block.type !== 'tool_use') continue;
-        const { id, name, input } = block;
-        const toolInput = input as Record<string, unknown>;
-
-        // Handle suggest_followups (not a real action)
-        if (name === 'suggest_followups') {
-          const sugs = toolInput.suggestions;
-          if (Array.isArray(sugs)) {
-            suggestions = sugs.map(s => String(s)).slice(0, 3);
-          }
-          toolResults.push({
-            type: 'tool_result',
-            tool_use_id: id,
-            content: 'Suggestions noted.',
-          } as unknown as ToolResultBlockParam);
-          continue;
-        }
-
-        // Handle dangerous tools — don't execute, return as pending
-        if (DANGEROUS_TOOLS.has(name)) {
-          pendingConfirmations.push({ type: name, params: toolInput });
-          toolResults.push({
-            type: 'tool_result',
-            tool_use_id: id,
-            content: JSON.stringify({
-              pending: true,
-              message: `Order requires Wes's confirmation. A confirmation prompt has been sent to the UI.`,
-            }),
-          } as unknown as ToolResultBlockParam);
-          continue;
-        }
-
-        // Execute safe tools
-        const { result, success } = await executeToolCall(name, toolInput);
-        const renderCard = buildRenderCard(name, toolInput, result, success);
-        actionResults.push({ type: name, result, success, ...(renderCard ? { renderCard } : {}) });
-        toolResults.push({
-          type: 'tool_result',
-          tool_use_id: id,
-          content: JSON.stringify(result),
-        } as unknown as ToolResultBlockParam);
-      }
-
-      // ── Feed results back for next iteration ────────────────────────
-      currentMessages = [
-        ...currentMessages,
-        { role: 'assistant' as const, content: response.content as any },
-        { role: 'user' as const, content: toolResults as any },
-      ];
-
-      // If stop_reason was end_turn (text + tools in same response), break after processing
-      if (response.stop_reason === 'end_turn') break;
-    }
+    // ── Run agentic loop via shared module ──────────────────────────────
+    const { finalText, suggestions, actions, pendingConfirmations } = await runKeishaAgent({
+      messages: conversationHistory,
+      system: cachedSystem(KEISHA_SYSTEM_PROMPT, dynamicContext),
+      createPendingConfirmation: (p) =>
+        createPendingOrder(supabase, {
+          toolName: p.type,
+          params: p.params,
+          conversationId: conversationId ?? null,
+        }),
+    });
 
     // ── Background logging ─────────────────────────────────────────────
     logRecommendation(supabase, finalText).catch(() => {});
@@ -230,7 +96,9 @@ TOOL USAGE RULES:
     return NextResponse.json({
       content: finalText,
       suggestions: suggestions.length > 0 ? suggestions : undefined,
-      actions: actionResults.length > 0 ? actionResults : undefined,
+      actions: actions.length > 0
+        ? actions.map(a => ({ type: a.type, result: a.result, success: a.success, ...(a.renderCard ? { renderCard: a.renderCard } : {}) }))
+        : undefined,
       pendingConfirmations: pendingConfirmations.length > 0 ? pendingConfirmations : undefined,
     });
   } catch (error) {
