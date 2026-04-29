@@ -208,7 +208,7 @@ export default function KeishaPage() {
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [searchResults, setSearchResults] = useState<ConversationSummary[]>([]);
-  const [pendingOrder, setPendingOrder] = useState<{ type: string; params: Record<string, string> } | null>(null);
+  const [pendingOrder, setPendingOrder] = useState<{ id?: string; type: string; params: Record<string, string>; expiresAt?: string } | null>(null);
   const [confirmingOrder, setConfirmingOrder] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
   const recognitionRef = useRef<Record<string, unknown> | null>(null);
@@ -687,12 +687,29 @@ export default function KeishaPage() {
 
   const handleOrderConfirm = async () => {
     if (!pendingOrder) return;
+    if (!pendingOrder.id) {
+      // Server didn't issue a pending-order id \u2014 Keisha can no longer be
+      // confirmed safely. The /actions endpoint requires the id and the
+      // server-side stored params; without it we'd be relying on
+      // client-supplied params (the very vector this fix closes).
+      setMessages(prev => [...prev, {
+        id: Date.now().toString(),
+        role: 'assistant',
+        content: '\u274c Order confirmation expired or unavailable. Ask Keisha to propose the trade again.',
+        timestamp: new Date().toISOString(),
+      }]);
+      setPendingOrder(null);
+      return;
+    }
     setConfirmingOrder(true);
     try {
       const res = await fetch('/api/keisha/actions', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: pendingOrder.type, params: pendingOrder.params }),
+        body: JSON.stringify({
+          action: pendingOrder.type,
+          pendingOrderId: pendingOrder.id,
+        }),
       });
       const data = await res.json();
       const statusIcon = res.ok ? '\u2705' : '\u274c';
@@ -935,9 +952,17 @@ export default function KeishaPage() {
                 setActionButtons(data.actionButtons);
               }
               if (data.pendingConfirmation) {
-                // Dangerous action (e.g. place_order) — requires user confirmation
+                // Dangerous action (e.g. place_order) — requires user confirmation.
+                // The id ties the confirm POST to the server-side pending_keisha_orders
+                // row Keisha persisted; the /actions endpoint uses the stored params,
+                // not the ones rendered in the UI.
                 const pc = data.pendingConfirmation;
-                setPendingOrder({ type: pc.type, params: pc.params });
+                setPendingOrder({
+                  id: pc.id,
+                  type: pc.type,
+                  params: pc.params,
+                  expiresAt: pc.expiresAt,
+                });
               }
               if (data.trade) {
                 const tradeInfo = data.trade;
@@ -996,9 +1021,17 @@ export default function KeishaPage() {
         const updatedMessages = [...messages, displayUserMsg, assistantMsg];
         setMessages(updatedMessages);
 
-        // Handle pending confirmations from non-streaming response
+        // Handle pending confirmations from non-streaming response. Includes
+        // the server-issued id used by /api/keisha/actions to look up the
+        // approved params — never trust raw params for execution.
         if (data.pendingConfirmations?.length > 0) {
-          setPendingOrder(data.pendingConfirmations[0]);
+          const pc = data.pendingConfirmations[0];
+          setPendingOrder({
+            id: pc.id,
+            type: pc.type,
+            params: pc.params,
+            expiresAt: pc.expiresAt,
+          });
         }
 
         if (convoId) {
