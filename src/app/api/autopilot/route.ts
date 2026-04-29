@@ -1,8 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createServiceClient } from '@/lib/supabase';
 import { rateLimit } from '@/lib/rate-limit';
+import { ALPACA_BASE_URL, assertPaperTrading } from '@/lib/alpaca';
 
-const ALPACA_BASE_URL = process.env.ALPACA_BASE_URL || 'https://paper-api.alpaca.markets';
 const ALPACA_HEADERS = {
   'APCA-API-KEY-ID': process.env.ALPACA_API_KEY!,
   'APCA-API-SECRET-KEY': process.env.ALPACA_SECRET_KEY!,
@@ -242,6 +242,21 @@ async function handleExecute(body: {
     return NextResponse.json(
       { error: 'Missing required fields: symbol, shares, side' },
       { status: 400 }
+    );
+  }
+
+  // Defense-in-depth: hard-block any attempt to submit to a non-paper host.
+  // ALPACA_PAPER (checked above) and ALPACA_BASE_URL are independent env vars
+  // and can drift on Vercel — assertPaperTrading() inspects the actual base
+  // URL so neither alone is sufficient to fire a real order.
+  try {
+    assertPaperTrading();
+  } catch (lockErr) {
+    const msg = lockErr instanceof Error ? lockErr.message : 'paper-trading lock engaged';
+    console.error('Autopilot order blocked by paper-trading lock:', msg);
+    return NextResponse.json(
+      { error: `Paper-trading lock engaged: ${msg}` },
+      { status: 500 }
     );
   }
 
