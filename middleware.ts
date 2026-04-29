@@ -3,13 +3,18 @@ import type { NextRequest } from 'next/server';
 import { verifySessionJwt, SESSION_COOKIE_NAME } from '@/lib/session';
 
 // API routes that don't require gt-auth cookie authentication.
-// NOTE: briefing/scheduled and portfolio/snapshot handle their own CRON_SECRET auth.
+// NOTE: briefing/scheduled, portfolio/snapshot, and the four /api/cron/*
+// routes below all handle their own CRON_SECRET auth at the route level.
 const PUBLIC_API_ROUTES = [
   '/api/auth/login',
   '/api/health',
   '/api/briefing/scheduled',
   '/api/briefing/morning-push',
   '/api/cron/weekly-report',
+  '/api/cron/storm-watch',
+  '/api/cron/tax-harvest',
+  '/api/cron/coach-review',
+  '/api/cron/prediction-snapshot',
   '/api/portfolio/snapshot',
   '/api/push/subscribe',
   '/api/img',
@@ -19,10 +24,15 @@ const PUBLIC_API_ROUTES = [
   '/monitoring',  // Sentry tunnel route (see next.config.js tunnelRoute)
 ];
 
+// Static assets ONLY. We used to use pathname.includes('.') here, but that
+// silently bypassed auth for dotted symbols like /stock/BRK.B. Now we match
+// known asset extensions explicitly.
+const STATIC_ASSET_RE = /\.(ico|png|jpg|jpeg|gif|svg|webp|avif|css|js|map|json|xml|txt|woff2?|ttf|otf|eot)$/i;
+
 export async function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
 
-  if (pathname.startsWith('/_next/') || pathname.includes('.')) {
+  if (pathname.startsWith('/_next/') || STATIC_ASSET_RE.test(pathname)) {
     return NextResponse.next();
   }
 
