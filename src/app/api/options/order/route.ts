@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { rateLimit } from '@/lib/rate-limit';
-
-const ALPACA_BASE_URL = process.env.ALPACA_BASE_URL || 'https://paper-api.alpaca.markets';
+import { ALPACA_BASE_URL, assertPaperTrading } from '@/lib/alpaca';
 
 const alpacaHeaders = {
   'APCA-API-KEY-ID': process.env.ALPACA_API_KEY!,
@@ -48,6 +47,18 @@ export async function POST(req: NextRequest) {
 
     if ((type === 'stop' || type === 'stop_limit') && stop_price) {
       order.stop_price = parseFloat(stop_price);
+    }
+
+    // Defense-in-depth: hard-block any attempt to submit to a non-paper host.
+    try {
+      assertPaperTrading();
+    } catch (lockErr) {
+      const msg = lockErr instanceof Error ? lockErr.message : 'paper-trading lock engaged';
+      console.error('Options order blocked by paper-trading lock:', msg);
+      return NextResponse.json(
+        { error: `Paper-trading lock engaged: ${msg}` },
+        { status: 500 }
+      );
     }
 
     // Submit to Alpaca

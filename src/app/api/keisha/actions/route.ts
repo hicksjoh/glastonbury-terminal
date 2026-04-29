@@ -3,6 +3,7 @@ import { createServiceClient } from '@/lib/supabase';
 import { rateLimit } from '@/lib/rate-limit';
 import { sanitizeSymbol } from '@/lib/sanitize';
 import { getQuote, getProfile } from '@/lib/fmp-client';
+import { ALPACA_BASE_URL, assertPaperTrading } from '@/lib/alpaca';
 
 interface ActionRequest {
   action: string;
@@ -97,7 +98,6 @@ export async function POST(req: NextRequest) {
           return NextResponse.json({ error: 'Side must be buy or sell' }, { status: 400 });
         }
 
-        const baseUrl = process.env.ALPACA_BASE_URL || 'https://paper-api.alpaca.markets';
         const orderBody: any = {
           symbol,
           qty: qty.toString(),
@@ -109,7 +109,19 @@ export async function POST(req: NextRequest) {
           orderBody.limit_price = limitPrice.toString();
         }
 
-        const res = await fetch(`${baseUrl}/v2/orders`, {
+        // Defense-in-depth: hard-block any attempt to submit to a non-paper host.
+        try {
+          assertPaperTrading();
+        } catch (lockErr) {
+          const msg = lockErr instanceof Error ? lockErr.message : 'paper-trading lock engaged';
+          console.error('Keisha place_order blocked by paper-trading lock:', msg);
+          return NextResponse.json(
+            { error: `Paper-trading lock engaged: ${msg}` },
+            { status: 500 }
+          );
+        }
+
+        const res = await fetch(`${ALPACA_BASE_URL}/v2/orders`, {
           method: 'POST',
           headers: {
             'APCA-API-KEY-ID': process.env.ALPACA_API_KEY || '',

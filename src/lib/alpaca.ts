@@ -1,7 +1,33 @@
-const ALPACA_BASE_URL = process.env.ALPACA_BASE_URL || 'https://paper-api.alpaca.markets';
+export const ALPACA_BASE_URL =
+  process.env.ALPACA_BASE_URL || 'https://paper-api.alpaca.markets';
 const ALPACA_DATA_URL = 'https://data.alpaca.markets';
 const ALPACA_API_KEY = process.env.ALPACA_API_KEY!;
 const ALPACA_SECRET_KEY = process.env.ALPACA_SECRET_KEY!;
+
+/**
+ * Hard-block any Alpaca order submission that isn't pointed at the paper
+ * trading endpoint. This is a defense-in-depth check — env-config drift,
+ * a copy-paste, or a typo on Vercel must NOT be enough to place real
+ * orders against this terminal. Every order endpoint MUST funnel through
+ * this guard before calling fetch().
+ */
+const ALPACA_PAPER_HOST = 'paper-api.alpaca.markets';
+
+export function assertPaperTrading(baseUrl: string = ALPACA_BASE_URL): void {
+  let host: string;
+  try {
+    host = new URL(baseUrl).host;
+  } catch {
+    throw new Error(`Invalid ALPACA_BASE_URL: ${baseUrl}`);
+  }
+  if (host !== ALPACA_PAPER_HOST) {
+    throw new Error(
+      `Refusing to submit order: ALPACA_BASE_URL host is "${host}", ` +
+        `expected "${ALPACA_PAPER_HOST}". This terminal is locked to paper trading. ` +
+        `If you intend to enable live trading, remove this guard intentionally.`,
+    );
+  }
+}
 
 const alpacaHeaders = {
   'APCA-API-KEY-ID': ALPACA_API_KEY,
@@ -45,6 +71,7 @@ export async function submitOrder(order: {
   time_in_force: 'day' | 'gtc' | 'ioc' | 'fok';
   limit_price?: number;
 }) {
+  assertPaperTrading();
   return alpacaFetch('/v2/orders', {
     method: 'POST',
     body: JSON.stringify(order),
