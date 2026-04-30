@@ -67,9 +67,12 @@ export async function submitOrder(order: {
   qty?: number;
   notional?: number;
   side: 'buy' | 'sell';
-  type: 'market' | 'limit';
+  // P0-4 widened to match the Alpaca + zod surface — stop and stop_limit
+  // were already accepted at the schema layer, so the type just catches up.
+  type: 'market' | 'limit' | 'stop' | 'stop_limit';
   time_in_force: 'day' | 'gtc' | 'ioc' | 'fok';
   limit_price?: number;
+  stop_price?: number;
 }) {
   assertPaperTrading();
   return alpacaFetch('/v2/orders', {
