@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import Anthropic from '@anthropic-ai/sdk';
 import { createServiceClient } from '@/lib/supabase';
-import { rateLimit } from '@/lib/rate-limit';
+import { checkRateLimitDurable, getRateLimitIdentity } from '@/lib/rate-limit-durable';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -28,7 +28,9 @@ function getBaseUrl(): string {
 // ─── Route ──────────────────────────────────────────────────────────────────
 
 export async function POST(request: NextRequest): Promise<NextResponse> {
-  const rl = rateLimit('trade-replay', 20, 60 * 60 * 1000);
+  // P0-6: Claude trade replay, durable session-keyed.
+  const { key } = await getRateLimitIdentity(request);
+  const rl = await checkRateLimitDurable('trade-replay', key, 20, 60 * 60);
   if (!rl.allowed) {
     return NextResponse.json({ error: 'Rate limit exceeded' }, { status: 429 });
   }

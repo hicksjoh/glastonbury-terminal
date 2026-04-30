@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { rateLimit } from '@/lib/rate-limit';
+import { checkRateLimitDurable, getRateLimitIdentity } from '@/lib/rate-limit-durable';
 import { executeToolCall } from '@/lib/keisha-tools';
 
 // ═════════════════════════════════════════════════════════════════════════════
@@ -7,7 +7,9 @@ import { executeToolCall } from '@/lib/keisha-tools';
 // ═════════════════════════════════════════════════════════════════════════════
 
 export async function POST(req: NextRequest) {
-  const { allowed } = rateLimit('keisha-slash', 30, 60000);
+  // P0-6: durable session-keyed limiter (audit requires all keisha/* on durable).
+  const { key } = await getRateLimitIdentity(req);
+  const { allowed } = await checkRateLimitDurable('keisha-slash', key, 30, 60);
   if (!allowed) {
     return NextResponse.json({ error: 'Too many requests' }, { status: 429 });
   }

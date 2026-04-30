@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createServiceClient } from '@/lib/supabase';
-import { rateLimit } from '@/lib/rate-limit';
+import { checkRateLimitDurable, getRateLimitIdentity } from '@/lib/rate-limit-durable';
 import { sanitizeSymbol } from '@/lib/sanitize';
 import { getQuote, getProfile } from '@/lib/fmp-client';
 import { ALPACA_BASE_URL, assertPaperTrading } from '@/lib/alpaca';
@@ -13,7 +13,9 @@ interface ActionRequest {
 }
 
 export async function POST(req: NextRequest) {
-  const { allowed } = rateLimit('keisha-actions', 30, 60000);
+  // P0-6: durable session-keyed limit (places real Alpaca orders).
+  const { key } = await getRateLimitIdentity(req);
+  const { allowed } = await checkRateLimitDurable('keisha-actions', key, 30, 60);
   if (!allowed) return NextResponse.json({ error: 'Too many requests' }, { status: 429 });
 
   try {

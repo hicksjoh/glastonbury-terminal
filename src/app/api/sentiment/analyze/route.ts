@@ -1,10 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { rateLimit } from '@/lib/rate-limit';
+import { checkRateLimitDurable, getRateLimitIdentity } from '@/lib/rate-limit-durable';
 
 const ANTHROPIC_KEY = process.env.ANTHROPIC_API_KEY;
 
 export async function POST(req: NextRequest) {
-  const { allowed } = rateLimit('sentiment-analyze', 10, 60000);
+  // P0-6: Claude call, durable session-keyed limit.
+  const { key } = await getRateLimitIdentity(req);
+  const { allowed } = await checkRateLimitDurable('sentiment-analyze', key, 10, 60);
   if (!allowed) return NextResponse.json({ error: 'Too many requests' }, { status: 429 });
 
   try {

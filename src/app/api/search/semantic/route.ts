@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { rateLimit } from '@/lib/rate-limit';
+import { checkRateLimitDurable, getRateLimitIdentity } from '@/lib/rate-limit-durable';
 import { semanticSearch, type DocType } from '@/lib/doc-indexer';
 import { isEmbeddingConfigured } from '@/lib/embeddings';
 
@@ -11,7 +11,9 @@ const VALID_DOC_TYPES: DocType[] = ['filing', 'transcript', 'journal', 'news', '
 // POST /api/search/semantic  body: { query, match_count?, filter_ticker?, filter_doc_type? }
 // GET  /api/search/semantic?q=...&type=...&ticker=...&limit=...  (convenience)
 export async function POST(req: NextRequest) {
-  const { allowed } = rateLimit('semantic-search', 30, 60_000);
+  // P0-6: embeddings call per query, durable session-keyed.
+  const { key } = await getRateLimitIdentity(req);
+  const { allowed } = await checkRateLimitDurable('semantic-search', key, 30, 60);
   if (!allowed) return NextResponse.json({ error: 'Too many requests' }, { status: 429 });
 
   const cfg = isEmbeddingConfigured();

@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import Anthropic from '@anthropic-ai/sdk';
 import { getCached, setCache, TTL } from '@/lib/server-cache';
-import { rateLimit } from '@/lib/rate-limit';
+import { checkRateLimitDurable } from '@/lib/rate-limit-durable';
 import { getSectorPerformance } from '@/lib/fmp-client';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
@@ -61,8 +61,8 @@ async function fetchSectorPerf(): Promise<string> {
 // ─── Route ──────────────────────────────────────────────────────────────────
 
 export async function GET(): Promise<NextResponse> {
-  // Rate limit: 12/hour
-  const rl = rateLimit('narrative', 12, 60 * 60 * 1000);
+  // P0-6: 12/hour durable cap. Single-user app — global key is sufficient.
+  const rl = await checkRateLimitDurable('narrative', 'global', 12, 60 * 60);
   if (!rl.allowed) {
     return NextResponse.json({ error: 'Rate limit exceeded', remaining: 0 }, { status: 429 });
   }

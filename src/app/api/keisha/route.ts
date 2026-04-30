@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { KEISHA_SYSTEM_PROMPT } from '@/lib/claude';
 import { cachedSystem } from '@/lib/prompts';
-import { rateLimit } from '@/lib/rate-limit';
+import { checkRateLimitDurable, getRateLimitIdentity } from '@/lib/rate-limit-durable';
 import { sanitizeInput } from '@/lib/sanitize';
 import {
   buildFullPortfolioContext,
@@ -18,7 +18,12 @@ import type { MessageParam } from '@anthropic-ai/sdk/resources/messages';
 // ═════════════════════════════════════════════════════════════════════════════
 
 export async function POST(req: NextRequest) {
-  const { allowed } = rateLimit('keisha', 20, 60000);
+  // P0-6 (hardening/p0-codex-fixes): durable, session-keyed limit. Was a
+  // module-level Map per Vercel instance — across N warm workers, the
+  // effective Anthropic budget was N×declared. Durable RPC clamps it for
+  // real. 30 req / 5 min matches the prompt's spec.
+  const { key } = await getRateLimitIdentity(req);
+  const { allowed } = await checkRateLimitDurable('keisha', key, 30, 300);
   if (!allowed) return NextResponse.json({ error: 'Too many requests' }, { status: 429 });
 
   try {

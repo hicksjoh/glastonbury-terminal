@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { timingSafeEqual } from 'crypto';
-import { rateLimit } from '@/lib/rate-limit';
+import { checkRateLimitDurable, getIpKey } from '@/lib/rate-limit-durable';
 import {
   createSessionJwt,
   SESSION_COOKIE_NAME,
@@ -15,8 +15,21 @@ function safeCompare(a: string, b: string): boolean {
 }
 
 export async function POST(req: NextRequest) {
-  const { allowed } = rateLimit('login', 5, 60000);
-  if (!allowed) return NextResponse.json({ error: 'Too many requests' }, { status: 429 });
+  // P0-6 (hardening/p0-codex-fixes): durable, two-bucket login limiter.
+  //   - IP bucket: 5 attempts / 5 min per source IP — stops single-IP brute.
+  //   - Global bucket: 60 attempts / 5 min across the whole app — caps
+  //     distributed credential stuffing without locking out a legit retry.
+  // Pre-fix: single in-memory `login` bucket per Vercel instance, which
+  // an attacker could rotate around by hitting different warm workers.
+  const ipKey = getIpKey(req);
+  const ipLimit = await checkRateLimitDurable('login', ipKey, 5, 300);
+  if (!ipLimit.allowed) {
+    return NextResponse.json({ error: 'Too many requests' }, { status: 429 });
+  }
+  const globalLimit = await checkRateLimitDurable('login:global', 'global', 60, 300);
+  if (!globalLimit.allowed) {
+    return NextResponse.json({ error: 'Too many requests' }, { status: 429 });
+  }
 
   try {
     const { password } = await req.json();

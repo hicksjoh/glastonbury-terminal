@@ -1,7 +1,7 @@
 import { NextRequest } from 'next/server';
 import { KEISHA_SYSTEM_PROMPT } from '@/lib/claude';
 import { cachedSystem } from '@/lib/prompts';
-import { rateLimit } from '@/lib/rate-limit';
+import { checkRateLimitDurable, getRateLimitIdentity } from '@/lib/rate-limit-durable';
 import { sanitizeInput } from '@/lib/sanitize';
 import {
   buildFullPortfolioContext,
@@ -70,7 +70,11 @@ function getActionButtons(
 // ═════════════════════════════════════════════════════════════════════════════
 
 export async function POST(req: NextRequest) {
-  const { allowed } = rateLimit('keisha-stream', 20, 60000);
+  // P0-6: durable, session-keyed limit. Streaming Anthropic calls are the
+  // single most expensive route in the app — capping at 10 / 5 min per
+  // session prevents wallet runaway across warm Vercel instances.
+  const { key } = await getRateLimitIdentity(req);
+  const { allowed } = await checkRateLimitDurable('keisha-stream', key, 10, 300);
   if (!allowed) {
     return new Response(
       JSON.stringify({ error: 'Too many requests' }),
