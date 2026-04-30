@@ -1,6 +1,17 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { scoreSignal } from '@/lib/signal-scorer';
-import { apiFetchWithFallback, type ApiResult } from '@/lib/api-client';
+import {
+  getMarketGainers,
+  getMarketLosers,
+  getMarketActives,
+  getStockScreener,
+  getDividendCalendar,
+  getLatestInsiderTrades,
+  type StockMoverRow,
+  type StockScreenerRow,
+  type DividendCalendarRow,
+  type InsiderTradingRow,
+} from '@/lib/fmp-client';
 import { buildMeta, type ApiMeta } from '@/lib/api-meta';
 
 interface SignalResult {
@@ -13,59 +24,33 @@ interface SignalResult {
   regime_fit: boolean;
 }
 
-interface StockQuote {
-  symbol: string;
-  name?: string;
-  companyName?: string;
-  price: number;
-  changesPercentage?: number;
-  change?: number;
-  volume?: number;
-  pe?: number;
-  [key: string]: unknown;
+// FMP migration (P0-1): /v3 and /v4 paths now 403. All FMP traffic flows
+// through src/lib/fmp-client.ts /stable wrappers. Each helper here returns
+// `{ rows, meta }` so the route can build a single `_meta` payload.
+type FmpResult<T> = { rows: T[]; meta: ApiMeta };
+
+function fmpMeta(rows: unknown[]): ApiMeta {
+  return buildMeta({ source: 'fmp', live: rows.length > 0 });
 }
 
-interface InsiderTrade {
-  symbol: string;
-  acquistionOrDisposition?: string;
-  [key: string]: unknown;
+async function fetchGainers(): Promise<FmpResult<StockMoverRow>> {
+  const rows = await getMarketGainers();
+  return { rows, meta: fmpMeta(rows) };
 }
 
-interface DividendEntry {
-  symbol: string;
-  yield?: number;
-  date?: string;
-  adjDividend?: number;
-  [key: string]: unknown;
+async function fetchActives(): Promise<FmpResult<StockMoverRow>> {
+  const rows = await getMarketActives();
+  return { rows, meta: fmpMeta(rows) };
 }
 
-// Shared FMP fetchers using centralized client
-async function fetchGainers(): Promise<ApiResult<StockQuote[]>> {
-  return apiFetchWithFallback<StockQuote[]>(
-    'fmp', '/v3/stock_market/gainers', {}, [],
-    { cacheTtlMs: 5 * 60 * 1000 },
-  );
+async function fetchLosers(): Promise<FmpResult<StockMoverRow>> {
+  const rows = await getMarketLosers();
+  return { rows, meta: fmpMeta(rows) };
 }
 
-async function fetchActives(): Promise<ApiResult<StockQuote[]>> {
-  return apiFetchWithFallback<StockQuote[]>(
-    'fmp', '/v3/stock_market/actives', {}, [],
-    { cacheTtlMs: 5 * 60 * 1000 },
-  );
-}
-
-async function fetchLosers(): Promise<ApiResult<StockQuote[]>> {
-  return apiFetchWithFallback<StockQuote[]>(
-    'fmp', '/v3/stock_market/losers', {}, [],
-    { cacheTtlMs: 5 * 60 * 1000 },
-  );
-}
-
-async function fetchInsiderFeed(): Promise<ApiResult<InsiderTrade[]>> {
-  return apiFetchWithFallback<InsiderTrade[]>(
-    'fmp', '/v4/insider-trading-rss-feed', { limit: '50' }, [],
-    { cacheTtlMs: 15 * 60 * 1000 },
-  );
+async function fetchInsiderFeed(): Promise<FmpResult<InsiderTradingRow>> {
+  const rows = await getLatestInsiderTrades(50);
+  return { rows, meta: fmpMeta(rows) };
 }
 
 export async function GET(req: NextRequest) {
@@ -118,7 +103,7 @@ export async function GET(req: NextRequest) {
 
 async function scanMomentum(): Promise<{ signals: SignalResult[]; metas: ApiMeta[] }> {
   const result = await fetchGainers();
-  const gainers = Array.isArray(result.data) ? result.data : [];
+  const gainers = result.rows;
 
   const signals = gainers.slice(0, 15).map(g => {
     const change = Number(g.changesPercentage || 0);
@@ -142,17 +127,15 @@ async function scanMomentum(): Promise<{ signals: SignalResult[]; metas: ApiMeta
     };
   });
 
-  return { signals, metas: [result._meta] };
+  return { signals, metas: [result.meta] };
 }
 
 async function scanValue(): Promise<{ signals: SignalResult[]; metas: ApiMeta[] }> {
-  const result = await apiFetchWithFallback<StockQuote[]>(
-    'fmp', '/v3/stock-screener',
-    { marketCapMoreThan: '1000000000', priceMoreThan: '5', volumeMoreThan: '500000' },
-    [],
-    { cacheTtlMs: 10 * 60 * 1000 },
-  );
-  const stocks = Array.isArray(result.data) ? result.data : [];
+  const stocks: StockScreenerRow[] = await getStockScreener({
+    marketCapMoreThan: 1_000_000_000,
+    priceMoreThan: 5,
+    volumeMoreThan: 500_000,
+  });
 
   const signals = stocks
     .filter(s => {
@@ -180,18 +163,14 @@ async function scanValue(): Promise<{ signals: SignalResult[]; metas: ApiMeta[] 
       };
     });
 
-  return { signals, metas: [result._meta] };
+  return { signals, metas: [fmpMeta(stocks)] };
 }
 
 async function scanIncome(): Promise<{ signals: SignalResult[]; metas: ApiMeta[] }> {
   const from = new Date().toISOString().split('T')[0];
   const to = new Date(Date.now() + 30 * 86400000).toISOString().split('T')[0];
 
-  const result = await apiFetchWithFallback<DividendEntry[]>(
-    'fmp', '/v3/stock_dividend_calendar', { from, to }, [],
-    { cacheTtlMs: 60 * 60 * 1000 },
-  );
-  const dividends = Array.isArray(result.data) ? result.data : [];
+  const dividends: DividendCalendarRow[] = await getDividendCalendar(from, to);
 
   const signals = dividends
     .filter(d => Number(d.yield || 0) > 3)
@@ -217,7 +196,7 @@ async function scanIncome(): Promise<{ signals: SignalResult[]; metas: ApiMeta[]
       };
     });
 
-  return { signals, metas: [result._meta] };
+  return { signals, metas: [fmpMeta(dividends)] };
 }
 
 async function scanConfluence(): Promise<{ signals: SignalResult[]; metas: ApiMeta[] }> {
@@ -227,9 +206,9 @@ async function scanConfluence(): Promise<{ signals: SignalResult[]; metas: ApiMe
     fetchInsiderFeed(),
   ]);
 
-  const gainers = Array.isArray(gainersRes.data) ? gainersRes.data : [];
-  const actives = Array.isArray(activesRes.data) ? activesRes.data : [];
-  const insiders = Array.isArray(insiderRes.data) ? insiderRes.data : [];
+  const gainers = gainersRes.rows;
+  const actives = activesRes.rows;
+  const insiders = insiderRes.rows;
 
   const symbolData: Record<string, {
     price: number; change: number; volume: number;
@@ -237,6 +216,7 @@ async function scanConfluence(): Promise<{ signals: SignalResult[]; metas: ApiMe
   }> = {};
 
   for (const g of gainers.slice(0, 20)) {
+    if (!g.symbol) continue;
     symbolData[g.symbol] = {
       price: g.price || 0, change: Number(g.changesPercentage || 0),
       volume: Number(g.volume || 0), isGainer: true, isActive: false,
@@ -245,6 +225,7 @@ async function scanConfluence(): Promise<{ signals: SignalResult[]; metas: ApiMe
   }
 
   for (const a of actives.slice(0, 20)) {
+    if (!a.symbol) continue;
     if (symbolData[a.symbol]) {
       symbolData[a.symbol].isActive = true;
     } else {
@@ -294,7 +275,7 @@ async function scanConfluence(): Promise<{ signals: SignalResult[]; metas: ApiMe
 
   return {
     signals: results.sort((a, b) => b.score - a.score).slice(0, 15),
-    metas: [gainersRes._meta, activesRes._meta, insiderRes._meta],
+    metas: [gainersRes.meta, activesRes.meta, insiderRes.meta],
   };
 }
 
@@ -314,8 +295,8 @@ function generateThesis(
 async function getMarketRegime(): Promise<{ regime: string; regimeMeta: ApiMeta }> {
   try {
     const [gainersRes, losersRes] = await Promise.all([fetchGainers(), fetchLosers()]);
-    const gLen = Array.isArray(gainersRes.data) ? gainersRes.data.length : 0;
-    const lLen = Array.isArray(losersRes.data) ? losersRes.data.length : 0;
+    const gLen = gainersRes.rows.length;
+    const lLen = losersRes.rows.length;
 
     let regime: string;
     if (gLen > lLen * 1.5) regime = 'bull_low_vol';
@@ -325,7 +306,7 @@ async function getMarketRegime(): Promise<{ regime: string; regimeMeta: ApiMeta 
 
     return {
       regime,
-      regimeMeta: buildMeta({ source: 'fmp', live: gainersRes._meta.live && losersRes._meta.live }),
+      regimeMeta: buildMeta({ source: 'fmp', live: gainersRes.meta.live && losersRes.meta.live }),
     };
   } catch {
     return {

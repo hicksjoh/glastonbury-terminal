@@ -1,22 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { apiFetchWithFallback } from '@/lib/api-client';
-import { buildMeta, type ApiMeta } from '@/lib/api-meta';
-
-interface EarningsCalendarEntry {
-  symbol?: string;
-  companyName?: string;
-  date?: string;
-  time?: string;
-  epsEstimated?: number;
-  revenueEstimated?: number;
-  [k: string]: unknown;
-}
-
-interface SurpriseEntry {
-  actualEarningResult?: number;
-  estimatedEarning?: number;
-  [k: string]: unknown;
-}
+import {
+  getEarningsCalendar,
+  getEarningsSurprises,
+  getHistoricalEarnings,
+} from '@/lib/fmp-client';
+import { buildMeta } from '@/lib/api-meta';
 
 export async function GET(req: NextRequest) {
   try {
@@ -44,16 +32,13 @@ export async function GET(req: NextRequest) {
     const fromStr = from.toISOString().split('T')[0];
     const toStr = to.toISOString().split('T')[0];
 
-    const calResult = await apiFetchWithFallback<EarningsCalendarEntry[]>(
-      'fmp', '/v3/earning_calendar', { from: fromStr, to: toStr }, [],
-      { cacheTtlMs: 60 * 60 * 1000 },
-    );
-
-    const calendar = Array.isArray(calResult.data) ? calResult.data : [];
+    // P0-1: /v3/earning_calendar → /stable/earnings-calendar
+    const calendar = await getEarningsCalendar(fromStr, toStr);
+    const calMeta = buildMeta({ source: 'fmp', live: calendar.length > 0 });
     if (calendar.length === 0) {
       return NextResponse.json({
         upcoming: [], thisWeek: 0, highImpact: [],
-        _meta: calResult._meta,
+        _meta: calMeta,
       });
     }
 
@@ -68,11 +53,7 @@ export async function GET(req: NextRequest) {
       let beatRate = 0, avgSurprise = 0, avgMove = 0;
 
       try {
-        const surpriseResult = await apiFetchWithFallback<SurpriseEntry[]>(
-          'fmp', `/v3/earnings-surprises/${encodeURIComponent(sym)}`, {}, [],
-          { cacheTtlMs: 24 * 60 * 60 * 1000 }, // 24hr cache — historical data
-        );
-        const surprises = Array.isArray(surpriseResult.data) ? surpriseResult.data : [];
+        const surprises = await getEarningsSurprises(sym);
         if (surprises.length > 0) {
           const recent = surprises.slice(0, 8);
           const beats = recent.filter(s => (s.actualEarningResult || 0) > (s.estimatedEarning || 0)).length;
@@ -116,7 +97,7 @@ export async function GET(req: NextRequest) {
       upcoming,
       thisWeek: upcoming.length,
       highImpact,
-      _meta: calResult._meta,
+      _meta: calMeta,
     });
   } catch (error) {
     const msg = error instanceof Error ? error.message : 'Unknown error';
@@ -128,19 +109,20 @@ export async function GET(req: NextRequest) {
 }
 
 async function handleDetail(symbol: string) {
-  const [surpriseRes, historicalRes] = await Promise.all([
-    apiFetchWithFallback<unknown[]>('fmp', `/v3/earnings-surprises/${encodeURIComponent(symbol)}`, {}, [], { cacheTtlMs: 24 * 60 * 60 * 1000 }),
-    apiFetchWithFallback<unknown[]>('fmp', `/v3/historical/earning_calendar/${encodeURIComponent(symbol)}`, { limit: '20' }, [], { cacheTtlMs: 24 * 60 * 60 * 1000 }),
+  // P0-1: /v3/earnings-surprises/{symbol} → /stable/earnings-surprises?symbol=
+  // /v3/historical/earning_calendar/{symbol} → /stable/earnings?symbol=
+  const [surprises, historical] = await Promise.all([
+    getEarningsSurprises(symbol),
+    getHistoricalEarnings(symbol, 20),
   ]);
 
   return NextResponse.json({
     symbol,
-    surprises: Array.isArray(surpriseRes.data) ? surpriseRes.data.slice(0, 12) : [],
-    historical: Array.isArray(historicalRes.data) ? historicalRes.data.slice(0, 20) : [],
+    surprises: surprises.slice(0, 12),
+    historical: historical.slice(0, 20),
     _meta: buildMeta({
       source: 'fmp',
-      live: surpriseRes._meta.live && historicalRes._meta.live,
-      cached: surpriseRes._meta.cached || historicalRes._meta.cached,
+      live: surprises.length > 0 && historical.length > 0,
     }),
   });
 }

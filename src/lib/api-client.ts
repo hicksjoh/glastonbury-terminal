@@ -102,6 +102,20 @@ export async function apiFetch<T>(
   const config = API_CONFIGS[api];
   if (!config) throw new Error(`Unknown API: ${api}`);
 
+  // P0-1 (hardening/p0-codex-fixes): FMP migrated everything to `/stable` and
+  // returns 403 "Legacy Endpoint" on `/api/v3/*` and `/api/v4/*`. The
+  // `apiFetchWithFallback` wrapper used to swallow that 403 and serve `[]` as
+  // if it were live — making whole product areas (scanner, macro, earnings,
+  // insider) silently fall back. Throw hard so any new regression surfaces in
+  // logs/Sentry instead of becoming a "the page is empty" mystery.
+  if (api === 'fmp' && /^\/(v3|v4)(\/|$)/i.test(endpoint)) {
+    throw new ApiError(
+      api,
+      endpoint,
+      'FMP /v3 and /v4 paths are 403 on the current plan. Use src/lib/fmp-client.ts /stable wrappers instead.',
+    );
+  }
+
   const { cacheTtlMs = 60_000, timeoutMs = 10_000, retries = 1 } = options;
   const cacheKey = `${api}:${endpoint}:${JSON.stringify(params)}`;
 

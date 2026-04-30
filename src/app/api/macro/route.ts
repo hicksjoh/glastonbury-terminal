@@ -2,6 +2,12 @@ import { NextRequest, NextResponse } from 'next/server';
 import { assessMacroRegime, MacroIndicators } from '@/lib/macro-regime';
 import { getSupabase } from '@/lib/supabase';
 import { apiFetchWithFallback, type ApiResult } from '@/lib/api-client';
+import {
+  getQuote,
+  getTreasuryRates,
+  getEconomicCalendar,
+  type EconomicEventRow,
+} from '@/lib/fmp-client';
 import { buildMeta, type ApiMeta } from '@/lib/api-meta';
 
 // Hardcoded defaults — always tagged as fallback via _meta
@@ -59,35 +65,36 @@ async function fetchFredSeries(seriesId: string): Promise<ApiResult<number | nul
 // FMP fetchers — existing fallback path
 // ---------------------------------------------------------------------------
 
-interface TreasuryEntry { year10: number; year2: number; [k: string]: unknown }
-interface QuoteEntry { price: number; [k: string]: unknown }
-interface EconomicEvent { date: string; event: string; country?: string; impact?: string; actual?: number | null; estimate?: number | null; previous?: number | null }
+// FMP fetchers — all routed through src/lib/fmp-client.ts /stable wrappers
+// (P0-1, hardening/p0-codex-fixes). The shapes returned mirror what this file
+// previously got from /v3/v4 so the consuming logic below didn't have to
+// change.
+type TreasuryEntry = { year10: number; year2: number };
 
 async function fetchFmpTreasury(): Promise<ApiResult<TreasuryEntry | null>> {
   const today = new Date().toISOString().split('T')[0];
   const monthAgo = new Date(Date.now() - 30 * 86400000).toISOString().split('T')[0];
-  const result = await apiFetchWithFallback<TreasuryEntry[]>(
-    'fmp', '/v4/treasury', { from: monthAgo, to: today }, [],
-    { cacheTtlMs: 60 * 60 * 1000 },
-  );
-  return { data: result.data?.[0] ?? null, _meta: result._meta };
+  const rows = await getTreasuryRates(monthAgo, today);
+  const latest = rows[0] ?? null;
+  const data: TreasuryEntry | null = latest && latest.year10 != null && latest.year2 != null
+    ? { year10: Number(latest.year10), year2: Number(latest.year2) }
+    : null;
+  return { data, _meta: buildMeta({ source: 'fmp', live: data !== null }) };
 }
 
 async function fetchFmpVix(): Promise<ApiResult<number | null>> {
-  const result = await apiFetchWithFallback<QuoteEntry[]>(
-    'fmp', '/v3/quote/%5EVIX', {}, [],
-    { cacheTtlMs: 60 * 1000 },
-  );
-  return { data: result.data?.[0]?.price ?? null, _meta: result._meta };
+  // /stable/quote takes the symbol as a query param; ^VIX no longer needs URL
+  // encoding because we're not interpolating it into a path segment.
+  const quote = await getQuote('^VIX');
+  const price = quote?.price ?? null;
+  return { data: price, _meta: buildMeta({ source: 'fmp', live: price !== null }) };
 }
 
-async function fetchFmpCalendar(): Promise<ApiResult<EconomicEvent[]>> {
+async function fetchFmpCalendar(): Promise<ApiResult<EconomicEventRow[]>> {
   const today = new Date().toISOString().split('T')[0];
   const twoWeeks = new Date(Date.now() + 14 * 86400000).toISOString().split('T')[0];
-  return apiFetchWithFallback<EconomicEvent[]>(
-    'fmp', '/v3/economic_calendar', { from: today, to: twoWeeks }, [],
-    { cacheTtlMs: 60 * 60 * 1000 },
-  );
+  const rows = await getEconomicCalendar(today, twoWeeks);
+  return { data: rows, _meta: buildMeta({ source: 'fmp', live: rows.length > 0 }) };
 }
 
 // ---------------------------------------------------------------------------

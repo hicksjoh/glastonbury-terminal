@@ -1,12 +1,24 @@
 // FMP client — talks to `/stable` endpoints only. The user is on FMP's
 // post-August-2025 tier, which returns 403 "Legacy Endpoint" for all
-// `/api/v3/*` paths. Any new FMP call should go through this module.
+// `/api/v3/*` and `/api/v4/*` paths. Any new FMP call MUST go through this
+// module. The api-client wrapper throws when a v3/v4 path is requested
+// (P0-1, hardening/p0-codex-fixes).
 //
 // See memory/builders/D1.md for the full endpoint matrix.
 
-const FMP_STABLE = 'https://financialmodelingprep.com/stable';
+export const FMP_STABLE = 'https://financialmodelingprep.com/stable';
 const FMP_TIMEOUT_MS = 5_000;
 const SECTOR_CACHE_TTL_MS = 5 * 60 * 1_000;
+
+/**
+ * Endpoints that return a 402 (paid tier) on the current plan are surfaced as
+ * `{ unavailable: true, reason: 'plan_limit' }` so the UI can render a real
+ * "not on this plan" state instead of an empty array that looks like 0 results.
+ */
+export type FmpUnavailable = { unavailable: true; reason: 'plan_limit' | 'no_key' | 'unknown_path' };
+export function isFmpUnavailable<T>(v: T | FmpUnavailable): v is FmpUnavailable {
+  return !!v && typeof v === 'object' && (v as FmpUnavailable).unavailable === true;
+}
 
 function key(): string | null {
   const k = process.env.FMP_API_KEY;
@@ -15,6 +27,37 @@ function key(): string | null {
 
 async function fmpFetch(url: string): Promise<Response> {
   return fetch(url, { signal: AbortSignal.timeout(FMP_TIMEOUT_MS) });
+}
+
+/**
+ * Build a /stable URL with the API key tacked on as `apikey`. Caller passes the
+ * leading-slash path (e.g. `/biggest-gainers`) and any query params.
+ *
+ * Centralized so tests can stub one helper and every wrapper inherits the same
+ * URL shape.
+ */
+export function buildStableUrl(path: string, params: Record<string, string | number | undefined> = {}): string | null {
+  const k = key();
+  if (!k) return null;
+  const url = new URL(`${FMP_STABLE}${path}`);
+  for (const [name, value] of Object.entries(params)) {
+    if (value === undefined || value === null || value === '') continue;
+    url.searchParams.set(name, String(value));
+  }
+  url.searchParams.set('apikey', k);
+  return url.toString();
+}
+
+async function fmpFetchJson<T>(path: string, params: Record<string, string | number | undefined> = {}): Promise<T | null> {
+  const url = buildStableUrl(path, params);
+  if (!url) return null;
+  try {
+    const res = await fmpFetch(url);
+    if (!res.ok) return null;
+    return (await res.json()) as T;
+  } catch {
+    return null;
+  }
 }
 
 export interface FmpQuote {
@@ -292,4 +335,218 @@ export async function getSectorPerformance(): Promise<SectorPerformance[]> {
  */
 export function clearSectorCache(): void {
   sectorCache = null;
+}
+
+// ─── Market movers (gainers / losers / actives) ─────────────────────
+//
+// /stable replacements for `/v3/stock_market/{gainers,losers,actives}`.
+// Each returns a uniform "stock movers" row.
+
+export interface StockMoverRow {
+  symbol: string;
+  name?: string;
+  price: number;
+  change?: number;
+  changesPercentage?: number;
+  volume?: number;
+  [k: string]: unknown;
+}
+
+export async function getMarketGainers(): Promise<StockMoverRow[]> {
+  const data = await fmpFetchJson<StockMoverRow[]>('/biggest-gainers');
+  return Array.isArray(data) ? data : [];
+}
+
+export async function getMarketLosers(): Promise<StockMoverRow[]> {
+  const data = await fmpFetchJson<StockMoverRow[]>('/biggest-losers');
+  return Array.isArray(data) ? data : [];
+}
+
+export async function getMarketActives(): Promise<StockMoverRow[]> {
+  const data = await fmpFetchJson<StockMoverRow[]>('/most-actives');
+  return Array.isArray(data) ? data : [];
+}
+
+// ─── Stock screener ──────────────────────────────────────────────────
+
+export interface StockScreenerRow {
+  symbol: string;
+  companyName?: string;
+  price?: number;
+  marketCap?: number;
+  volume?: number;
+  pe?: number;
+  sector?: string;
+  industry?: string;
+  [k: string]: unknown;
+}
+
+export async function getStockScreener(params: {
+  marketCapMoreThan?: number;
+  priceMoreThan?: number;
+  volumeMoreThan?: number;
+  betaLowerThan?: number;
+  betaMoreThan?: number;
+  sector?: string;
+  industry?: string;
+  limit?: number;
+}): Promise<StockScreenerRow[]> {
+  // /stable replacement is `/company-screener`. Pass numeric params as strings.
+  const data = await fmpFetchJson<StockScreenerRow[]>('/company-screener', params);
+  return Array.isArray(data) ? data : [];
+}
+
+// ─── Earnings ────────────────────────────────────────────────────────
+
+export interface EarningsCalendarRow {
+  symbol?: string;
+  companyName?: string;
+  date?: string;
+  time?: string;
+  epsEstimated?: number;
+  revenueEstimated?: number;
+  [k: string]: unknown;
+}
+
+export async function getEarningsCalendar(from: string, to: string): Promise<EarningsCalendarRow[]> {
+  const data = await fmpFetchJson<EarningsCalendarRow[]>('/earnings-calendar', { from, to });
+  return Array.isArray(data) ? data : [];
+}
+
+export interface EarningsSurpriseRow {
+  symbol?: string;
+  date?: string;
+  actualEarningResult?: number;
+  estimatedEarning?: number;
+  [k: string]: unknown;
+}
+
+export async function getEarningsSurprises(symbol: string): Promise<EarningsSurpriseRow[]> {
+  const data = await fmpFetchJson<EarningsSurpriseRow[]>('/earnings-surprises', { symbol });
+  return Array.isArray(data) ? data : [];
+}
+
+export async function getHistoricalEarnings(symbol: string, limit = 20): Promise<EarningsCalendarRow[]> {
+  // /stable historical earnings collapsed to one endpoint with `symbol` + `limit`.
+  const data = await fmpFetchJson<EarningsCalendarRow[]>('/earnings', { symbol, limit });
+  return Array.isArray(data) ? data : [];
+}
+
+// ─── Dividends ───────────────────────────────────────────────────────
+
+export interface DividendCalendarRow {
+  symbol?: string;
+  date?: string;
+  yield?: number;
+  adjDividend?: number;
+  dividend?: number;
+  [k: string]: unknown;
+}
+
+export async function getDividendCalendar(from: string, to: string): Promise<DividendCalendarRow[]> {
+  const data = await fmpFetchJson<DividendCalendarRow[]>('/dividends-calendar', { from, to });
+  return Array.isArray(data) ? data : [];
+}
+
+// ─── Treasury rates ──────────────────────────────────────────────────
+
+export interface TreasuryRatesRow {
+  date: string;
+  year10?: number;
+  year2?: number;
+  year30?: number;
+  year5?: number;
+  year3?: number;
+  year1?: number;
+  month3?: number;
+  month1?: number;
+  [k: string]: unknown;
+}
+
+export async function getTreasuryRates(from: string, to: string): Promise<TreasuryRatesRow[]> {
+  const data = await fmpFetchJson<TreasuryRatesRow[]>('/treasury-rates', { from, to });
+  return Array.isArray(data) ? data : [];
+}
+
+// ─── Economic calendar ───────────────────────────────────────────────
+
+export interface EconomicEventRow {
+  date: string;
+  event: string;
+  country?: string;
+  impact?: string;
+  actual?: number | null;
+  estimate?: number | null;
+  previous?: number | null;
+  [k: string]: unknown;
+}
+
+export async function getEconomicCalendar(from: string, to: string): Promise<EconomicEventRow[]> {
+  const data = await fmpFetchJson<EconomicEventRow[]>('/economic-calendar', { from, to });
+  return Array.isArray(data) ? data : [];
+}
+
+// ─── Insider & congressional trading ─────────────────────────────────
+
+export interface InsiderTradingRow {
+  symbol?: string;
+  reportingName?: string;
+  owner?: string;
+  typeOfOwner?: string;
+  acquistionOrDisposition?: string;
+  transactionType?: string;
+  securitiesTransacted?: number;
+  shares?: number;
+  price?: number;
+  transactionDate?: string;
+  filingDate?: string;
+  link?: string;
+  [k: string]: unknown;
+}
+
+export async function getInsiderTrades(symbol: string, limit = 100): Promise<InsiderTradingRow[]> {
+  const data = await fmpFetchJson<InsiderTradingRow[]>('/insider-trading', { symbol, limit });
+  return Array.isArray(data) ? data : [];
+}
+
+export async function getLatestInsiderTrades(limit = 50): Promise<InsiderTradingRow[]> {
+  const data = await fmpFetchJson<InsiderTradingRow[]>('/insider-trading-latest', { limit });
+  return Array.isArray(data) ? data : [];
+}
+
+export interface CongressTradeRow {
+  ticker?: string;
+  symbol?: string;
+  representative?: string;
+  firstName?: string;
+  lastName?: string;
+  party?: string;
+  district?: string;
+  type?: string;
+  transactionType?: string;
+  amount?: string;
+  range?: string;
+  transactionDate?: string;
+  disclosureDate?: string;
+  [k: string]: unknown;
+}
+
+export async function getSenateTrades(symbol: string): Promise<CongressTradeRow[]> {
+  const data = await fmpFetchJson<CongressTradeRow[]>('/senate-trades', { symbol });
+  return Array.isArray(data) ? data : [];
+}
+
+export async function getHouseTrades(symbol: string): Promise<CongressTradeRow[]> {
+  const data = await fmpFetchJson<CongressTradeRow[]>('/house-trades', { symbol });
+  return Array.isArray(data) ? data : [];
+}
+
+export async function getLatestSenateTrades(): Promise<CongressTradeRow[]> {
+  const data = await fmpFetchJson<CongressTradeRow[]>('/senate-trades-latest');
+  return Array.isArray(data) ? data : [];
+}
+
+export async function getLatestHouseTrades(): Promise<CongressTradeRow[]> {
+  const data = await fmpFetchJson<CongressTradeRow[]>('/house-trades-latest');
+  return Array.isArray(data) ? data : [];
 }
