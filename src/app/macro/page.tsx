@@ -5,46 +5,13 @@ import { AppShell } from '@/components/layout/AppShell';
 import { ErrorBoundary } from '@/components/ErrorBoundary';
 import { Globe } from 'lucide-react';
 import { PredictionMarketsCard } from '@/components/macro/PredictionMarketsCard';
+import type { MacroResponse } from '@/types/macro';
 
 const PREDICTION_MARKETS_ENABLED = process.env.NEXT_PUBLIC_FEATURE_PREDICTION_MARKETS === 'true';
 
-interface FactorDetail {
-  score: number;
-  signal: string;
-}
-
-interface MacroData {
-  regime: {
-    regime: string;
-    confidence: number;
-    score: number;
-    factorBreakdown: Record<string, FactorDetail>;
-  };
-  indicators: {
-    yield10Y: number;
-    yield2Y: number;
-    yieldCurveSlope: number;
-    fedFunds: number;
-    vix: number;
-    dxy: number;
-    creditSpread: number;
-  };
-  fedPrediction: {
-    prediction: 'hike' | 'hold' | 'cut';
-    confidence: number;
-    impliedRate: number;
-  };
-  allocation: {
-    equities: number;
-    bonds: number;
-    commodities: number;
-    cash: number;
-    alternatives: number;
-  };
-  upcomingEvents: { date: string; event: string; importance: string }[];
-  interpretation: string;
-  lastUpdated: string;
-}
+// Use the canonical API contract from src/types/macro.ts so route + page
+// can never silently disagree (P0-2, hardening/p0-codex-fixes).
+type MacroData = MacroResponse;
 
 const REGIME_COLORS: Record<string, string> = {
   expansion: '#4ade80',

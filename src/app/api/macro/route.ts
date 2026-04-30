@@ -218,9 +218,13 @@ export async function GET(_req: NextRequest) {
     const allLive = sourceMetas.every(m => m.live);
     const primarySource = hasFred ? 'fred+fmp' : 'fmp';
 
+    // P0-2: emit the canonical contract from src/types/macro.ts. The page
+    // reads `regime.regime` and `fedPrediction.prediction` — historically
+    // this route emitted `regime.name` and `fedPrediction.action` and the
+    // page rendered "undefined".
     return NextResponse.json({
       regime: {
-        name: regime.regime,
+        regime: regime.regime,
         confidence: regime.confidence,
         score: regime.score,
         factorBreakdown: regime.factorBreakdown,
@@ -238,7 +242,7 @@ export async function GET(_req: NextRequest) {
         gdpGrowth: indicators.gdpGrowth,
       },
       fedPrediction: {
-        action: regime.fedPrediction.prediction,
+        prediction: regime.fedPrediction.prediction,
         confidence: regime.fedPrediction.confidence,
         impliedRate: regime.fedPrediction.impliedRate,
       },
