@@ -60,6 +60,28 @@ export interface KeishaAgentHooks {
 export interface KeishaAgentInput extends KeishaAgentHooks {
   messages: MessageParam[];
   system: CachedTextBlock[];
+  /**
+   * Hard cap on cumulative tokens (input + cache + output) across all
+   * iterations of the agentic loop. When exceeded, the loop stops and
+   * returns whatever synthesis is in hand. Defaults to 50_000.
+   *
+   * The research agent already has cost controls; chat did not. This is
+   * the chat equivalent — prevents runaway cost on a single conversation
+   * if Claude gets stuck calling tools in a circle.
+   */
+  maxTotalTokens?: number;
+}
+
+export const DEFAULT_KEISHA_TOKEN_BUDGET = 50_000;
+
+export interface KeishaAgentUsage {
+  inputTokens: number;
+  outputTokens: number;
+  cacheCreationTokens: number;
+  cacheReadTokens: number;
+  iterations: number;
+  /** True if the loop stopped early because the budget was exceeded. */
+  budgetExceeded: boolean;
 }
 
 export interface KeishaAgentOutput {
@@ -67,6 +89,7 @@ export interface KeishaAgentOutput {
   suggestions: string[];
   actions: KeishaAgentAction[];
   pendingConfirmations: KeishaAgentPending[];
+  usage: KeishaAgentUsage;
 }
 
 export async function runKeishaAgent(input: KeishaAgentInput): Promise<KeishaAgentOutput> {
@@ -78,12 +101,21 @@ export async function runKeishaAgent(input: KeishaAgentInput): Promise<KeishaAge
     onToolResult,
     onPendingConfirmation,
   } = input;
+  const maxTotalTokens = input.maxTotalTokens ?? DEFAULT_KEISHA_TOKEN_BUDGET;
 
   let currentMessages: MessageParam[] = [...messages];
   let finalText = '';
   let suggestions: string[] = [];
   const actions: KeishaAgentAction[] = [];
   const pendingConfirmations: KeishaAgentPending[] = [];
+  const usage: KeishaAgentUsage = {
+    inputTokens: 0,
+    outputTokens: 0,
+    cacheCreationTokens: 0,
+    cacheReadTokens: 0,
+    iterations: 0,
+    budgetExceeded: false,
+  };
 
   for (let iteration = 0; iteration < MAX_TOOL_ITERATIONS; iteration++) {
     const stream = await anthropic.messages.stream({
@@ -94,11 +126,39 @@ export async function runKeishaAgent(input: KeishaAgentInput): Promise<KeishaAge
       tools: KEISHA_TOOLS,
     });
 
+    usage.iterations += 1;
+
     const toolUseBlocks: Array<{ id: string; name: string; input: Record<string, unknown> }> = [];
     let currentToolBlock: { id: string; name: string; inputJson: string } | null = null;
     let iterationText = '';
+    let iterationOutputTokens = 0;
 
     for await (const event of stream) {
+      // Track usage as the message progresses. message_start gives input
+      // tokens (and cache split); message_delta gives the running output
+      // total. We accumulate across iterations to enforce the budget.
+      if (event.type === 'message_start') {
+        const u = (event as unknown as { message?: { usage?: { input_tokens?: number; cache_creation_input_tokens?: number; cache_read_input_tokens?: number } } }).message?.usage;
+        if (u) {
+          usage.inputTokens += u.input_tokens ?? 0;
+          usage.cacheCreationTokens += u.cache_creation_input_tokens ?? 0;
+          usage.cacheReadTokens += u.cache_read_input_tokens ?? 0;
+        }
+      }
+      if (event.type === 'message_delta') {
+        const u = (event as unknown as { usage?: { output_tokens?: number } }).usage;
+        if (u && typeof u.output_tokens === 'number') {
+          // The Anthropic SDK reports the cumulative output for the
+          // current message in message_delta — the final value lands on
+          // message_stop, but message_delta updates are monotonically
+          // non-decreasing. We replace rather than add to avoid double-
+          // counting within an iteration; we add across iterations below.
+          // To keep accumulation correct, we hold a per-iteration counter
+          // and fold in at iteration end.
+          iterationOutputTokens = u.output_tokens;
+        }
+      }
+
       if (event.type === 'content_block_start' && event.content_block.type === 'tool_use') {
         currentToolBlock = {
           id: event.content_block.id,
@@ -136,6 +196,10 @@ export async function runKeishaAgent(input: KeishaAgentInput): Promise<KeishaAge
         currentToolBlock = null;
       }
     }
+
+    // Fold this iteration's output tokens into the running total.
+    usage.outputTokens += iterationOutputTokens;
+    iterationOutputTokens = 0;
 
     // Use the last iteration's text as the final synthesis. Replacing
     // (rather than concatenating across iterations) keeps intermediate
@@ -233,7 +297,21 @@ export async function runKeishaAgent(input: KeishaAgentInput): Promise<KeishaAge
       { role: 'assistant', content: assistantContent as unknown as MessageParam['content'] },
       { role: 'user', content: toolResults as unknown as MessageParam['content'] },
     ];
+
+    // Budget check — sum of input + cache + output across iterations.
+    // Cache reads count because they are still billed (at a discount), and
+    // a runaway loop accumulates those too. Cache creation is the priciest
+    // bucket so we definitely include it.
+    const totalUsed =
+      usage.inputTokens +
+      usage.outputTokens +
+      usage.cacheCreationTokens +
+      usage.cacheReadTokens;
+    if (totalUsed >= maxTotalTokens) {
+      usage.budgetExceeded = true;
+      break;
+    }
   }
 
-  return { finalText, suggestions, actions, pendingConfirmations };
+  return { finalText, suggestions, actions, pendingConfirmations, usage };
 }
