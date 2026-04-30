@@ -5,9 +5,18 @@ import { verifySessionJwt, SESSION_COOKIE_NAME } from '@/lib/session';
 // API routes that don't require gt-auth cookie authentication.
 // NOTE: briefing/scheduled, portfolio/snapshot, and the four /api/cron/*
 // routes below all handle their own CRON_SECRET auth at the route level.
+//
+// P0-3 (hardening/p0-codex-fixes):
+//   - /api/healthz is the new public liveness probe — emits only
+//     { status, timestamp } and is safe for Vercel uptime monitors.
+//   - /api/health is no longer public. The rich diagnostics (env validity,
+//     rate-limit state, circuit state) sit behind the session-cookie gate
+//     so the dashboard's Connections widget keeps working but unauthenticated
+//     callers can't fingerprint the backend.
+//   - /api/push/subscribe is no longer public — see P0-5.
 const PUBLIC_API_ROUTES = [
   '/api/auth/login',
-  '/api/health',
+  '/api/healthz',
   '/api/briefing/scheduled',
   '/api/briefing/morning-push',
   '/api/cron/weekly-report',
@@ -16,7 +25,6 @@ const PUBLIC_API_ROUTES = [
   '/api/cron/coach-review',
   '/api/cron/prediction-snapshot',
   '/api/portfolio/snapshot',
-  '/api/push/subscribe',
   '/api/img',
   '/api/mcp',  // MCP server; gates on MCP_AUTH_TOKEN bearer internally (F1)
   '/api/share/',  // F17 tokenized read-only dashboards — token IS the auth

@@ -1,7 +1,6 @@
 import { NextResponse } from 'next/server';
 import { getAllRateLimitStats } from '@/lib/rate-limiter';
 import { getAllCircuitStats } from '@/lib/circuit-breaker';
-import { getRecentApiLogs } from '@/lib/api-client';
 import { checkEnvironment } from '@/lib/env-check';
 import { getCached, setCache } from '@/lib/server-cache';
 
@@ -108,7 +107,6 @@ export async function GET() {
 
   const envCheck = checkEnvironment();
   const rateLimits = getAllRateLimitStats();
-  const recentLogs = getRecentApiLogs(20);
 
   const okCount = Object.values(checks).filter(v => v === 'ok').length;
   const errorCount = Object.values(checks).filter(v => v === 'error').length;
@@ -119,6 +117,11 @@ export async function GET() {
   else if (errorCount <= 2) status = 'degraded';
   else status = 'critical';
 
+  // P0-3: do NOT include `recentApiCalls` — the in-memory ring buffer in
+  // api-client.ts captures upstream error text (provider names, HTTP bodies,
+  // stack-trace fragments). Sentry already has this data; the browser
+  // doesn't need it. The dashboard's Connections widget only reads
+  // `services` and `summary`, so dropping the buffer is invisible to UX.
   const payload = {
     status,
     timestamp: new Date().toISOString(),
@@ -133,7 +136,6 @@ export async function GET() {
     },
     rateLimits,
     circuits,
-    recentApiCalls: recentLogs,
     environment: {
       valid: envCheck.valid,
       warnings: envCheck.warnings,
