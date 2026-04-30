@@ -149,7 +149,6 @@ export async function loadWealthFacts(
         source: raw.source,
         updatedAt,
       };
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       (block as any)[field] = fact;
     }
     block.latestUpdate = latest;

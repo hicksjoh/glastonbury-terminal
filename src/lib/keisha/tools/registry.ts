@@ -4,7 +4,6 @@ import type { z } from 'zod';
 export interface ToolDef<TInput = unknown> {
   name: string;
   description: string;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   inputSchema: z.ZodType<TInput, any, any>;
   toAnthropicTool: () => Tool;
   dangerous?: boolean;

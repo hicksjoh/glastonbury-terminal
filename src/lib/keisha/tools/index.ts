@@ -59,7 +59,6 @@ import { semanticSearch } from './semantic-search';
 
 // ─── Registry ────────────────────────────────────────────────────────────────
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
 export const TOOL_REGISTRY: ToolDef<any>[] = [
   // Batch 1
   lookupPrice,
@@ -147,6 +146,5 @@ export function buildRenderCard(
   success: boolean,
 ): RenderCard | null {
   const tool = TOOL_REGISTRY.find(t => t.name === name);
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   return (tool?.buildRenderCard?.(input as any, result, success) as RenderCard | null) ?? null;
 }

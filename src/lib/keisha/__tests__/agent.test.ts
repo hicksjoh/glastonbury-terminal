@@ -45,9 +45,7 @@ vi.mock('@/lib/keisha-tools', () => ({
 }));
 
 // Import AFTER mocks so the agent module sees the mocked deps.
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
 let runKeishaAgent: any;
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
 let DEFAULT_KEISHA_TOKEN_BUDGET: any;
 
 beforeEach(async () => {
@@ -67,7 +65,6 @@ afterEach(() => {
 
 interface StreamEvent {
   type: string;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   [key: string]: any;
 }
 
