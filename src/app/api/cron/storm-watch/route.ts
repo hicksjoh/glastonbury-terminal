@@ -7,6 +7,7 @@ import {
   persistAlertCandidates,
 } from '@/lib/storm-engine';
 import { pingHealthcheck } from '@/lib/healthchecks';
+import { cronIsAuthorized } from '@/lib/cron-auth';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -16,25 +17,27 @@ const HC_SLUG = 'cron-storm-watch';
 
 // Vercel cron + CRON_SECRET auth.
 // GET is what Vercel uses by default; POST is supported for manual runs.
-// Query `?mock=miami` injects a synthetic Miami-bound storm for QA.
+// Query `?mock=miami` injects a synthetic Miami-bound storm for QA — but
+// only outside production AND with valid auth (Codex round-2 finding:
+// the bare `if (!ok && !mock)` branch let unauth requests through).
+//
+// Auth: this route is in middleware's PUBLIC_API_ROUTES. See
+// src/lib/cron-auth.ts for the full doc on accepted auth modes. Fails
+// CLOSED when CRON_SECRET is unset.
 async function handle(req: NextRequest): Promise<NextResponse> {
-  const cronSecret = process.env.CRON_SECRET;
-  if (cronSecret) {
-    const header = req.headers.get('authorization') ?? '';
-    const headerKey = req.headers.get('x-api-key') ?? '';
-    const ok = header === `Bearer ${cronSecret}` || headerKey === cronSecret;
-    // Vercel cron sends the header; allow mock param in dev without auth.
-    const mock = req.nextUrl.searchParams.get('mock');
-    if (!ok && !mock) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-    }
-  }
+  const ok = await cronIsAuthorized(req, {
+    routeName: '/api/cron/storm-watch',
+  });
+  if (!ok) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
   await pingHealthcheck(HC_SLUG, 'start');
 
   try {
-    const mock = req.nextUrl.searchParams.get('mock');
-    const storms = mock === 'miami' ? [miamiMockStorm()] : await fetchNhcActiveStorms();
+    const mockParam = req.nextUrl.searchParams.get('mock');
+    // Mock storm injection is QA-only: gated to non-production environments
+    // even after passing auth. Production cron always pulls live NHC data.
+    const allowMock = mockParam === 'miami' && process.env.NODE_ENV !== 'production';
+    const storms = allowMock ? [miamiMockStorm()] : await fetchNhcActiveStorms();
     const zipMap = await loadTerritoryZips();
     const candidates = evaluateStorms(storms, zipMap);
 
@@ -44,7 +47,7 @@ async function handle(req: NextRequest): Promise<NextResponse> {
 
     return NextResponse.json({
       ok: true,
-      mock: !!mock,
+      mock: allowMock,
       stormsSeen: storms.length,
       candidates: candidates.length,
       created: persisted.created,

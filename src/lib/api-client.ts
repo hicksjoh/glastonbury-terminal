@@ -102,6 +102,20 @@ export async function apiFetch<T>(
   const config = API_CONFIGS[api];
   if (!config) throw new Error(`Unknown API: ${api}`);
 
+  // P0-1 (hardening/p0-codex-fixes): FMP migrated everything to `/stable` and
+  // returns 403 "Legacy Endpoint" on `/api/v3/*` and `/api/v4/*`. The
+  // `apiFetchWithFallback` wrapper used to swallow that 403 and serve `[]` as
+  // if it were live — making whole product areas (scanner, macro, earnings,
+  // insider) silently fall back. Throw hard so any new regression surfaces in
+  // logs/Sentry instead of becoming a "the page is empty" mystery.
+  if (api === 'fmp' && /^\/(v3|v4)(\/|$)/i.test(endpoint)) {
+    throw new ApiError(
+      api,
+      endpoint,
+      'FMP /v3 and /v4 paths are 403 on the current plan. Use src/lib/fmp-client.ts /stable wrappers instead.',
+    );
+  }
+
   const { cacheTtlMs = 60_000, timeoutMs = 10_000, retries = 1 } = options;
   const cacheKey = `${api}:${endpoint}:${JSON.stringify(params)}`;
 
@@ -215,12 +229,34 @@ export async function apiFetch<T>(
   // All retries failed
   const latencyMs = Date.now() - start;
   recordApiFailure(config.provider);
+  // P0-3 (hardening/p0-codex-fixes): only log the *class* of error, not the
+  // upstream body text. Before the fix, a buffer with full provider error
+  // bodies (Alpaca rejection JSON, FMP "Legacy Endpoint", Anthropic 401
+  // messages, etc.) was exposed via the public /api/health endpoint.
+  // /api/health is now session-gated AND drops `recentApiCalls`, so this
+  // is defense-in-depth: even an internal caller of getRecentApiLogs no
+  // longer sees raw upstream text. Sentry has the full message.
   logApiCall({
     api, endpoint, status: 'error', latencyMs,
-    error: lastError?.message, timestamp: new Date().toISOString(),
+    error: redactErrorMessage(lastError?.message),
+    timestamp: new Date().toISOString(),
   });
 
   throw new ApiError(api, endpoint, lastError?.message ?? 'Unknown error');
+}
+
+/**
+ * Reduce an arbitrary upstream error message down to its status code (or a
+ * generic class) so the ring buffer never carries provider response bodies.
+ */
+function redactErrorMessage(msg: string | undefined): string | undefined {
+  if (!msg) return msg;
+  const httpMatch = msg.match(/^HTTP (\d{3})/);
+  if (httpMatch) return `HTTP ${httpMatch[1]}`;
+  if (/abort|timeout/i.test(msg)) return 'timeout';
+  if (/circuit/i.test(msg)) return 'circuit_open';
+  if (/rate limit/i.test(msg)) return 'rate_limited';
+  return 'upstream_error';
 }
 
 export class ApiError extends Error {

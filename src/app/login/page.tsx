@@ -1,13 +1,29 @@
 'use client';
 import { useState } from 'react';
-import { useRouter } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import Image from 'next/image';
+
+// Honor `?next=<path>` so OAuth redirects (and any future "log in to
+// continue" flows) land back where the user started instead of bouncing
+// to the dashboard. We restrict `next` to same-origin paths to avoid
+// open-redirect into a phishing site.
+function safeNextPath(raw: string | null): string {
+  if (!raw) return '/';
+  // Must start with "/" and not "//" or "/\" (which browsers treat as
+  // protocol-relative URLs to other hosts).
+  if (!raw.startsWith('/') || raw.startsWith('//') || raw.startsWith('/\\')) {
+    return '/';
+  }
+  return raw;
+}
 
 export default function LoginPage() {
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const nextPath = safeNextPath(searchParams?.get('next') ?? null);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -19,7 +35,7 @@ export default function LoginPage() {
       body: JSON.stringify({ password }),
     });
     if (res.ok) {
-      router.push('/');
+      router.push(nextPath);
     } else {
       setError('Invalid access code');
     }

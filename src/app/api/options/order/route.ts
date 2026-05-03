@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { rateLimit } from '@/lib/rate-limit';
-
-const ALPACA_BASE_URL = process.env.ALPACA_BASE_URL || 'https://paper-api.alpaca.markets';
+import { ALPACA_BASE_URL, assertPaperTrading } from '@/lib/alpaca';
+import { singleOrderSchema } from '@/lib/order-schemas';
+import { publicError, validationError, captureAndPublic } from '@/lib/api-error';
 
 const alpacaHeaders = {
   'APCA-API-KEY-ID': process.env.ALPACA_API_KEY!,
@@ -11,77 +12,73 @@ const alpacaHeaders = {
 
 export async function POST(req: NextRequest) {
   const { allowed } = rateLimit('options-order', 10, 60000);
-  if (!allowed) return NextResponse.json({ error: 'Too many order requests' }, { status: 429 });
+  if (!allowed) return publicError('RATE_LIMITED', 'Too many order requests');
 
+  let parsed;
   try {
-    const body = await req.json();
-    const { symbol, qty, side, type, time_in_force, limit_price, stop_price } = body;
+    const raw = await req.json();
+    // P0-4 (hardening/p0-codex-fixes): zod parse before any property reads
+    // so NaN qty, lowercase symbols, and unknown fields die at the boundary.
+    const result = singleOrderSchema.safeParse(raw);
+    if (!result.success) return validationError(result.error);
+    parsed = result.data;
+  } catch (err) {
+    return captureAndPublic(err, 'VALIDATION_ERROR', 'Invalid JSON body');
+  }
 
-    // Validate required fields
-    if (!symbol || !qty || !side || !type) {
-      return NextResponse.json(
-        { error: 'Missing required fields: symbol, qty, side, type' },
-        { status: 400 }
-      );
-    }
+  // Build Alpaca order payload from validated input.
+  const order: Record<string, unknown> = {
+    symbol: parsed.symbol,
+    qty: parsed.qty,
+    side: parsed.side,
+    type: parsed.type,
+    time_in_force: parsed.time_in_force,
+  };
+  if (parsed.limit_price !== undefined) order.limit_price = parsed.limit_price;
+  if (parsed.stop_price !== undefined) order.stop_price = parsed.stop_price;
 
-    if (!['buy', 'sell'].includes(side)) {
-      return NextResponse.json({ error: 'Side must be "buy" or "sell"' }, { status: 400 });
-    }
+  // Defense-in-depth: hard-block any attempt to submit to a non-paper host.
+  try {
+    assertPaperTrading();
+  } catch (lockErr) {
+    return captureAndPublic(lockErr, 'INTERNAL_ERROR', 'Paper-trading lock engaged');
+  }
 
-    if (!['market', 'limit', 'stop', 'stop_limit'].includes(type)) {
-      return NextResponse.json({ error: 'Invalid order type' }, { status: 400 });
-    }
-
-    // Build Alpaca order payload
-    const order: Record<string, unknown> = {
-      symbol,
-      qty: parseInt(qty),
-      side,
-      type,
-      time_in_force: time_in_force || 'day',
-    };
-
-    if ((type === 'limit' || type === 'stop_limit') && limit_price) {
-      order.limit_price = parseFloat(limit_price);
-    }
-
-    if ((type === 'stop' || type === 'stop_limit') && stop_price) {
-      order.stop_price = parseFloat(stop_price);
-    }
-
-    // Submit to Alpaca
-    const res = await fetch(`${ALPACA_BASE_URL}/v2/orders`, {
+  let res: Response;
+  try {
+    res = await fetch(`${ALPACA_BASE_URL}/v2/orders`, {
       method: 'POST',
       headers: alpacaHeaders,
       body: JSON.stringify(order),
     });
-
-    if (!res.ok) {
-      const errorText = await res.text();
-      console.error('Alpaca options order error:', res.status, errorText);
-      return NextResponse.json(
-        { error: `Order rejected: ${errorText}` },
-        { status: res.status }
-      );
-    }
-
-    const result = await res.json();
-
-    return NextResponse.json({
-      success: true,
-      order: {
-        id: result.id,
-        symbol: result.symbol,
-        qty: result.qty,
-        side: result.side,
-        type: result.type,
-        status: result.status,
-        submitted_at: result.submitted_at,
-      },
-    });
   } catch (err) {
-    console.error('Options order error:', err);
-    return NextResponse.json({ error: 'Failed to submit order' }, { status: 500 });
+    return captureAndPublic(err, 'UPSTREAM_UNAVAILABLE');
   }
+
+  if (!res.ok) {
+    // Read the body for Sentry so we can debug, but DO NOT echo it back.
+    // Before this fix, we returned `Order rejected: ${errorText}` straight
+    // to the client — leaking Alpaca internals (account ID, position state).
+    const errorText = await res.text().catch(() => '<no body>');
+    return captureAndPublic(
+      new Error(`Alpaca order rejected: HTTP ${res.status}: ${errorText.slice(0, 500)}`),
+      'ORDER_REJECTED',
+      undefined,
+      res.status === 422 ? 422 : 502,
+    );
+  }
+
+  const result = await res.json();
+  return NextResponse.json({
+    success: true,
+    order: {
+      id: result.id,
+      symbol: result.symbol,
+      qty: result.qty,
+      side: result.side,
+      type: result.type,
+      status: result.status,
+      submitted_at: result.submitted_at,
+    },
+  });
 }

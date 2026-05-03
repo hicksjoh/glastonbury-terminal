@@ -3,6 +3,7 @@
 
 import { BaseAgent, type AgentTask, type AgentResult, AgentRegistry } from './agent-framework';
 import { apiFetchWithFallback } from '../api-client';
+import { getMarketGainers, getMarketLosers } from '../fmp-client';
 
 class MarketAgentImpl extends BaseAgent {
   readonly name = 'MarketAgent';
@@ -28,15 +29,15 @@ class MarketAgentImpl extends BaseAgent {
       const change = quote.d ?? 0;
       const changePct = quote.dp ?? 0;
 
-      // Get market breadth from FMP
-      const [gainersRes, losersRes] = await Promise.all([
-        apiFetchWithFallback<unknown[]>('fmp', '/v3/stock_market/gainers', {}, [], { cacheTtlMs: 5 * 60 * 1000 }),
-        apiFetchWithFallback<unknown[]>('fmp', '/v3/stock_market/losers', {}, [], { cacheTtlMs: 5 * 60 * 1000 }),
+      // P0-1: market breadth via /stable wrappers (was /v3/stock_market/*).
+      const [gainersList, losersList] = await Promise.all([
+        getMarketGainers(),
+        getMarketLosers(),
       ]);
-      if (gainersRes._meta.live) sources.push('fmp');
+      if (gainersList.length > 0) sources.push('fmp');
 
-      const gainers = Array.isArray(gainersRes.data) ? gainersRes.data.length : 0;
-      const losers = Array.isArray(losersRes.data) ? losersRes.data.length : 0;
+      const gainers = gainersList.length;
+      const losers = losersList.length;
 
       return {
         agent: this.name,

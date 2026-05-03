@@ -2,6 +2,7 @@ import { createServiceClient } from '@/lib/supabase';
 import { buildMarketContext } from '@/lib/market-intel';
 import { getRegimeUIConfig, mapApiRegime, regimeContextString } from '@/lib/ui-regime-adapter';
 import { getQuote } from '@/lib/fmp-client';
+import { loadWealthFacts, formatWealthFactsBlock } from '@/lib/wealth-facts';
 
 // ── Common words to exclude from symbol detection ────────────────────────────
 export const COMMON_WORDS = new Set([
@@ -912,7 +913,10 @@ export async function buildFullPortfolioContext(opts: {
     contextParts.push(`\nGLASTONBURY TERMINAL DATABASE:\n${supabaseContext}`);
   }
 
-  contextParts.push(`\nSTATIC HOLDINGS (not in brokerage):\n  - CR3 American Exteriors equity: ~$720,000 (23 territories)\n  - Anthropic RSUs: 5,749 shares @ $259.14 grant (quarterly vesting, 4 years)\n  - Miami Shores property: ~$580,000`);
+  // NOTE: prior versions hardcoded a "STATIC HOLDINGS" block here with
+  // CR3 equity, Anthropic RSUs, and Miami Shores property values. Those
+  // numbers now live in the wealth_facts table (see migration 006) and are
+  // prepended below as the WEALTH FACTS dynamic block.
 
   if (trackRecord) contextParts.push(trackRecord);
   if (conversationMemory) contextParts.push(conversationMemory);
@@ -1000,7 +1004,23 @@ export async function buildFullPortfolioContext(opts: {
     // Non-critical — memory pins are supplemental context
   }
 
-  const portfolioContext = contextParts.join('\n');
+  // ── Wealth Facts (Wave 4) ────────────────────────────────────────────
+  // Pulls live numeric facts from the wealth_facts table and prepends a
+  // formatted block so the once-cached system prompt can stay slim while
+  // the actual numbers refresh per-request. See src/lib/wealth-facts.ts
+  // and supabase/migrations/006_wealth_facts.sql.
+  let wealthFactsBlock = '';
+  try {
+    const facts = await loadWealthFacts(supabase);
+    wealthFactsBlock = formatWealthFactsBlock(facts, new Date());
+  } catch {
+    // Non-critical — Keisha falls back to the qualitative description in
+    // her system prompt if the wealth_facts table is unavailable.
+  }
+
+  const portfolioContext = wealthFactsBlock
+    ? `${wealthFactsBlock}\n${contextParts.join('\n')}`
+    : contextParts.join('\n');
 
   return { portfolioContext, gexRegime, mentionedSymbols, supabase };
 }

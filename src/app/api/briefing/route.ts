@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server';
 import { generateBriefing } from '@/lib/claude';
 import { createServiceClient } from '@/lib/supabase';
 import { buildMarketContext } from '@/lib/market-intel';
-import { rateLimit } from '@/lib/rate-limit';
+import { checkRateLimitDurable } from '@/lib/rate-limit-durable';
 
 async function getBriefingContext(): Promise<string> {
   const parts: string[] = [];
@@ -156,7 +156,8 @@ async function getBriefingContext(): Promise<string> {
 }
 
 export async function GET() {
-  const { allowed } = rateLimit('briefing', 5, 60000);
+  // P0-6: Claude briefing — 5 / min durable.
+  const { allowed } = await checkRateLimitDurable('briefing', 'global', 5, 60);
   if (!allowed) return NextResponse.json({ error: 'Too many requests' }, { status: 429 });
 
   try {

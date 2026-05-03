@@ -1,7 +1,7 @@
 import { NextRequest } from 'next/server';
 import { anthropic, CLAUDE_MODEL_PRIMARY, CLAUDE_MODEL_FALLBACK } from '@/lib/claude';
 import { createServiceClient } from '@/lib/supabase';
-import { rateLimit } from '@/lib/rate-limit';
+import { checkRateLimitDurable, getRateLimitIdentity } from '@/lib/rate-limit-durable';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -13,7 +13,9 @@ const sseEncode = (o: unknown) => `data: ${JSON.stringify(o)}\n\n`;
 
 // POST /api/earnings/live/session/[id]/chat — SSE answer grounded in transcript
 export async function POST(req: NextRequest, ctx: { params: { id: string } }) {
-  const { allowed } = rateLimit('earnings-chat', 30, 60_000);
+  // P0-6: Claude SSE on every Q during a live earnings call, durable + session-keyed.
+  const { key } = await getRateLimitIdentity(req);
+  const { allowed } = await checkRateLimitDurable('earnings-chat', key, 30, 60);
   if (!allowed) return new Response('Too many requests', { status: 429 });
 
   const sessionId = ctx.params.id;

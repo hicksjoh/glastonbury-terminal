@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getAccount, getPositions } from '@/lib/alpaca';
 import { createServiceClient } from '@/lib/supabase';
 import { pingHealthcheck } from '@/lib/healthchecks';
+import { verifySessionJwt, SESSION_COOKIE_NAME } from '@/lib/session';
 
 const HC_SLUG = 'portfolio-snapshot';
 
@@ -116,11 +117,13 @@ export async function POST(req: NextRequest) {
 }
 
 // ─── GET: Retrieve historical snapshots for charting ──────
-// NOTE: This route is in PUBLIC_API_ROUTES for cron POST access,
-// so GET must manually verify auth (cookie present = passed middleware on page load)
+// NOTE: This route is in PUBLIC_API_ROUTES so middleware can let cron POSTs
+// through (they auth via CRON_SECRET below). For human GET traffic we therefore
+// must verify the session JWT here ourselves — middleware never sees us.
 export async function GET(req: NextRequest) {
-  const authCookie = req.cookies.get('gt-auth');
-  if (!authCookie?.value) {
+  const authCookie = req.cookies.get(SESSION_COOKIE_NAME);
+  const session = await verifySessionJwt(authCookie?.value);
+  if (!session) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 

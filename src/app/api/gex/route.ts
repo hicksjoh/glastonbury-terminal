@@ -4,6 +4,7 @@ import {
   calculateVannaExposure, calculateCharmExposure, calculateGammaFlipLevel,
 } from '@/lib/gex-engine';
 import { apiFetchWithFallback, type ApiResult } from '@/lib/api-client';
+import { getQuote } from '@/lib/fmp-client';
 import { buildMeta, type ApiMeta } from '@/lib/api-meta';
 
 function roundTo(n: number, d: number): number {
@@ -209,14 +210,13 @@ async function fetchSpotPrice(symbol: string): Promise<ApiResult<number>> {
     SPY: 570, QQQ: 480, IWM: 210, AAPL: 230, TSLA: 270,
     NVDA: 120, AMZN: 200, MSFT: 420, META: 590, GOOGL: 165,
   };
-  const result = await apiFetchWithFallback<{ price: number }[]>(
-    'fmp', `/v3/quote/${encodeURIComponent(symbol)}`, {}, [],
-    { cacheTtlMs: 60 * 1000 },
-  );
-  const price = Array.isArray(result.data) && result.data[0]?.price
-    ? result.data[0].price
-    : defaults[symbol] ?? 100;
-  return { data: price, _meta: result._meta };
+  // P0-1: /v3/quote/{symbol} → /stable/quote?symbol= via fmp-client.
+  const quote = await getQuote(symbol);
+  const price = quote?.price ?? defaults[symbol] ?? 100;
+  return {
+    data: price,
+    _meta: buildMeta({ source: 'fmp', live: quote !== null }),
+  };
 }
 
 // ---------------------------------------------------------------------------

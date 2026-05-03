@@ -1,39 +1,15 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { apiFetchWithFallback } from '@/lib/api-client';
+import {
+  getInsiderTrades,
+  getLatestInsiderTrades,
+  getSenateTrades,
+  getHouseTrades,
+  getLatestSenateTrades,
+  getLatestHouseTrades,
+  type InsiderTradingRow as InsiderTradeRaw,
+  type CongressTradeRow as SenateTrade,
+} from '@/lib/fmp-client';
 import { buildMeta, type ApiMeta } from '@/lib/api-meta';
-
-interface InsiderTradeRaw {
-  symbol?: string;
-  reportingName?: string;
-  owner?: string;
-  typeOfOwner?: string;
-  acquistionOrDisposition?: string;
-  transactionType?: string;
-  securitiesTransacted?: number;
-  shares?: number;
-  price?: number;
-  transactionDate?: string;
-  filingDate?: string;
-  link?: string;
-  [k: string]: unknown;
-}
-
-interface SenateTrade {
-  ticker?: string;
-  symbol?: string;
-  representative?: string;
-  firstName?: string;
-  lastName?: string;
-  party?: string;
-  district?: string;
-  type?: string;
-  transactionType?: string;
-  amount?: string;
-  range?: string;
-  transactionDate?: string;
-  disclosureDate?: string;
-  [k: string]: unknown;
-}
 
 export async function GET(req: NextRequest) {
   try {
@@ -45,50 +21,32 @@ export async function GET(req: NextRequest) {
     cutoff.setDate(cutoff.getDate() - days);
     const metas: ApiMeta[] = [];
 
-    // Fetch insider trades
+    // FMP migration (P0-1): /v4/insider-trading, /v4/senate-*, and
+    // /v4/insider-trading-rss-feed are 403 on the current plan. All calls now
+    // go through fmp-client.ts /stable wrappers.
     let insiderTrades: ReturnType<typeof parseInsiderTrades> = [];
     if (type === 'all' || type === 'insider') {
-      if (symbol) {
-        const res = await apiFetchWithFallback<InsiderTradeRaw[]>(
-          'fmp', '/v4/insider-trading', { symbol, limit: '100' }, [],
-          { cacheTtlMs: 15 * 60 * 1000 },
-        );
-        insiderTrades = parseInsiderTrades(res.data, cutoff, symbol);
-        metas.push(res._meta);
-      } else {
-        const res = await apiFetchWithFallback<InsiderTradeRaw[]>(
-          'fmp', '/v4/insider-trading-rss-feed', { limit: '50' }, [],
-          { cacheTtlMs: 15 * 60 * 1000 },
-        );
-        insiderTrades = parseInsiderTrades(res.data, cutoff, '');
-        metas.push(res._meta);
-      }
+      const rows = symbol
+        ? await getInsiderTrades(symbol, 100)
+        : await getLatestInsiderTrades(50);
+      insiderTrades = parseInsiderTrades(rows, cutoff, symbol);
+      metas.push(buildMeta({ source: 'fmp', live: rows.length > 0 }));
     }
 
-    // Fetch congressional trades
     let congressTrades: ReturnType<typeof parseCongressTrades> = [];
     if (type === 'all' || type === 'congress') {
-      if (symbol) {
-        const [senateRes, disclosureRes] = await Promise.all([
-          apiFetchWithFallback<SenateTrade[]>('fmp', '/v4/senate-trading', { symbol }, [], { cacheTtlMs: 60 * 60 * 1000 }),
-          apiFetchWithFallback<SenateTrade[]>('fmp', '/v4/senate-disclosure', { symbol }, [], { cacheTtlMs: 60 * 60 * 1000 }),
-        ]);
-        congressTrades = [
-          ...parseCongressTrades(senateRes.data, cutoff, 'senate', symbol),
-          ...parseCongressTrades(disclosureRes.data, cutoff, 'house', symbol),
-        ];
-        metas.push(senateRes._meta, disclosureRes._meta);
-      } else {
-        const [senateRes, disclosureRes] = await Promise.all([
-          apiFetchWithFallback<SenateTrade[]>('fmp', '/v4/senate-trading-rss-feed', {}, [], { cacheTtlMs: 60 * 60 * 1000 }),
-          apiFetchWithFallback<SenateTrade[]>('fmp', '/v4/senate-disclosure-rss-feed', {}, [], { cacheTtlMs: 60 * 60 * 1000 }),
-        ]);
-        congressTrades = [
-          ...parseCongressTrades(senateRes.data, cutoff, 'senate', ''),
-          ...parseCongressTrades(disclosureRes.data, cutoff, 'house', ''),
-        ];
-        metas.push(senateRes._meta, disclosureRes._meta);
-      }
+      const [senate, house] = await Promise.all([
+        symbol ? getSenateTrades(symbol) : getLatestSenateTrades(),
+        symbol ? getHouseTrades(symbol) : getLatestHouseTrades(),
+      ]);
+      congressTrades = [
+        ...parseCongressTrades(senate, cutoff, 'senate', symbol),
+        ...parseCongressTrades(house, cutoff, 'house', symbol),
+      ];
+      metas.push(
+        buildMeta({ source: 'fmp', live: senate.length > 0 }),
+        buildMeta({ source: 'fmp', live: house.length > 0 }),
+      );
     }
 
     // Generate signals

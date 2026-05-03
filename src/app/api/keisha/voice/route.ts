@@ -6,7 +6,7 @@ import {
   CLAUDE_MODEL_FALLBACK,
   CLAUDE_MODEL_FAST,
 } from '@/lib/claude';
-import { rateLimit } from '@/lib/rate-limit';
+import { checkRateLimitDurable, getRateLimitIdentity } from '@/lib/rate-limit-durable';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -44,7 +44,9 @@ function openElevenLabsSocket(): WebSocket {
 }
 
 export async function POST(req: NextRequest) {
-  const { allowed } = rateLimit('keisha-voice', 30, 60_000);
+  // P0-6: durable, session-keyed limit (Claude + ElevenLabs both bill).
+  const { key } = await getRateLimitIdentity(req);
+  const { allowed } = await checkRateLimitDurable('keisha-voice', key, 30, 300);
   if (!allowed) return new Response('Too many requests', { status: 429 });
 
   if (!process.env.ELEVENLABS_API_KEY) {

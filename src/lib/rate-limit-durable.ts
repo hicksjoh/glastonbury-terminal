@@ -19,8 +19,10 @@
  * outage doesn't lock the user out entirely.
  */
 
+import type { NextRequest } from 'next/server';
 import { createServiceClient } from '@/lib/supabase';
 import { rateLimit as inMemoryRateLimit } from '@/lib/rate-limit';
+import { verifySessionJwt, SESSION_COOKIE_NAME } from '@/lib/session';
 
 export type DurableRateLimitResult = {
   allowed: boolean;
@@ -28,6 +30,40 @@ export type DurableRateLimitResult = {
   reset_at: string | null;
   source: 'durable' | 'memory-fallback';
 };
+
+/**
+ * Pull the most identifying key out of an authenticated request — the
+ * session subject if present, falling back to a forwarded IP. Used by the
+ * durable limiter so the same browser hitting two warm Vercel instances
+ * counts against the same bucket.
+ *
+ * Vercel sets `x-forwarded-for` and `x-real-ip` on every inbound request
+ * (the original `req.ip` was removed in Next 14.1+). We coalesce both.
+ */
+export async function getRateLimitIdentity(req: NextRequest): Promise<{
+  key: string;
+  source: 'session' | 'ip' | 'unknown';
+}> {
+  const cookie = req.cookies.get(SESSION_COOKIE_NAME);
+  const session = await verifySessionJwt(cookie?.value);
+  if (session?.sub) {
+    return { key: `sub:${session.sub}`, source: 'session' };
+  }
+  const xff = req.headers.get('x-forwarded-for');
+  const ip = xff?.split(',')[0]?.trim() || req.headers.get('x-real-ip') || '';
+  if (ip) return { key: `ip:${ip}`, source: 'ip' };
+  return { key: 'unknown', source: 'unknown' };
+}
+
+/**
+ * Synchronous IP-only resolver — for routes that pre-date authentication
+ * (login) and don't need the JWT round-trip.
+ */
+export function getIpKey(req: NextRequest): string {
+  const xff = req.headers.get('x-forwarded-for');
+  const ip = xff?.split(',')[0]?.trim() || req.headers.get('x-real-ip') || '';
+  return ip ? `ip:${ip}` : 'ip:unknown';
+}
 
 export async function checkRateLimitDurable(
   endpoint: string,

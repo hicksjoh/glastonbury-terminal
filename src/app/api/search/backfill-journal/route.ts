@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { rateLimit } from '@/lib/rate-limit';
+import { checkRateLimitDurable } from '@/lib/rate-limit-durable';
 import { createServiceClient } from '@/lib/supabase';
 import { indexDoc } from '@/lib/doc-indexer';
 import { isEmbeddingConfigured } from '@/lib/embeddings';
@@ -35,7 +35,8 @@ function buildContent(row: JournalRow): string {
 
 // POST /api/search/backfill-journal  — re-index every trade_journal row as doc_chunks.
 export async function POST(_req: NextRequest) {
-  const { allowed } = rateLimit('backfill-journal', 3, 300_000);
+  // P0-6: bulk embeddings — 3 / 5 min global durable cap.
+  const { allowed } = await checkRateLimitDurable('backfill-journal', 'global', 3, 300);
   if (!allowed) return NextResponse.json({ error: 'Too many requests' }, { status: 429 });
 
   const cfg = isEmbeddingConfigured();

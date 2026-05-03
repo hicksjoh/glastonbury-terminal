@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { analyzeRsuHedge, loadWealthSnapshot } from '@/lib/hedge/rsu-analyzer';
 import { getCached, setCache } from '@/lib/server-cache';
-import { rateLimit } from '@/lib/rate-limit';
+import { checkRateLimitDurable } from '@/lib/rate-limit-durable';
 
 // F2 — RSU concentration hedge agent (Agent Team).
 //
@@ -39,10 +39,11 @@ export async function GET() {
 }
 
 export async function POST() {
-  const { allowed } = rateLimit('hedge-rsu-analyze', 5, 60_000);
+  // P0-6: Claude multi-agent debate route. 5 / 5 min durable.
+  const { allowed } = await checkRateLimitDurable('hedge-rsu-analyze', 'global', 5, 300);
   if (!allowed) {
     return NextResponse.json(
-      { error: 'Rate limit exceeded — RSU hedge analysis is capped at 5/min' },
+      { error: 'Rate limit exceeded — RSU hedge analysis is capped at 5 / 5 min' },
       { status: 429 },
     );
   }

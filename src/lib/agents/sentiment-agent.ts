@@ -3,7 +3,7 @@
 
 import { BaseAgent, type AgentTask, type AgentResult, AgentRegistry } from './agent-framework';
 import { getSymbolSentiment, getMarketSentiment } from '../sentiment-engine';
-import { apiFetchWithFallback } from '../api-client';
+import { getLatestInsiderTrades } from '../fmp-client';
 
 class SentimentAgentImpl extends BaseAgent {
   readonly name = 'SentimentAgent';
@@ -22,30 +22,22 @@ class SentimentAgentImpl extends BaseAgent {
 
       for (const m of metas) if (m.live) sources.push(m.source);
 
-      // Get insider activity for the symbol
+      // P0-1: insider activity via /stable wrapper (was /v4/insider-trading-rss-feed).
       let insiderSignals: { type: string; count: number }[] = [];
       if (symbol) {
-        const insiderResult = await apiFetchWithFallback<unknown[]>(
-          'fmp', '/v4/insider-trading-rss-feed', { limit: '50' }, [],
-          { cacheTtlMs: 15 * 60 * 1000 },
-        );
+        const recent = await getLatestInsiderTrades(50);
+        const matching = recent.filter(t => String(t.symbol || '') === symbol);
+        const buys = matching.filter(
+          t => String(t.acquistionOrDisposition || '').toLowerCase() === 'a',
+        ).length;
+        const sells = matching.length - buys;
 
-        if (Array.isArray(insiderResult.data)) {
-          const matching = insiderResult.data.filter(
-            (t: unknown) => String((t as Record<string, unknown>).symbol || '') === symbol
-          );
-          const buys = matching.filter(
-            (t: unknown) => String((t as Record<string, unknown>).acquistionOrDisposition || '').toLowerCase() === 'a'
-          ).length;
-          const sells = matching.length - buys;
-
-          if (matching.length > 0) {
-            insiderSignals = [
-              { type: 'insider_buys', count: buys },
-              { type: 'insider_sells', count: sells },
-            ];
-            if (insiderResult._meta.live) sources.push('fmp:insider');
-          }
+        if (matching.length > 0) {
+          insiderSignals = [
+            { type: 'insider_buys', count: buys },
+            { type: 'insider_sells', count: sells },
+          ];
+          sources.push('fmp:insider');
         }
       }
 

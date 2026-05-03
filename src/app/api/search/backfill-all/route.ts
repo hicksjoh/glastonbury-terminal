@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server';
 import { createServiceClient } from '@/lib/supabase';
 import { indexDoc } from '@/lib/doc-indexer';
 import { isEmbeddingConfigured } from '@/lib/embeddings';
-import { rateLimit } from '@/lib/rate-limit';
+import { checkRateLimitDurable } from '@/lib/rate-limit-durable';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -13,7 +13,8 @@ export const maxDuration = 300;
 // into doc_chunks. One-shot backfill — call it once after configuring an embedding
 // provider to seed the corpus.
 export async function POST() {
-  const { allowed } = rateLimit('backfill-all', 2, 300_000);
+  // P0-6: bulk embeddings — 2 / 5 min global durable cap (single-user).
+  const { allowed } = await checkRateLimitDurable('backfill-all', 'global', 2, 300);
   if (!allowed) return NextResponse.json({ error: 'Too many requests' }, { status: 429 });
   if (!isEmbeddingConfigured().ready) {
     return NextResponse.json({ error: 'Embeddings unconfigured' }, { status: 503 });

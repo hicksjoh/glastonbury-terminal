@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { anthropic, CLAUDE_MODEL_FALLBACK } from '@/lib/claude';
 import { createServiceClient } from '@/lib/supabase';
-import { rateLimit } from '@/lib/rate-limit';
+import { checkRateLimitDurable, getRateLimitIdentity } from '@/lib/rate-limit-durable';
 import { getQuote } from '@/lib/fmp-client';
 
 const ALPACA_BASE_URL = process.env.ALPACA_BASE_URL || 'https://paper-api.alpaca.markets';
@@ -11,7 +11,9 @@ const ALPACA_HEADERS = {
 };
 
 export async function POST(req: NextRequest) {
-  const { allowed } = rateLimit('agent-crew', 10, 60000);
+  // P0-6: durable, session-keyed (multi-Claude-call route).
+  const { key } = await getRateLimitIdentity(req);
+  const { allowed } = await checkRateLimitDurable('agent-crew', key, 10, 300);
   if (!allowed) return NextResponse.json({ error: 'Too many requests' }, { status: 429 });
 
   try {

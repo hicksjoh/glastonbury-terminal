@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { runCoachReview, persistCoachReview } from '@/lib/coach-engine';
 import { sendResendEmail } from '@/lib/resend-client';
 import { pingHealthcheck } from '@/lib/healthchecks';
+import { cronIsAuthorized } from '@/lib/cron-auth';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -9,19 +10,15 @@ export const maxDuration = 300;
 
 const HC_SLUG = 'cron-coach-review';
 
+// Auth: this route is in middleware's PUBLIC_API_ROUTES, so it must
+// self-authenticate. See src/lib/cron-auth.ts for the full doc on
+// accepted auth modes. Fails CLOSED when CRON_SECRET is unset.
 async function handle(req: NextRequest): Promise<NextResponse> {
-  const cronSecret = process.env.CRON_SECRET;
-  if (cronSecret) {
-    const header = req.headers.get('authorization') ?? '';
-    const headerKey = req.headers.get('x-api-key') ?? '';
-    const ok = header === `Bearer ${cronSecret}` || headerKey === cronSecret;
-    const hasCookieAuth = !!req.cookies.get('gt-auth');
-    const internalKey = req.headers.get('x-internal-key') ?? '';
-    const expected = process.env.INTERNAL_API_KEY ?? '';
-    if (!ok && !hasCookieAuth && !(expected && internalKey === expected)) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-    }
-  }
+  const ok = await cronIsAuthorized(req, {
+    routeName: '/api/cron/coach-review',
+    allowInternalKey: true,
+  });
+  if (!ok) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
   await pingHealthcheck(HC_SLUG, 'start');
 

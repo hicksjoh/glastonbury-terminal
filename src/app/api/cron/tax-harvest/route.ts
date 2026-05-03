@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { runTaxHarvestScan, persistSuggestions } from '@/lib/tax-harvest-engine';
 import { sendResendEmail } from '@/lib/resend-client';
 import { pingHealthcheck } from '@/lib/healthchecks';
+import { cronIsAuthorized } from '@/lib/cron-auth';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -9,20 +10,17 @@ export const maxDuration = 120;
 
 const HC_SLUG = 'cron-tax-harvest';
 
+// Auth: this route is in middleware's PUBLIC_API_ROUTES, so it must
+// self-authenticate. See src/lib/cron-auth.ts for the full doc on
+// accepted auth modes (Bearer/x-api-key CRON_SECRET, x-internal-key
+// INTERNAL_API_KEY, signed gt-auth JWT). Fails CLOSED when CRON_SECRET
+// is unset (Codex round-2 finding).
 async function handle(req: NextRequest): Promise<NextResponse> {
-  const cronSecret = process.env.CRON_SECRET;
-  if (cronSecret) {
-    const header = req.headers.get('authorization') ?? '';
-    const headerKey = req.headers.get('x-api-key') ?? '';
-    const ok = header === `Bearer ${cronSecret}` || headerKey === cronSecret;
-    // Allow manual auth'd runs through without secret
-    const internalKey = req.headers.get('x-internal-key') ?? '';
-    const expected = process.env.INTERNAL_API_KEY ?? '';
-    const hasCookieAuth = !!req.cookies.get('gt-auth');
-    if (!ok && !hasCookieAuth && !(expected && internalKey === expected)) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-    }
-  }
+  const ok = await cronIsAuthorized(req, {
+    routeName: '/api/cron/tax-harvest',
+    allowInternalKey: true,
+  });
+  if (!ok) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
   await pingHealthcheck(HC_SLUG, 'start');
 

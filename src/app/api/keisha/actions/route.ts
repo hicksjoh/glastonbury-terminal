@@ -1,20 +1,28 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createServiceClient } from '@/lib/supabase';
-import { rateLimit } from '@/lib/rate-limit';
+import { checkRateLimitDurable, getRateLimitIdentity } from '@/lib/rate-limit-durable';
 import { sanitizeSymbol } from '@/lib/sanitize';
 import { getQuote, getProfile } from '@/lib/fmp-client';
+import { ALPACA_BASE_URL, assertPaperTrading } from '@/lib/alpaca';
+import { consumePendingOrder } from '@/lib/keisha/pending-orders';
 
 interface ActionRequest {
   action: string;
-  params: Record<string, any>;
+  params?: Record<string, any>;
+  pendingOrderId?: string;
 }
 
 export async function POST(req: NextRequest) {
-  const { allowed } = rateLimit('keisha-actions', 30, 60000);
+  // P0-6: durable session-keyed limit (places real Alpaca orders).
+  const { key } = await getRateLimitIdentity(req);
+  const { allowed } = await checkRateLimitDurable('keisha-actions', key, 30, 60);
   if (!allowed) return NextResponse.json({ error: 'Too many requests' }, { status: 429 });
 
   try {
-    const { action, params }: ActionRequest = await req.json();
+    const body = (await req.json()) as ActionRequest;
+    const action = body.action;
+    const params = body.params ?? {};
+    const pendingOrderId = body.pendingOrderId;
     const supabase = createServiceClient();
 
     switch (action) {
@@ -83,11 +91,42 @@ export async function POST(req: NextRequest) {
       }
 
       case 'place_order': {
-        const symbol = sanitizeSymbol(params.symbol || '');
-        const side = params.side?.toLowerCase();
-        const qty = parseInt(params.qty || params.quantity || params.shares);
-        const orderType = params.orderType || 'market';
-        const limitPrice = params.limitPrice ? parseFloat(params.limitPrice) : undefined;
+        // SECURITY: place_order MUST go through the pending-order store. The
+        // client never supplies the params used to submit the order — those
+        // come from the server-side row Keisha persisted when the agent
+        // proposed the trade. Without this, a logged-in client could skip
+        // the agent and POST any order body straight to Alpaca.
+        if (!pendingOrderId) {
+          return NextResponse.json(
+            { error: 'pendingOrderId is required for place_order' },
+            { status: 400 },
+          );
+        }
+
+        let storedParams: Record<string, any>;
+        try {
+          const consumed = await consumePendingOrder(supabase, pendingOrderId);
+          if (consumed.toolName !== 'place_order') {
+            return NextResponse.json(
+              { error: 'Pending order is not a place_order' },
+              { status: 400 },
+            );
+          }
+          storedParams = consumed.params;
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : 'Pending order invalid';
+          return NextResponse.json({ error: msg }, { status: 400 });
+        }
+
+        const symbol = sanitizeSymbol(String(storedParams.symbol || ''));
+        const side = String(storedParams.side || '').toLowerCase();
+        const qtyRaw = storedParams.qty ?? storedParams.quantity ?? storedParams.shares;
+        const qty = parseInt(String(qtyRaw));
+        const orderType = String(storedParams.orderType || 'market');
+        const limitPriceRaw = storedParams.limitPrice;
+        const limitPrice = limitPriceRaw !== undefined && limitPriceRaw !== null
+          ? parseFloat(String(limitPriceRaw))
+          : undefined;
 
         if (!symbol || !side || !qty || isNaN(qty)) {
           return NextResponse.json({ error: 'Missing symbol, side, or quantity' }, { status: 400 });
@@ -97,19 +136,30 @@ export async function POST(req: NextRequest) {
           return NextResponse.json({ error: 'Side must be buy or sell' }, { status: 400 });
         }
 
-        const baseUrl = process.env.ALPACA_BASE_URL || 'https://paper-api.alpaca.markets';
         const orderBody: any = {
           symbol,
           qty: qty.toString(),
           side,
           type: orderType,
-          time_in_force: params.timeInForce || 'day',
+          time_in_force: String(storedParams.timeInForce || 'day'),
         };
         if (orderType === 'limit' && limitPrice) {
           orderBody.limit_price = limitPrice.toString();
         }
 
-        const res = await fetch(`${baseUrl}/v2/orders`, {
+        // Defense-in-depth: hard-block any attempt to submit to a non-paper host.
+        try {
+          assertPaperTrading();
+        } catch (lockErr) {
+          const msg = lockErr instanceof Error ? lockErr.message : 'paper-trading lock engaged';
+          console.error('Keisha place_order blocked by paper-trading lock:', msg);
+          return NextResponse.json(
+            { error: `Paper-trading lock engaged: ${msg}` },
+            { status: 500 }
+          );
+        }
+
+        const res = await fetch(`${ALPACA_BASE_URL}/v2/orders`, {
           method: 'POST',
           headers: {
             'APCA-API-KEY-ID': process.env.ALPACA_API_KEY || '',
