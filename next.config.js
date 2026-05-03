@@ -42,6 +42,22 @@ const nextConfig = {
   async headers() {
     return [{ source: '/(.*)', headers: securityHeaders }];
   },
+  // App Router excludes folders starting with a dot, so /.well-known/* can't
+  // be served from app/.well-known/. Rewrite to internal /api/wellknown/*
+  // routes that produce the same JSON. This is the only way MCP clients
+  // (Claude.app, MCP Inspector) can discover our OAuth metadata.
+  async rewrites() {
+    return [
+      {
+        source: '/.well-known/oauth-authorization-server',
+        destination: '/api/wellknown/oauth-authorization-server',
+      },
+      {
+        source: '/.well-known/oauth-protected-resource',
+        destination: '/api/wellknown/oauth-protected-resource',
+      },
+    ];
+  },
 };
 
 // Sentry wrapper. If SENTRY_AUTH_TOKEN + SENTRY_ORG + SENTRY_PROJECT are
