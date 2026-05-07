@@ -19,6 +19,7 @@ column is the equivalent local time during DST (subtract 1h for EST winter).
 | `/api/cron/tax-harvest` | `0 0 * * 1` | 8:00 PM Sun | `cron-tax-harvest` | unique index per week | Tax harvest scan · INSERT suggestions · Resend email |
 | `/api/cron/coach-review` | `0 1 * * 1` | 9:00 PM Sun | `cron-coach-review` | unique per weekOf | Anthropic Opus call · INSERT review · Resend email |
 | `/api/cron/weekly-report` | `0 23 * * 0` | 7:00 PM Sun | `weekly-report` | ✅ p1-4 | INSERT snapshot · Resend email |
+| `/api/cron/slo-roundup` | `0 21 * * 5` | 5:00 PM Fri | `slo-roundup` | ✅ p1-4 (per-week) | Aggregate SLO counters · Resend email |
 
 ## Healthchecks.io setup (one-time)
 
@@ -41,6 +42,7 @@ isn't set, it silently no-ops. To activate:
    | `cron-tax-harvest` | 7 days | 4 hours | Email |
    | `cron-coach-review` | 7 days | 4 hours | Email |
    | `weekly-report` | 7 days | 4 hours | Email |
+   | `slo-roundup` | 7 days | 4 hours | Email |
 
 ## Why these specific schedules
 

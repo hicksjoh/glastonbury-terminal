@@ -37,6 +37,10 @@
     {
       "path": "/api/cron/prediction-snapshot",
       "schedule": "0 13 * * *"
+    },
+    {
+      "path": "/api/cron/slo-roundup",
+      "schedule": "0 21 * * 5"
     }
   ]
 }
