@@ -6,6 +6,7 @@ import { verifyS256 } from '@/lib/oauth/pkce';
 import { createAccessToken } from '@/lib/oauth/tokens';
 import { checkRateLimitDurable, getRateLimitIdentity } from '@/lib/rate-limit-durable';
 import { loggerFor } from '@/lib/request-id';
+import { readBoundedText, BodyTooLargeError, BODY_LIMIT } from '@/lib/bounded-body';
 
 // RFC 6749 §3.2 Token Endpoint, §4.1.3 Access Token Request.
 //
@@ -46,9 +47,12 @@ function tokenError(error: string, description: string, status = 400): NextRespo
 async function readParams(req: NextRequest): Promise<Record<string, string>> {
   const ctype = (req.headers.get('content-type') ?? '').toLowerCase();
   const out: Record<string, string> = {};
+  // p6-2: read at most 8KB of body — OAuth params are ~1KB total even with a
+  // generous PKCE verifier. Throws BodyTooLargeError; caller handles 413.
+  const text = await readBoundedText(req, BODY_LIMIT.SMALL);
   if (ctype.includes('application/json')) {
     try {
-      const body = (await req.json()) as Record<string, unknown>;
+      const body = JSON.parse(text) as Record<string, unknown>;
       for (const [k, v] of Object.entries(body)) {
         if (typeof v === 'string') out[k] = v;
       }
@@ -56,10 +60,9 @@ async function readParams(req: NextRequest): Promise<Record<string, string>> {
       /* fall through */
     }
   } else {
-    const form = await req.formData();
-    form.forEach((v, k) => {
-      if (typeof v === 'string') out[k] = v;
-    });
+    // application/x-www-form-urlencoded — parse manually so we don't reread the body.
+    const params = new URLSearchParams(text);
+    params.forEach((v, k) => { out[k] = v; });
   }
   return out;
 }
@@ -74,7 +77,16 @@ export async function POST(req: NextRequest) {
     return tokenError('rate_limited', 'Too many token requests', 429);
   }
 
-  const params = await readParams(req);
+  let params: Record<string, string>;
+  try {
+    params = await readParams(req);
+  } catch (err) {
+    if (err instanceof BodyTooLargeError) {
+      log.warn({ limit: err.limit }, 'token body too large');
+      return tokenError('invalid_request', 'body too large', 413);
+    }
+    return tokenError('invalid_request', 'malformed body');
+  }
 
   if (params.grant_type !== 'authorization_code') {
     return tokenError('unsupported_grant_type', 'Only authorization_code is supported');

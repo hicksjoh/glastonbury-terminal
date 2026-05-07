@@ -4,6 +4,7 @@ import { isAllowedRedirectUri, registerClient } from '@/lib/oauth/clients';
 import { checkRateLimitDurable, getRateLimitIdentity } from '@/lib/rate-limit-durable';
 import { safeSecretEqual } from '@/lib/safe-compare';
 import { verifySessionJwt, SESSION_COOKIE_NAME } from '@/lib/session';
+import { readBoundedJson, BodyTooLargeError, BODY_LIMIT } from '@/lib/bounded-body';
 
 // RFC 7591 OAuth 2.0 Dynamic Client Registration.
 //
@@ -114,8 +115,17 @@ export async function POST(req: NextRequest) {
 
   let body: RegisterBody;
   try {
-    body = (await req.json()) as RegisterBody;
-  } catch {
+    // p6-2: cap RFC 7591 client metadata at 8KB. Real Claude.app registration
+    // bodies are ~500 bytes; anything bigger is either a probe or an attempt
+    // to fill oauth_clients.metadata with megabytes of junk.
+    body = await readBoundedJson<RegisterBody>(req, BODY_LIMIT.SMALL);
+  } catch (err) {
+    if (err instanceof BodyTooLargeError) {
+      return NextResponse.json(
+        { error: 'payload_too_large', error_description: `body exceeds ${err.limit} bytes` },
+        { status: 413, headers: { 'Access-Control-Allow-Origin': '*' } },
+      );
+    }
     return bad('Body must be JSON');
   }
 

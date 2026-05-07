@@ -5,6 +5,7 @@ import { verifySessionJwt, SESSION_COOKIE_NAME } from '@/lib/session';
 import { checkRateLimitDurable } from '@/lib/rate-limit-durable';
 import { publicError, validationError, captureAndPublic } from '@/lib/api-error';
 import { loggerFor } from '@/lib/request-id';
+import { readBoundedJson, BodyTooLargeError, BODY_LIMIT } from '@/lib/bounded-body';
 
 // P0-5 (hardening/p0-codex-fixes).
 //
@@ -162,7 +163,7 @@ export async function DELETE(req: NextRequest) {
 
   let parsed;
   try {
-    const raw = await req.json();
+    const raw = await readBoundedJson(req, BODY_LIMIT.TINY);
     const result = deleteSchema.safeParse(raw);
     if (!result.success) {
       log.warn({ issue_count: result.error.issues.length }, 'push unsubscribe validation failed');
@@ -170,6 +171,10 @@ export async function DELETE(req: NextRequest) {
     }
     parsed = result.data;
   } catch (err) {
+    if (err instanceof BodyTooLargeError) {
+      log.warn({ limit: err.limit }, 'push unsubscribe body too large');
+      return publicError('VALIDATION_ERROR', 'Payload too large', 413);
+    }
     return captureAndPublic(err, 'VALIDATION_ERROR', 'Invalid JSON body', undefined, { request_id, route: 'push/subscribe' });
   }
 

@@ -7,6 +7,7 @@ import {
   SESSION_MAX_AGE_SECONDS,
 } from '@/lib/session';
 import { loggerFor } from '@/lib/request-id';
+import { readBoundedJson, BodyTooLargeError, BODY_LIMIT } from '@/lib/bounded-body';
 
 function safeCompare(a: string, b: string): boolean {
   const bufA = Buffer.from(a);
@@ -35,7 +36,11 @@ export async function POST(req: NextRequest) {
   }
 
   try {
-    const { password } = await req.json();
+    // p6-2: cap body at 1KB. The legitimate payload is { password: <string> },
+    // realistically < 200 bytes. Anything bigger is either a probe or an
+    // attempt to OOM the function on an unauth public route.
+    const body = await readBoundedJson<{ password?: unknown }>(req, BODY_LIMIT.TINY);
+    const { password } = body;
     const APP_PASSWORD = process.env.APP_PASSWORD;
     if (!APP_PASSWORD) {
       log.error('APP_PASSWORD missing — server misconfigured');
@@ -62,6 +67,10 @@ export async function POST(req: NextRequest) {
     log.warn({ ip_key: ipKey, outcome: 'invalid_password' }, 'login failed');
     return NextResponse.json({ error: 'Invalid password' }, { status: 401, headers: { 'x-request-id': request_id } });
   } catch (err) {
+    if (err instanceof BodyTooLargeError) {
+      log.warn({ ip_key: ipKey, limit: err.limit, outcome: 'body_too_large' }, 'login body too large');
+      return NextResponse.json({ error: 'Payload too large' }, { status: 413, headers: { 'x-request-id': request_id } });
+    }
     log.warn({ err: err instanceof Error ? err.message : String(err) }, 'login request body invalid');
     return NextResponse.json({ error: 'Invalid request' }, { status: 400, headers: { 'x-request-id': request_id } });
   }
