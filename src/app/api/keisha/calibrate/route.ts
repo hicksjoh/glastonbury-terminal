@@ -1,5 +1,7 @@
 import { NextResponse } from 'next/server';
 import { createServiceClient } from '@/lib/supabase';
+import { captureRouteError } from '@/lib/api-error';
+import { loggerFor } from '@/lib/request-id';
 
 const DEFAULT_WEIGHTS: Record<string, number> = {
   insider: 25,
@@ -11,7 +13,8 @@ const DEFAULT_WEIGHTS: Record<string, number> = {
   drift: 0,
 };
 
-export async function GET() {
+export async function GET(request: Request) {
+  const { log, request_id } = loggerFor(request, { route: 'keisha/calibrate' });
   try {
     const supabase = createServiceClient();
     const sources = Object.keys(DEFAULT_WEIGHTS);
@@ -91,8 +94,9 @@ export async function GET() {
       timestamp: new Date().toISOString(),
     });
   } catch (error: unknown) {
-    const message = error instanceof Error ? error.message : 'Unknown error';
-    console.error('[/api/keisha/calibrate] Error:', message);
-    return NextResponse.json({ error: message }, { status: 500 });
+    const eventId = captureRouteError(error, { request_id, route: 'keisha/calibrate' });
+    log.error({ err: error instanceof Error ? error.message : String(error), sentry_event_id: eventId }, 'keisha calibrate failed');
+    // p6-13: don't echo raw err.message.
+    return NextResponse.json({ error: 'Calibration failed', sentry_event_id: eventId }, { status: 500 });
   }
 }

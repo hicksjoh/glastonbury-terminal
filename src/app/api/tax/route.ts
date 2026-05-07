@@ -1,8 +1,11 @@
 import { NextResponse } from 'next/server';
 import { createServiceClient } from '@/lib/supabase';
 import { rateLimit } from '@/lib/rate-limit';
+import { captureRouteError } from '@/lib/api-error';
+import { loggerFor } from '@/lib/request-id';
 
-export async function GET() {
+export async function GET(request: Request) {
+  const { log, request_id } = loggerFor(request, { route: 'tax' });
   const rl = rateLimit('tax-main', 30, 60000);
   if (!rl.allowed) {
     return NextResponse.json({ success: false, error: 'Rate limit exceeded' }, { status: 429 });
@@ -80,7 +83,8 @@ export async function GET() {
       },
     });
   } catch (error) {
-    console.error('Tax API error:', error);
-    return NextResponse.json({ success: false, error: 'Failed to fetch tax data' }, { status: 500 });
+    const eventId = captureRouteError(error, { request_id, route: 'tax' });
+    log.error({ err: error instanceof Error ? error.message : String(error), sentry_event_id: eventId }, 'tax GET failed');
+    return NextResponse.json({ success: false, error: 'Failed to fetch tax data', sentry_event_id: eventId }, { status: 500 });
   }
 }

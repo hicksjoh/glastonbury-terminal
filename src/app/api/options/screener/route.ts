@@ -1,4 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { captureRouteError } from '@/lib/api-error';
+import { loggerFor } from '@/lib/request-id';
 
 const ALPACA_DATA_URL = 'https://data.alpaca.markets';
 const ALPACA_TRADING_URL = process.env.ALPACA_BASE_URL || 'https://paper-api.alpaca.markets';
@@ -46,6 +48,7 @@ interface ScreenerResult {
 }
 
 export async function POST(req: NextRequest) {
+  const { log, request_id } = loggerFor(req, { route: 'options/screener' });
   try {
     const filters: ScreenerFilter = await req.json();
     const symbols = filters.symbols || DEFAULT_SCAN_SYMBOLS;
@@ -76,8 +79,9 @@ export async function POST(req: NextRequest) {
       scanned: symbols.length,
     });
   } catch (err) {
-    console.error('Screener error:', err);
-    return NextResponse.json({ results: [], error: 'Screener failed' }, { status: 500 });
+    const eventId = captureRouteError(err, { request_id, route: 'options/screener' });
+    log.error({ err: err instanceof Error ? err.message : String(err), sentry_event_id: eventId }, 'screener failed');
+    return NextResponse.json({ results: [], error: 'Screener failed', sentry_event_id: eventId }, { status: 500 });
   }
 }
 

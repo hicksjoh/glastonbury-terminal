@@ -5,6 +5,8 @@ import { runResearchAgent, wordCount, type AgentEvent } from '@/lib/research-age
 import { sendResendEmail } from '@/lib/resend-client';
 import { indexDoc } from '@/lib/doc-indexer';
 import { isEmbeddingConfigured } from '@/lib/embeddings';
+import { captureRouteError } from '@/lib/api-error';
+import { loggerFor } from '@/lib/request-id';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -18,6 +20,8 @@ const sseEncode = (o: unknown) => `data: ${JSON.stringify(o)}\n\n`;
 
 // POST /api/research/start — create memo row, run agent inline, stream progress via SSE
 export async function POST(req: NextRequest) {
+  const { log, request_id } = loggerFor(req, { route: 'research/start' });
+
   // Durable rate limit: 4 per 5 min, enforced across all Vercel instances.
   const { allowed } = await checkRateLimitDurable('research-start', 'wes', 4, 300);
   if (!allowed) return new Response('Too many requests', { status: 429 });
@@ -61,7 +65,12 @@ export async function POST(req: NextRequest) {
   }).select('id').single();
 
   if (createErr || !created) {
-    return new Response(`DB error: ${createErr?.message ?? 'unknown'}`, { status: 500 });
+    // p6-13: don't echo raw Supabase error message; route detail to Sentry.
+    const eventId = captureRouteError(createErr ?? new Error('memo insert returned null'), {
+      request_id, route: 'research/start', stage: 'memo_insert',
+    });
+    log.error({ err: createErr?.message ?? 'no row', sentry_event_id: eventId }, 'memo insert failed');
+    return new Response(`Failed to create memo (event: ${eventId ?? 'n/a'})`, { status: 500 });
   }
   const memoId = (created as unknown as { id: string }).id;
 
@@ -137,12 +146,20 @@ export async function POST(req: NextRequest) {
           truncatedReason: result.truncated_reason,
         });
       } catch (err) {
-        const message = (err as Error).message;
+        const eventId = captureRouteError(err, {
+          request_id, route: 'research/start', stage: 'agent_run', memo_id: memoId,
+        });
+        log.error({
+          err: err instanceof Error ? err.message : String(err),
+          sentry_event_id: eventId,
+          memo_id: memoId,
+        }, 'research agent threw');
         await sb.from('deep_research_memos').update({
           status: 'failed',
           completed_at: new Date().toISOString(),
         }).eq('id', memoId);
-        send({ type: 'error', message });
+        // Don't leak raw err.message to the SSE stream — generic message + eventId.
+        send({ type: 'error', message: 'Research agent failed', sentry_event_id: eventId });
       } finally {
         close();
       }

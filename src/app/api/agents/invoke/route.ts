@@ -1,8 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { classifyIntent, dispatch } from '@/lib/agents/orchestrator';
 import { buildMeta } from '@/lib/api-meta';
+import { captureRouteError } from '@/lib/api-error';
+import { loggerFor } from '@/lib/request-id';
 
 export async function POST(req: NextRequest) {
+  const { log, request_id } = loggerFor(req, { route: 'agents/invoke' });
   try {
     const { message, symbol, intent: forceIntent } = await req.json();
 
@@ -32,10 +35,15 @@ export async function POST(req: NextRequest) {
       _meta: buildMeta({ source: `orchestrator:${result.agentsUsed.length}agents`, live: true }),
     });
   } catch (error) {
+    // p6-13: don't echo raw err.message; route the detail to Sentry +
+    // structured log, return generic public message.
+    const eventId = captureRouteError(error, { request_id, route: 'agents/invoke' });
     const msg = error instanceof Error ? error.message : 'Unknown error';
+    log.error({ err: msg, sentry_event_id: eventId }, 'agents/invoke failed');
     return NextResponse.json({
-      error: msg,
-      _meta: buildMeta({ source: 'agents', live: false, error: msg }),
+      error: 'Agent dispatch failed',
+      sentry_event_id: eventId,
+      _meta: buildMeta({ source: 'agents', live: false, error: 'dispatch_failed' }),
     }, { status: 500 });
   }
 }
