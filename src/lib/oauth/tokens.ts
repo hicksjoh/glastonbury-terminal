@@ -11,8 +11,13 @@
 //
 // Tokens are 1-hour. No refresh tokens in v1 — clients re-do the auth
 // dance when expired. Claude.app handles this transparently.
+//
+// p2-1: every successful verify checks the oauth_clients row for
+// revoked_at != NULL, so revoking a client makes every outstanding token
+// inert immediately (no wait for the 1h JWT TTL).
 
 import { SignJWT, jwtVerify } from 'jose';
+import { findClient, touchClientUsage } from '@/lib/oauth/clients';
 
 const ALG = 'HS256';
 const AUDIENCE = 'terminal-mcp';
@@ -61,7 +66,11 @@ export async function createAccessToken(
 /**
  * Verify an MCP Bearer access token. Returns the payload on success or
  * null on every failure mode (missing, malformed, expired, wrong aud,
- * tampered, wrong secret).
+ * tampered, wrong secret, revoked client).
+ *
+ * Adds one Supabase round-trip per MCP request to check revocation. ~10-30ms
+ * on the warm path. If this becomes a bottleneck, cache (clientId →
+ * revoked_at) for 30-60s — revocation propagates within the cache window.
  */
 export async function verifyAccessToken(
   token: string | undefined | null,
@@ -79,6 +88,18 @@ export async function verifyAccessToken(
     ) {
       return null;
     }
+
+    // Revocation check. JWT signature was valid, but the client may have
+    // been admin-revoked since the token was issued. We honor that here
+    // rather than waiting for the JWT TTL to expire.
+    const client = await findClient(payload.client_id);
+    if (!client) return null;          // client deleted entirely
+    if (client.revoked_at) return null; // client revoked
+
+    // Best-effort usage timestamp. Don't await on the hot path —
+    // touchClientUsage already swallows errors.
+    void touchClientUsage(payload.client_id);
+
     return {
       sub: payload.sub,
       client_id: payload.client_id,

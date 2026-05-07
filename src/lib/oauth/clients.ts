@@ -20,6 +20,10 @@ export interface OAuthClient {
   scope: string;
   created_at: string;
   metadata: Record<string, unknown>;
+  /** Set by revokeClient(). When non-null, all token validation rejects this client. */
+  revoked_at: string | null;
+  /** Set by touchClientUsage() on each successful access-token validation. */
+  last_used_at: string | null;
 }
 
 export interface ClientRegistration {
@@ -160,4 +164,73 @@ export async function verifyClientSecret(
     diff |= presentedHash.charCodeAt(i) ^ client.client_secret_hash.charCodeAt(i);
   }
   return diff === 0;
+}
+
+/**
+ * Revoke a client. After this returns, all future access-token validations
+ * for this client_id reject (verifyAccessToken returns null). Existing
+ * tokens become inert without waiting for their 1h TTL to expire.
+ *
+ * Idempotent: revoking an already-revoked client succeeds and updates the
+ * timestamp.
+ */
+export async function revokeClient(clientId: string): Promise<boolean> {
+  const supabase = createServiceClient();
+  const { error, count } = await supabase
+    .from('oauth_clients')
+    .update({ revoked_at: new Date().toISOString() }, { count: 'exact' })
+    .eq('client_id', clientId);
+  if (error) {
+    throw new Error(`oauth_clients revoke failed: ${error.message}`);
+  }
+  return (count ?? 0) > 0;
+}
+
+/**
+ * Un-revoke a client. Recovery path for accidental revocation. Sets
+ * revoked_at = null. No-op if the client wasn't revoked.
+ */
+export async function unrevokeClient(clientId: string): Promise<boolean> {
+  const supabase = createServiceClient();
+  const { error, count } = await supabase
+    .from('oauth_clients')
+    .update({ revoked_at: null }, { count: 'exact' })
+    .eq('client_id', clientId);
+  if (error) {
+    throw new Error(`oauth_clients unrevoke failed: ${error.message}`);
+  }
+  return (count ?? 0) > 0;
+}
+
+/**
+ * Best-effort bump of last_used_at. Failures are swallowed — this is
+ * observability, not a security gate, and we don't want to fail an MCP
+ * request because Supabase had a hiccup.
+ */
+export async function touchClientUsage(clientId: string): Promise<void> {
+  try {
+    const supabase = createServiceClient();
+    await supabase
+      .from('oauth_clients')
+      .update({ last_used_at: new Date().toISOString() })
+      .eq('client_id', clientId);
+  } catch (err) {
+    console.warn('[oauth] touchClientUsage failed:', err instanceof Error ? err.message : String(err));
+  }
+}
+
+/**
+ * List all clients for the admin UI. Sorted by last_used_at DESC NULLS LAST
+ * so dormant + active are easy to distinguish.
+ */
+export async function listClients(): Promise<OAuthClient[]> {
+  const supabase = createServiceClient();
+  const { data, error } = await supabase
+    .from('oauth_clients')
+    .select('*')
+    .order('last_used_at', { ascending: false, nullsFirst: false });
+  if (error) {
+    throw new Error(`oauth_clients list failed: ${error.message}`);
+  }
+  return (data ?? []) as unknown as OAuthClient[];
 }
