@@ -3,6 +3,7 @@ import Anthropic from '@anthropic-ai/sdk';
 import { getCached, setCache, TTL } from '@/lib/server-cache';
 import { checkRateLimitDurable } from '@/lib/rate-limit-durable';
 import { getSectorPerformance } from '@/lib/fmp-client';
+import { tagAnthropicCall } from '@/lib/anthropic-cost';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -143,8 +144,9 @@ export async function GET(): Promise<NextResponse> {
 
     // Generate narrative via Claude
     const anthropic = new Anthropic();
+    const narrativeModel = process.env.CLAUDE_MODEL_FALLBACK || 'claude-sonnet-4-6';
     const msg = await anthropic.messages.create({
-      model: process.env.CLAUDE_MODEL_FALLBACK || 'claude-sonnet-4-6',
+      model: narrativeModel,
       max_tokens: 400,
       messages: [
         {
@@ -171,6 +173,7 @@ Respond in this exact JSON format:
         },
       ],
     });
+    tagAnthropicCall(msg.usage, narrativeModel, { caller: 'narrative' });
 
     // Parse response
     const textBlock = msg.content.find(b => b.type === 'text');

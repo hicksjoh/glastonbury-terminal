@@ -11,6 +11,7 @@
 //   3. SYNTHESIS (Wes-specific recommendation with sizes)
 
 import { anthropic, CLAUDE_MODEL_PRIMARY } from '@/lib/claude';
+import { tagAnthropicCall } from '@/lib/anthropic-cost';
 import { cachedSystem } from '@/lib/prompts';
 import { getQuote, type FmpQuote } from '@/lib/fmp-client';
 import { createServiceClient } from '@/lib/supabase';
@@ -188,6 +189,7 @@ export async function analyzeRsuHedge(): Promise<HedgeAnalysisResult | null> {
       },
     ],
   });
+  tagAnthropicCall(msg.usage, CLAUDE_MODEL_PRIMARY, { caller: 'rsu-analyzer' });
 
   const text = msg.content[0]?.type === 'text' ? msg.content[0].text : '';
   if (!text) return null;

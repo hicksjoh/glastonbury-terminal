@@ -7,6 +7,7 @@ import {
 } from '@/lib/claude';
 import { createServiceClient } from '@/lib/supabase';
 import { checkRateLimitDurable } from '@/lib/rate-limit-durable';
+import { computeAnthropicCostUsd, tagAnthropicCall } from '@/lib/anthropic-cost';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -15,16 +16,15 @@ const CACHE_FRESHNESS_MINUTES = 5;
 
 const KEISHA_BRIEFING_SYSTEM_PROMPT = `You are Keisha, Wes Hicks' senior trading analyst and COO. Be direct, data-driven, warm. Use African American slang naturally when appropriate. Always cite numbers. Give information, not financial advice.`;
 
-type Usd = { input: number; output: number };
-const PRICE_PER_M: Record<string, Usd> = {
-  'claude-opus-4-7': { input: 15.0, output: 75.0 },
-  'claude-sonnet-4-6': { input: 3.0, output: 15.0 },
-  'claude-haiku-4-5-20251001': { input: 0.8, output: 4.0 },
-};
-
+// p6-3: cost calc delegates to the canonical pricing table in
+// src/lib/anthropic-cost.ts. The previous local PRICE_PER_M table at this
+// site drifted from anthropic-cost.ts (Opus audit finding). Single source
+// of truth now — when Anthropic updates pricing, only one file changes.
 function estimateCostUsd(model: string, tokensIn: number, tokensOut: number): number {
-  const p = PRICE_PER_M[model] ?? { input: 3.0, output: 15.0 };
-  return (tokensIn / 1_000_000) * p.input + (tokensOut / 1_000_000) * p.output;
+  return computeAnthropicCostUsd(
+    { input_tokens: tokensIn, output_tokens: tokensOut },
+    model,
+  );
 }
 
 function sseEncode(payload: unknown): string {
@@ -469,6 +469,15 @@ export async function GET(req: NextRequest) {
           tokensOut,
           latencyMs,
         });
+
+        // p6-3: emit Anthropic cost telemetry on the highest-traffic stream
+        // call site. Without this, the Sentry "Anthropic budget burn" alert
+        // never sees keisha briefings — the most likely runaway-loop path.
+        tagAnthropicCall(
+          { input_tokens: tokensIn, output_tokens: tokensOut },
+          modelUsed,
+          { caller: 'keisha/briefing', latency_ms: latencyMs },
+        );
 
         send({
           type: 'done',

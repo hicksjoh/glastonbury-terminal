@@ -8,6 +8,7 @@
  */
 
 import { anthropic, CLAUDE_MODEL_PRIMARY, CLAUDE_MODEL_FALLBACK } from '@/lib/claude';
+import { tagAnthropicCall } from '@/lib/anthropic-cost';
 import { createServiceClient } from '@/lib/supabase';
 
 const COACH_SYSTEM = `You are Wes Hicks' trading psychology coach. Be kind but firm — direct, data-driven, warm. African American slang welcome when it fits.
@@ -145,6 +146,7 @@ Write the coaching review now.`;
       msg = await call(modelUsed);
     } else throw err;
   }
+  tagAnthropicCall(msg.usage, modelUsed, { caller: 'coach-engine' });
 
   const text = msg.content[0]?.type === 'text' ? msg.content[0].text : '';
   const cleaned = text.trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```\s*$/i, '');

@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { anthropic, CLAUDE_MODEL_FALLBACK } from '@/lib/claude';
+import { tagAnthropicCall } from '@/lib/anthropic-cost';
 import { getSupabase } from '@/lib/supabase';
 
 const FMP_KEY = process.env.FMP_API_KEY;
@@ -150,6 +151,7 @@ ${transcript.slice(0, 80000)}`,
           },
         ],
       });
+      tagAnthropicCall(message.usage, CLAUDE_MODEL_FALLBACK, { caller: 'earnings-tone' });
 
       const responseText = message.content[0].type === 'text' ? message.content[0].text : '';
 

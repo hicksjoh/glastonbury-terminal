@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { equilibriumReturns, blackLitterman, efficientFrontier, View } from '@/lib/black-litterman';
 import { correlationMatrix } from '@/lib/correlation';
 import { anthropic, CLAUDE_MODEL_FALLBACK } from '@/lib/claude';
+import { tagAnthropicCall } from '@/lib/anthropic-cost';
 import { getHistoricalPrices } from '@/lib/fmp-client';
 
 const ALPACA_BASE_URL = process.env.ALPACA_BASE_URL || 'https://paper-api.alpaca.markets';
@@ -126,6 +127,7 @@ Respond ONLY with a JSON array, no other text.`;
       max_tokens: 1024,
       messages: [{ role: 'user', content: prompt }],
     });
+    tagAnthropicCall(message.usage, CLAUDE_MODEL_FALLBACK, { caller: 'optimize' });
 
     const content = message.content[0];
     if (content.type !== 'text') {

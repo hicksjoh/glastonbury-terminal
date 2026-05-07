@@ -10,6 +10,7 @@
 // warning the UI can show, and lets "approve" pass through silently.
 
 import { anthropic, CLAUDE_MODEL_FAST } from '@/lib/claude';
+import { tagAnthropicCall } from '@/lib/anthropic-cost';
 import { cachedSystem } from '@/lib/prompts';
 
 const DEBATE_THRESHOLD_USD = 5_000;
@@ -105,6 +106,7 @@ export async function runDebateGate(input: DebateGateInput): Promise<DebateGateV
       system: cachedSystem(DEBATE_GATE_SYSTEM),
       messages: [{ role: 'user', content: userPrompt }],
     });
+    tagAnthropicCall(msg.usage, CLAUDE_MODEL_FAST, { caller: 'debate-gate' });
 
     const text = msg.content[0]?.type === 'text' ? msg.content[0].text : '';
     const cleaned = text.trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```\s*$/i, '');

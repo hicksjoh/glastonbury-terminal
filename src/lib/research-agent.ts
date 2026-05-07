@@ -22,6 +22,7 @@ import {
   CLAUDE_MODEL_PRIMARY,
   CLAUDE_MODEL_FALLBACK,
 } from '@/lib/claude';
+import { tagAnthropicCall } from '@/lib/anthropic-cost';
 import {
   fetchQuote,
   fetchCompanyProfile,
@@ -255,6 +256,7 @@ Use your tools to gather data, then deliver the final memo as your last message.
       onEvent({ type: 'error', message: (err as Error).message });
       break;
     }
+    tagAnthropicCall(response.usage, modelUsed, { caller: 'research-agent' });
 
     cumIn += response.usage?.input_tokens ?? 0;
     cumOut += response.usage?.output_tokens ?? 0;

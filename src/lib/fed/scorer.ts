@@ -5,6 +5,7 @@
 // prompt cache and pays ~10% per call after the first write.
 
 import { anthropic, CLAUDE_MODEL_FAST } from '@/lib/claude';
+import { tagAnthropicCall } from '@/lib/anthropic-cost';
 import { cachedSystem } from '@/lib/prompts';
 
 const SCORER_SYSTEM_PROMPT = `You are a macro-policy analyst scoring Federal Reserve communications on a hawkish-to-dovish scale. Your output is read by a trader who makes rate-sensitive portfolio decisions from your signal, so be precise and defensible.
@@ -49,6 +50,7 @@ export async function scoreFedStatement(
     system: cachedSystem(SCORER_SYSTEM_PROMPT),
     messages: [{ role: 'user', content: userPrompt }],
   });
+  tagAnthropicCall(msg.usage, CLAUDE_MODEL_FAST, { caller: 'fed-scorer' });
 
   const text = msg.content[0]?.type === 'text' ? msg.content[0].text : '';
   if (!text) return null;

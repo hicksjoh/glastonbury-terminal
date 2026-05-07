@@ -4,6 +4,7 @@
  */
 
 import { anthropic, CLAUDE_MODEL_PRIMARY, CLAUDE_MODEL_FAST } from '@/lib/claude';
+import { tagAnthropicCall } from '@/lib/anthropic-cost';
 import { createServiceClient } from '@/lib/supabase';
 
 // ── Chunking ────────────────────────────────────────────────────────────────
@@ -81,6 +82,7 @@ ${passages.map((p, i) => `[${i}] ${p}`).join('\n\n')}`;
     system: SENTIMENT_SYSTEM,
     messages: [{ role: 'user', content: userPrompt }],
   });
+  tagAnthropicCall(msg.usage, CLAUDE_MODEL_FAST, { caller: 'earnings-engine.sentiment' });
   const text = msg.content[0]?.type === 'text' ? msg.content[0].text : '';
   const cleaned = text.trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```\s*$/i, '');
   const arrMatch = cleaned.match(/\[[\s\S]*\]/);
@@ -206,6 +208,7 @@ Write the post-call memo in the required JSON shape. Cite exact numbers and use 
     system: MEMO_SYSTEM,
     messages: [{ role: 'user', content: user }],
   });
+  tagAnthropicCall(msg.usage, CLAUDE_MODEL_PRIMARY, { caller: 'earnings-engine.memo' });
   const text = msg.content[0]?.type === 'text' ? msg.content[0].text : '';
   const cleaned = text.trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```\s*$/i, '');
   const m = cleaned.match(/\{[\s\S]*\}/);
