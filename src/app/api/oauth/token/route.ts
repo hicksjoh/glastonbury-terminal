@@ -97,6 +97,11 @@ export async function POST(req: NextRequest) {
 
   const client = await findClient(client_id);
   if (!client) return invalidClient('unknown_client_id');
+  // p6-1: collapse revoked clients into the same generic invalid_client
+  // response so an attacker can't probe revocation status. /api/mcp's
+  // verifyAccessToken already rejects revoked clients post-mint, but a
+  // revoked client should never be ABLE to mint in the first place.
+  if (client.revoked_at) return invalidClient('client_revoked');
 
   if (client.token_endpoint_auth_method === 'client_secret_post') {
     if (!client_secret) return invalidClient('client_secret_required');

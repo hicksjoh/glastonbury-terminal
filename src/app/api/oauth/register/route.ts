@@ -49,11 +49,26 @@ async function authorizeRegistration(req: NextRequest): Promise<AdmissionResult>
     return { ok: false, via: 'denied' };
   }
 
-  // Back-compat: no session, no env-var gate. Allow but warn.
+  // p6-1: fail-CLOSED in production when OAUTH_REGISTRATION_TOKEN is unset.
+  // The earlier "warn and allow" fallback was a deploy-time footgun — if the
+  // operator forgot to set the env var, anonymous registration was open to
+  // the internet. Production NEVER takes that path now. Dev preserves the
+  // ergonomic warn-and-allow so local Claude.app testing still works without
+  // every developer needing to set the env var.
+  if (process.env.NODE_ENV === 'production') {
+    console.error(
+      '[oauth/register] OAUTH_REGISTRATION_TOKEN not set in production — ' +
+        'rejecting anonymous registration. Set the env var to enable token-based ' +
+        'admin registration, or rely on session-based registration only.',
+    );
+    return { ok: false, via: 'denied' };
+  }
+
+  // Dev only: no session, no env-var gate. Allow but warn.
   console.warn(
     '[oauth/register] OAUTH_REGISTRATION_TOKEN not set and no session ' +
-      'cookie present — allowing unauthenticated registration. Set the ' +
-      'env var to lock dynamic client registration in production.',
+      'cookie present — allowing unauthenticated registration (dev only). ' +
+      'Production fails-closed in the same path.',
   );
   return { ok: true, via: 'open' };
 }

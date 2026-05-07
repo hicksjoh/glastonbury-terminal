@@ -74,7 +74,15 @@ export async function GET(req: NextRequest) {
   if (!redirect_uri) return badRequest('Missing redirect_uri');
 
   const client = await findClient(client_id);
-  if (!client) return badRequest('Unknown client_id');
+  // p6-1: revoked clients return the same "Unknown client_id" response so an
+  // attacker can't differentiate "never registered" from "revoked." The real
+  // reason is logged server-side for ops debugging.
+  if (!client || client.revoked_at) {
+    if (client?.revoked_at) {
+      log.warn({ client_id }, 'authorize: client revoked');
+    }
+    return badRequest('Unknown client_id');
+  }
   if (!client.redirect_uris.includes(redirect_uri)) {
     return badRequest('redirect_uri does not match any registered URI for this client');
   }
