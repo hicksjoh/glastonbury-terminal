@@ -1,5 +1,6 @@
 import Anthropic from '@anthropic-ai/sdk';
 import type { MessageCreateParamsNonStreaming, MessageStreamParams } from '@anthropic-ai/sdk/resources/messages';
+import { tagAnthropicCall } from './anthropic-cost';
 
 export const anthropic = new Anthropic({
   apiKey: process.env.ANTHROPIC_API_KEY!,
@@ -22,6 +23,7 @@ export async function createMessageWithFallback(
       model: CLAUDE_MODEL_PRIMARY,
       ...params,
     });
+    tagAnthropicCall(message.usage, CLAUDE_MODEL_PRIMARY, { caller: 'createMessageWithFallback' });
     return { message, modelUsed: CLAUDE_MODEL_PRIMARY };
   } catch (err) {
     if (!isRetryableStatus(err)) throw err;
@@ -29,6 +31,7 @@ export async function createMessageWithFallback(
       model: CLAUDE_MODEL_FALLBACK,
       ...params,
     });
+    tagAnthropicCall(message.usage, CLAUDE_MODEL_FALLBACK, { caller: 'createMessageWithFallback', fallback: true });
     return { message, modelUsed: CLAUDE_MODEL_FALLBACK };
   }
 }
@@ -80,6 +83,7 @@ Keep it under 250 words. Sharp, actionable, and personalized to Wes's actual por
     }]
   });
 
+  tagAnthropicCall(message.usage, CLAUDE_MODEL_PRIMARY, { caller: 'generateBriefing' });
   return message.content[0].type === 'text' ? message.content[0].text : '';
 }
 
@@ -109,5 +113,6 @@ When answering, always ground your response in the live data above. If certain d
     })),
   });
 
+  tagAnthropicCall(response.usage, CLAUDE_MODEL_PRIMARY, { caller: 'generateAnalysis' });
   return response.content[0].type === 'text' ? response.content[0].text : '';
 }
