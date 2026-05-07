@@ -6,6 +6,8 @@ import { sendPushNotification, type PushSubscriptionData } from '@/lib/web-push'
 import { pingHealthcheck } from '@/lib/healthchecks';
 import { cronIsAuthorized } from '@/lib/cron-auth';
 import { tryClaimCronRun, markCronRunComplete, todayKeyET } from '@/lib/cron-idempotency';
+import { captureRouteError } from '@/lib/api-error';
+import { loggerFor } from '@/lib/request-id';
 
 // F10 — Lightweight 6:30 AM push notification.
 //
@@ -68,7 +70,10 @@ async function buildMorningPushPayload(): Promise<{
 }
 
 async function handle(req: NextRequest): Promise<NextResponse> {
+  const { log, request_id } = loggerFor(req, { route: 'briefing/morning-push' });
+
   if (!(await cronIsAuthorized(req, { routeName: 'briefing-morning-push' }))) {
+    log.warn('unauthorized cron call');
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
@@ -77,10 +82,12 @@ async function handle(req: NextRequest): Promise<NextResponse> {
   const runKey = todayKeyET();
   const claimed = await tryClaimCronRun(JOB_NAME, runKey);
   if (!claimed) {
+    log.info({ run_key: runKey, outcome: 'skipped_idempotent' }, 'morning push already ran today');
     return NextResponse.json({ ok: true, skipped: 'already_ran_today', runKey });
   }
 
   await pingHealthcheck(HC_SLUG, 'start');
+  log.info({ run_key: runKey }, 'morning push start');
 
   try {
     const payload = await buildMorningPushPayload();
@@ -91,9 +98,10 @@ async function handle(req: NextRequest): Promise<NextResponse> {
       .select('endpoint, p256dh, auth');
 
     if (subsErr) {
-      console.error('[morning-push] subs query failed:', subsErr.message);
+      const eventId = captureRouteError(subsErr, { request_id, route: 'briefing/morning-push', stage: 'subs_query' });
+      log.error({ err: subsErr.message, sentry_event_id: eventId }, 'subs query failed');
       await pingHealthcheck(HC_SLUG, 'fail');
-      return NextResponse.json({ error: 'Subscription query failed' }, { status: 500 });
+      return NextResponse.json({ error: 'Subscription query failed', sentry_event_id: eventId }, { status: 500 });
     }
 
     let sent = 0;
@@ -120,6 +128,7 @@ async function handle(req: NextRequest): Promise<NextResponse> {
 
     await pingHealthcheck(HC_SLUG, 'success');
     await markCronRunComplete(JOB_NAME, runKey, { sent, pruned });
+    log.info({ run_key: runKey, sent, pruned, outcome: 'success' }, 'morning push complete');
 
     return NextResponse.json({
       ok: true,
@@ -130,11 +139,11 @@ async function handle(req: NextRequest): Promise<NextResponse> {
       payload: { title: payload.title, body: payload.body, data: payload.data },
     });
   } catch (err) {
-    const msg = err instanceof Error ? err.message : 'Unknown error';
-    console.error('[morning-push] failed:', msg);
+    const eventId = captureRouteError(err, { request_id, route: 'briefing/morning-push', run_key: runKey });
+    log.error({ err: err instanceof Error ? err.message : String(err), sentry_event_id: eventId }, 'morning push threw');
     // Don't mark complete on failure — let stale-window retry handle it.
     await pingHealthcheck(HC_SLUG, 'fail');
-    return NextResponse.json({ error: msg }, { status: 500 });
+    return NextResponse.json({ error: 'Morning push failed', sentry_event_id: eventId }, { status: 500 });
   }
 }
 

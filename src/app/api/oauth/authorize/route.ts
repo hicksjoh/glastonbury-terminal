@@ -4,6 +4,8 @@ import { findClient } from '@/lib/oauth/clients';
 import { verifySessionJwt, SESSION_COOKIE_NAME } from '@/lib/session';
 import { checkRateLimitDurable, getRateLimitIdentity } from '@/lib/rate-limit-durable';
 import { mintConsentTransaction } from '@/lib/oauth/consent-tx';
+import { captureRouteError } from '@/lib/api-error';
+import { loggerFor } from '@/lib/request-id';
 
 // RFC 6749 §4.1.1 Authorization Request.
 //
@@ -43,6 +45,8 @@ function badRequest(detail: string): NextResponse {
 }
 
 export async function GET(req: NextRequest) {
+  const { log, request_id } = loggerFor(req, { route: 'oauth/authorize' });
+
   // p1-6: 30 attempts per IP per minute. Plenty of headroom for the legit
   // human flow (one click in Claude.app sends one request) but caps any
   // attacker spamming this endpoint with malformed params trying to learn
@@ -50,6 +54,7 @@ export async function GET(req: NextRequest) {
   const { key } = await getRateLimitIdentity(req);
   const { allowed } = await checkRateLimitDurable('oauth-authorize', key, 30, 60);
   if (!allowed) {
+    log.warn('authorize rate limit hit');
     return new NextResponse('Too many requests', { status: 429 });
   }
 
@@ -131,12 +136,16 @@ export async function GET(req: NextRequest) {
       subject: session.sub,
       state: state ?? null,
     });
-  } catch {
+  } catch (err) {
+    const eventId = captureRouteError(err, { request_id, route: 'oauth/authorize', client_id });
+    log.error({ err: err instanceof Error ? err.message : String(err), sentry_event_id: eventId }, 'consent tx mint failed');
     // If we can't mint (Supabase outage), fail with a generic error rather
     // than redirecting to the client redirect_uri (which would expose a
     // sentinel error_description that could be used for fingerprinting).
     return badRequest('Internal error preparing consent');
   }
+
+  log.info({ client_id, outcome: 'consent_tx_minted' }, 'authorize → consent');
 
   const consentUrl = new URL('/oauth/consent', req.url);
   consentUrl.searchParams.set('tx', tx_id);

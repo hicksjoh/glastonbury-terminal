@@ -14,6 +14,8 @@ import { cronIsAuthorized } from '@/lib/cron-auth';
 import { tryClaimCronRun, markCronRunComplete, todayKeyET } from '@/lib/cron-idempotency';
 import { sendPushNotification } from '@/lib/web-push';
 import type { PushSubscriptionData } from '@/lib/web-push';
+import { captureRouteError } from '@/lib/api-error';
+import { loggerFor } from '@/lib/request-id';
 
 const HC_SLUG = 'briefing-scheduled';
 const JOB_NAME = 'briefing-scheduled';
@@ -139,7 +141,10 @@ function buildBriefingPromptContext(
 // ─── Shared handler: Generate and save scheduled briefing ─
 // Exposed via both GET (Vercel cron sends GET) and POST (manual/external trigger).
 async function runScheduledBriefing(req: NextRequest) {
+  const { log, request_id } = loggerFor(req, { route: 'briefing/scheduled' });
+
   if (!(await cronIsAuthorized(req, { routeName: 'briefing-scheduled' }))) {
+    log.warn('unauthorized cron call');
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
@@ -149,6 +154,7 @@ async function runScheduledBriefing(req: NextRequest) {
   const runKey = todayKeyET();
   const claimed = await tryClaimCronRun(JOB_NAME, runKey);
   if (!claimed) {
+    log.info({ run_key: runKey, outcome: 'skipped_idempotent' }, 'briefing already ran today');
     return NextResponse.json({
       ok: true,
       skipped: 'already_ran_today',
@@ -157,6 +163,7 @@ async function runScheduledBriefing(req: NextRequest) {
   }
 
   await pingHealthcheck(HC_SLUG, 'start');
+  log.info({ run_key: runKey }, 'scheduled briefing start');
 
   try {
     // Gather all data in parallel
@@ -202,8 +209,10 @@ async function runScheduledBriefing(req: NextRequest) {
       .single();
 
     if (error) {
-      console.error('Supabase briefing insert error:', error);
-      return NextResponse.json({ error: 'Failed to save briefing', details: error.message }, { status: 500 });
+      const eventId = captureRouteError(error, { request_id, route: 'briefing/scheduled', stage: 'briefing_insert' });
+      log.error({ err: error.message, sentry_event_id: eventId }, 'briefing insert failed');
+      // Don't echo raw Supabase error — eventId lets you find it in Sentry.
+      return NextResponse.json({ error: 'Failed to save briefing', sentry_event_id: eventId }, { status: 500 });
     }
 
     // Send push notification with briefing summary
@@ -239,7 +248,10 @@ async function runScheduledBriefing(req: NextRequest) {
         );
       }
     } catch (pushErr) {
-      console.error('Push notification error:', pushErr);
+      // Push fan-out failure is non-fatal — the briefing INSERT already
+      // succeeded. Capture for visibility but keep the success path.
+      const pushEventId = captureRouteError(pushErr, { request_id, route: 'briefing/scheduled', stage: 'push_fanout' });
+      log.warn({ err: pushErr instanceof Error ? pushErr.message : String(pushErr), sentry_event_id: pushEventId }, 'push fan-out failed');
     }
 
     await pingHealthcheck(HC_SLUG, 'success');
@@ -247,6 +259,7 @@ async function runScheduledBriefing(req: NextRequest) {
       briefing_id: data.id,
       push_sent: pushSent,
     });
+    log.info({ run_key: runKey, briefing_id: data.id, push_sent: pushSent, outcome: 'success' }, 'scheduled briefing complete');
 
     return NextResponse.json({
       success: true,
@@ -263,13 +276,13 @@ async function runScheduledBriefing(req: NextRequest) {
       },
     });
   } catch (error) {
-    const msg = error instanceof Error ? error.message : 'Unknown error';
-    console.error('Scheduled briefing error:', msg);
+    const eventId = captureRouteError(error, { request_id, route: 'briefing/scheduled', run_key: runKey });
+    log.error({ err: error instanceof Error ? error.message : String(error), sentry_event_id: eventId }, 'scheduled briefing threw');
     // Intentionally NOT marking complete — a future retry should be allowed
     // after the stale window so a transient Anthropic outage doesn't lose
     // today's briefing.
     await pingHealthcheck(HC_SLUG, 'fail');
-    return NextResponse.json({ error: msg }, { status: 500 });
+    return NextResponse.json({ error: 'Briefing generation failed', sentry_event_id: eventId }, { status: 500 });
   }
 }
 
