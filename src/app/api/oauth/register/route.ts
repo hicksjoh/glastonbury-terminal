@@ -2,18 +2,61 @@ import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
 import { isAllowedRedirectUri, registerClient } from '@/lib/oauth/clients';
 import { checkRateLimitDurable, getRateLimitIdentity } from '@/lib/rate-limit-durable';
+import { safeSecretEqual } from '@/lib/safe-compare';
+import { verifySessionJwt, SESSION_COOKIE_NAME } from '@/lib/session';
 
 // RFC 7591 OAuth 2.0 Dynamic Client Registration.
 //
-// Anyone on the internet can register a client (this is by design — RFC 7591
-// is intentionally open so any OAuth-aware app can self-register). The real
-// access gate is the consent screen, which requires Wes's gt-auth cookie.
-// A registered-but-never-consented client gets nothing.
+// Production hardening (p1-5): registration now requires either an
+// authenticated session (gt-auth cookie — Wes registering from his own
+// browser) OR an `OAUTH_REGISTRATION_TOKEN` bearer (programmatic admin).
 //
-// Rate-limited modestly so this can't be used to fill the table.
+// The pre-p1-5 behavior allowed any internet caller to register; the
+// consent screen was the only real gate. That's still effectively true
+// (a malicious client never gets a valid token without Wes clicking
+// approve), but an unauthenticated registry of "Glastonbury Terminal"
+// look-alike clients is a phishing vector and table-bloat risk.
+//
+// Back-compat: if OAUTH_REGISTRATION_TOKEN is unset AND no valid session
+// is presented, the request is still accepted but logs a WARN. This keeps
+// any pre-p1-5 client integrations working until Wes sets the env var to
+// flip the gate to fully locked.
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
+
+interface AdmissionResult {
+  ok: boolean;
+  via: 'session' | 'token' | 'open' | 'denied';
+}
+
+async function authorizeRegistration(req: NextRequest): Promise<AdmissionResult> {
+  // Path 1: authenticated session cookie
+  const cookie = req.cookies.get(SESSION_COOKIE_NAME);
+  if (cookie?.value) {
+    const session = await verifySessionJwt(cookie.value);
+    if (session) return { ok: true, via: 'session' };
+  }
+
+  // Path 2: registration token (Authorization: Bearer ...)
+  const expected = process.env.OAUTH_REGISTRATION_TOKEN;
+  if (expected) {
+    const header = req.headers.get('authorization') ?? '';
+    if (header.startsWith('Bearer ') && safeSecretEqual(header.slice(7), expected)) {
+      return { ok: true, via: 'token' };
+    }
+    // Token gate is configured AND no valid session AND token mismatch — deny.
+    return { ok: false, via: 'denied' };
+  }
+
+  // Back-compat: no session, no env-var gate. Allow but warn.
+  console.warn(
+    '[oauth/register] OAUTH_REGISTRATION_TOKEN not set and no session ' +
+      'cookie present — allowing unauthenticated registration. Set the ' +
+      'env var to lock dynamic client registration in production.',
+  );
+  return { ok: true, via: 'open' };
+}
 
 interface RegisterBody {
   client_name?: unknown;
@@ -35,12 +78,22 @@ function bad(detail: string, status = 400) {
 export async function POST(req: NextRequest) {
   // 5 registrations per IP per minute. Keeps a bot from filling the table
   // while leaving plenty of headroom for one human walking through Claude.app.
+  // Rate-limit BEFORE auth so unauthenticated probe attempts still consume
+  // their quota — slows down anyone testing the gate.
   const { key } = await getRateLimitIdentity(req);
   const { allowed } = await checkRateLimitDurable('oauth-register', key, 5, 60);
   if (!allowed) {
     return NextResponse.json(
       { error: 'too_many_requests' },
       { status: 429, headers: { 'Access-Control-Allow-Origin': '*' } },
+    );
+  }
+
+  const admission = await authorizeRegistration(req);
+  if (!admission.ok) {
+    return NextResponse.json(
+      { error: 'unauthorized', error_description: 'Dynamic client registration is restricted on this server.' },
+      { status: 401, headers: { 'WWW-Authenticate': 'Bearer realm="oauth-register"' } },
     );
   }
 
