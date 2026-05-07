@@ -1,0 +1,53 @@
+name: CI
+
+# PR gate. The existing e2e.yml hits the live prod URL after a deploy lands;
+# this workflow runs the *fast* checks (lint, typecheck, build, unit tests) on
+# every PR before code can merge. Without this gate a bad refactor could land
+# on main and only fail at the next prod deploy.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  ci:
+    timeout-minutes: 10
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Typecheck
+        run: npx tsc --noEmit
+
+      - name: Unit tests (vitest)
+        run: npm test
+        env:
+          # Vitest exercises code paths that import the session module; the dev
+          # fallback secret is fine for unit tests since nothing real is signed.
+          NODE_ENV: test
+
+      - name: Build
+        # `next build` is the strictest catch-all — surfaces type, route, and
+        # bundle errors that lint + tsc miss. Stub the must-exist envs with
+        # placeholder values so the build doesn't fail on missing secrets.
+        run: npm run build
+        env:
+          APP_PASSWORD: ci-placeholder-not-used
+          SESSION_SECRET: ci-placeholder-secret-must-be-32-chars-or-more-yes
+          NEXT_PUBLIC_SUPABASE_URL: https://example.supabase.co
+          NEXT_PUBLIC_SUPABASE_ANON_KEY: ci-placeholder-anon-key
+          SUPABASE_SERVICE_ROLE_KEY: ci-placeholder-service-key
