@@ -3,6 +3,7 @@ import type { NextRequest } from 'next/server';
 import { findClient } from '@/lib/oauth/clients';
 import { mintCode } from '@/lib/oauth/codes';
 import { verifySessionJwt, SESSION_COOKIE_NAME } from '@/lib/session';
+import { checkRateLimitDurable, getRateLimitIdentity } from '@/lib/rate-limit-durable';
 
 // Called by the consent page when Wes clicks Approve. POSTs the OAuth
 // params back, we validate them one more time (defence in depth), mint
@@ -23,6 +24,15 @@ function redirectWithError(redirect_uri: string, error: string, error_descriptio
 }
 
 export async function POST(req: NextRequest) {
+  // p1-6: 10 mints per IP per minute. This route mints OAuth codes — the
+  // tightest cap of the OAuth surface. A real human won't hit this more
+  // than a handful of times per month.
+  const { key } = await getRateLimitIdentity(req);
+  const { allowed } = await checkRateLimitDurable('oauth-finalize', key, 10, 60);
+  if (!allowed) {
+    return new NextResponse('Too many requests', { status: 429 });
+  }
+
   // Auth check — only Wes can approve.
   const authCookie = req.cookies.get(SESSION_COOKIE_NAME);
   const session = await verifySessionJwt(authCookie?.value);

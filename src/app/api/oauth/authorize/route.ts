@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
 import { findClient } from '@/lib/oauth/clients';
 import { verifySessionJwt, SESSION_COOKIE_NAME } from '@/lib/session';
+import { checkRateLimitDurable, getRateLimitIdentity } from '@/lib/rate-limit-durable';
 
 // RFC 6749 §4.1.1 Authorization Request.
 //
@@ -40,6 +41,16 @@ function badRequest(detail: string): NextResponse {
 }
 
 export async function GET(req: NextRequest) {
+  // p1-6: 30 attempts per IP per minute. Plenty of headroom for the legit
+  // human flow (one click in Claude.app sends one request) but caps any
+  // attacker spamming this endpoint with malformed params trying to learn
+  // about registered clients via differential error responses.
+  const { key } = await getRateLimitIdentity(req);
+  const { allowed } = await checkRateLimitDurable('oauth-authorize', key, 30, 60);
+  if (!allowed) {
+    return new NextResponse('Too many requests', { status: 429 });
+  }
+
   const { searchParams } = req.nextUrl;
   const response_type = searchParams.get('response_type');
   const client_id = searchParams.get('client_id');
