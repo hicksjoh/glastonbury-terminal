@@ -1,5 +1,6 @@
 import { NextRequest } from 'next/server';
 import WebSocket from 'ws';
+import { z } from 'zod';
 import {
   anthropic,
   CLAUDE_MODEL_PRIMARY,
@@ -7,6 +8,9 @@ import {
   CLAUDE_MODEL_FAST,
 } from '@/lib/claude';
 import { checkRateLimitDurable, getRateLimitIdentity } from '@/lib/rate-limit-durable';
+import { readBoundedJson, BodyTooLargeError, BODY_LIMIT } from '@/lib/bounded-body';
+import { tagAnthropicCall } from '@/lib/anthropic-cost';
+import { loggerFor } from '@/lib/request-id';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -25,10 +29,28 @@ const ELEVEN_VOICE_ID = process.env.ELEVENLABS_VOICE_ID || 'EXAVITQu4vr4xnSDxMaL
 const ELEVEN_MODEL = process.env.ELEVENLABS_MODEL || 'eleven_turbo_v2_5';
 const ELEVEN_OUTPUT_FORMAT = 'mp3_44100_128';
 
-type ClientRequestBody = {
-  transcript: string;
-  history?: { role: 'user' | 'assistant'; content: string }[];
-};
+// p6-6: bound transcript and history to prevent unbounded ElevenLabs +
+// Anthropic billing. A single transcript >12KB is way past any plausible
+// human voice utterance. History caps each message at 4KB and total at
+// 8 messages (already enforced below via .slice(-8)).
+const HISTORY_MESSAGE_MAX_LEN = 4_000;
+const TRANSCRIPT_MAX_LEN = 12_000;
+const HISTORY_MAX_MESSAGES = 8;
+
+const voiceRequestSchema = z.object({
+  transcript: z.string().min(1).max(TRANSCRIPT_MAX_LEN),
+  history: z
+    .array(
+      z.object({
+        role: z.enum(['user', 'assistant']),
+        content: z.string().max(HISTORY_MESSAGE_MAX_LEN),
+      }),
+    )
+    .max(HISTORY_MAX_MESSAGES)
+    .optional(),
+}).strict();
+
+type ClientRequestBody = z.infer<typeof voiceRequestSchema>;
 
 function sseEncode(obj: unknown): string {
   return `data: ${JSON.stringify(obj)}\n\n`;
@@ -44,6 +66,8 @@ function openElevenLabsSocket(): WebSocket {
 }
 
 export async function POST(req: NextRequest) {
+  const { log, request_id } = loggerFor(req, { route: 'keisha/voice' });
+
   // P0-6: durable, session-keyed limit (Claude + ElevenLabs both bill).
   const { key } = await getRateLimitIdentity(req);
   const { allowed } = await checkRateLimitDurable('keisha-voice', key, 30, 300);
@@ -56,13 +80,29 @@ export async function POST(req: NextRequest) {
     );
   }
 
+  // p6-6: bounded body + Zod validation. Voice transcripts can legitimately
+  // be a few KB; LARGE limit (256KB) is the upper backstop, the schema
+  // tightens further (transcript ≤12KB, history ≤8 messages of ≤4KB each).
   let body: ClientRequestBody;
   try {
-    body = (await req.json()) as ClientRequestBody;
-  } catch {
+    const raw = await readBoundedJson(req, BODY_LIMIT.LARGE);
+    const parsed = voiceRequestSchema.safeParse(raw);
+    if (!parsed.success) {
+      log.warn({ issue_count: parsed.error.issues.length }, 'voice validation failed');
+      return new Response(
+        JSON.stringify({ error: 'invalid voice request', issues: parsed.error.issues }),
+        { status: 400, headers: { 'Content-Type': 'application/json' } },
+      );
+    }
+    body = parsed.data;
+  } catch (err) {
+    if (err instanceof BodyTooLargeError) {
+      log.warn({ limit: err.limit, request_id }, 'voice body too large');
+      return new Response('Payload too large', { status: 413 });
+    }
     return new Response('Invalid JSON body', { status: 400 });
   }
-  const transcript = (body.transcript ?? '').trim();
+  const transcript = body.transcript.trim();
   if (!transcript) return new Response('Empty transcript', { status: 400 });
 
   const encoder = new TextEncoder();
@@ -134,7 +174,11 @@ export async function POST(req: NextRequest) {
 
         await elevenReady;
 
-        // Bootstrap ElevenLabs session (voice settings must be sent first)
+        // Bootstrap ElevenLabs session (voice settings must be sent first).
+        // p6-6: removed duplicate xi_api_key — already sent as the WS open
+        // header on line 42, and ElevenLabs only needs it once. Belt-and-
+        // suspenders cred transmission was a leak risk if the SSE response
+        // is ever logged or proxied.
         elevenWs.send(
           JSON.stringify({
             text: ' ',
@@ -142,7 +186,6 @@ export async function POST(req: NextRequest) {
             generation_config: {
               chunk_length_schedule: [120, 160, 250, 290],
             },
-            xi_api_key: process.env.ELEVENLABS_API_KEY,
           }),
         );
 
@@ -194,7 +237,11 @@ export async function POST(req: NextRequest) {
           send({ type: 'error', source: 'claude', message: err.message });
         });
 
-        await claudeStream.finalMessage();
+        const finalMsg = await claudeStream.finalMessage();
+        // p6-6 + p6-3: tag Anthropic spend on the streaming path. Without
+        // this, voice — one of the most expensive routes (Opus + ElevenLabs
+        // simultaneous) — is invisible to the budget-burn alert.
+        tagAnthropicCall(finalMsg.usage, modelUsed, { caller: 'keisha/voice' });
 
         // ── 3. Signal end-of-input to ElevenLabs ─────────────────────
         if (elevenWs && elevenWs.readyState === WebSocket.OPEN) {
