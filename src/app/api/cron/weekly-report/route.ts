@@ -7,6 +7,7 @@ import { pingHealthcheck } from '@/lib/healthchecks';
 import { createServiceClient } from '@/lib/supabase';
 import { cronIsAuthorized } from '@/lib/cron-auth';
 import { tryClaimCronRun, markCronRunComplete, thisWeekKeyET } from '@/lib/cron-idempotency';
+import { loggerFor } from '@/lib/request-id';
 
 // F13 — Weekly Sunday 7 PM ET auto-email report.
 //
@@ -147,8 +148,11 @@ async function buildReport(): Promise<{ subject: string; text: string; html: str
 }
 
 async function handle(req: NextRequest): Promise<NextResponse> {
+  const { log, request_id } = loggerFor(req, { route: 'cron/weekly-report' });
+
   if (!(await cronIsAuthorized(req, { routeName: 'weekly-report' }))) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    log.warn('unauthorized cron call');
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401, headers: { 'x-request-id': request_id } });
   }
 
   const dryRun = req.nextUrl.searchParams.get('mode') === 'dry-run';
@@ -161,23 +165,26 @@ async function handle(req: NextRequest): Promise<NextResponse> {
   if (!dryRun) {
     const claimed = await tryClaimCronRun(JOB_NAME, runKey);
     if (!claimed) {
-      return NextResponse.json({ ok: true, skipped: 'already_ran_this_week', runKey });
+      log.info({ run_key: runKey, outcome: 'skipped_idempotent' }, 'weekly report already ran this week');
+      return NextResponse.json({ ok: true, skipped: 'already_ran_this_week', runKey }, { headers: { 'x-request-id': request_id } });
     }
   }
 
   await pingHealthcheck(HC_SLUG, 'start');
+  log.info({ run_key: runKey, dry_run: dryRun }, 'weekly report start');
 
   try {
     const report = await buildReport();
 
     if (dryRun) {
       await pingHealthcheck(HC_SLUG, 'success');
+      log.info({ subject: report.subject, dry_run: true }, 'weekly report dry-run complete');
       return NextResponse.json({
         ok: true,
         dryRun: true,
         subject: report.subject,
         textPreview: report.text.slice(0, 600),
-      });
+      }, { headers: { 'x-request-id': request_id } });
     }
 
     const sendResult = await sendResendEmail({
@@ -188,25 +195,28 @@ async function handle(req: NextRequest): Promise<NextResponse> {
 
     if (!sendResult.ok) {
       await pingHealthcheck(HC_SLUG, 'fail');
+      log.error({ resend_error: sendResult.error ?? null }, 'weekly report send failed');
       return NextResponse.json(
         { ok: false, error: sendResult.error ?? 'send failed' },
-        { status: 502 },
+        { status: 502, headers: { 'x-request-id': request_id } },
       );
     }
 
     await pingHealthcheck(HC_SLUG, 'success');
     await markCronRunComplete(JOB_NAME, runKey, { sent_id: sendResult.id });
+    log.info({ run_key: runKey, sent_id: sendResult.id, outcome: 'success' }, 'weekly report sent');
     return NextResponse.json({
       ok: true,
       sentId: sendResult.id,
       subject: report.subject,
       runKey,
-    });
+    }, { headers: { 'x-request-id': request_id } });
   } catch (err) {
     const msg = err instanceof Error ? err.message : 'Unknown error';
     // Don't mark complete on failure — stale-window reclaim covers retries.
     await pingHealthcheck(HC_SLUG, 'fail');
-    return NextResponse.json({ ok: false, error: msg }, { status: 500 });
+    log.error({ err: msg }, 'weekly report threw');
+    return NextResponse.json({ ok: false, error: msg }, { status: 500, headers: { 'x-request-id': request_id } });
   }
 }
 
