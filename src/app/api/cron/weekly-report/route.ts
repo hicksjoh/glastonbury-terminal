@@ -163,9 +163,12 @@ async function handle(req: NextRequest): Promise<NextResponse> {
   // Dry-run skips the lease so test invocations don't burn the slot.
   const runKey = thisWeekKeyET();
   if (!dryRun) {
-    const claimed = await tryClaimCronRun(JOB_NAME, runKey);
+    // p6-9: fail-CLOSED on RPC error. If Supabase is down or the
+    // cron_runs migration hasn't been applied, we'd rather miss this
+    // week's email entirely than send it twice (Resend → real inbox).
+    const claimed = await tryClaimCronRun(JOB_NAME, runKey, { onRpcError: 'closed' });
     if (!claimed) {
-      log.info({ run_key: runKey, outcome: 'skipped_idempotent' }, 'weekly report already ran this week');
+      log.info({ run_key: runKey, outcome: 'skipped_idempotent_or_rpc_err' }, 'weekly report skipped — already ran or claim RPC failed');
       return NextResponse.json({ ok: true, skipped: 'already_ran_this_week', runKey }, { headers: { 'x-request-id': request_id } });
     }
   }

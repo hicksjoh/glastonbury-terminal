@@ -42,15 +42,25 @@ export function thisWeekKeyET(): string {
 export interface CronClaimOptions {
   /** Default 600s. After this much time, an unfinished claim is reclaimable. */
   staleAfterSeconds?: number;
+  /**
+   * Failure mode when the underlying Supabase RPC errors (DB down, migration
+   * not applied, etc.).
+   *   - 'open' (default): return true so the cron still fires. Best for
+   *     idempotent crons whose worst-case duplicate is mild (push, log entry).
+   *   - 'closed': return false so the cron skips. Best for crons whose
+   *     worst-case duplicate is BAD (Resend email, tax suggestions, anything
+   *     that fan-outs cost). p6-9 (Opus NEW issue #3).
+   */
+  onRpcError?: 'open' | 'closed';
 }
 
 /**
  * Attempt to claim the run slot for (jobName, runKey).
  * Returns true exactly once per slot within the stale window.
  *
- * Fail-open: if the underlying RPC errors (Supabase down, table missing
- * mid-deploy), returns true so the cron still fires. Better to risk a
- * duplicate than to silently miss the run; the error is logged for review.
+ * Failure mode is configurable via `onRpcError`. Default 'open' preserves
+ * the original behavior — better to risk a duplicate than to silently
+ * miss the run.
  */
 export async function tryClaimCronRun(
   jobName: string,
@@ -64,11 +74,12 @@ export async function tryClaimCronRun(
     p_stale_after_seconds: opts.staleAfterSeconds ?? 600,
   });
   if (error) {
+    const mode = opts.onRpcError ?? 'open';
     console.error(
-      `[cron-idempotency] try_claim_cron_run failed for ${jobName}/${runKey}; failing OPEN:`,
+      `[cron-idempotency] try_claim_cron_run failed for ${jobName}/${runKey}; failing ${mode.toUpperCase()}:`,
       error.message,
     );
-    return true;
+    return mode === 'open';
   }
   return data === true;
 }
