@@ -3,6 +3,8 @@ import { runCoachReview, persistCoachReview } from '@/lib/coach-engine';
 import { sendResendEmail } from '@/lib/resend-client';
 import { pingHealthcheck } from '@/lib/healthchecks';
 import { cronIsAuthorized } from '@/lib/cron-auth';
+import { captureRouteError } from '@/lib/api-error';
+import { loggerFor } from '@/lib/request-id';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -14,13 +16,19 @@ const HC_SLUG = 'cron-coach-review';
 // self-authenticate. See src/lib/cron-auth.ts for the full doc on
 // accepted auth modes. Fails CLOSED when CRON_SECRET is unset.
 async function handle(req: NextRequest): Promise<NextResponse> {
+  const { log, request_id } = loggerFor(req, { route: 'cron/coach-review' });
+
   const ok = await cronIsAuthorized(req, {
     routeName: '/api/cron/coach-review',
     allowInternalKey: true,
   });
-  if (!ok) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  if (!ok) {
+    log.warn('unauthorized cron call');
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  }
 
   await pingHealthcheck(HC_SLUG, 'start');
+  log.info('coach-review start');
 
   try {
     const result = await runCoachReview();
@@ -42,8 +50,10 @@ async function handle(req: NextRequest): Promise<NextResponse> {
       model: result.model_used,
     });
   } catch (err) {
+    const eventId = captureRouteError(err, { request_id, route: 'cron/coach-review' });
+    log.error({ err: err instanceof Error ? err.message : String(err), sentry_event_id: eventId }, 'coach-review failed');
     await pingHealthcheck(HC_SLUG, 'fail');
-    return NextResponse.json({ error: (err as Error).message }, { status: 500 });
+    return NextResponse.json({ error: 'coach-review failed', sentry_event_id: eventId }, { status: 500 });
   }
 }
 

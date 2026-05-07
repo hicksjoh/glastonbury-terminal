@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import { takePredictionSnapshot } from '@/lib/prediction-markets';
 import { pingHealthcheck } from '@/lib/healthchecks';
 import { cronIsAuthorized } from '@/lib/cron-auth';
+import { captureRouteError } from '@/lib/api-error';
+import { loggerFor } from '@/lib/request-id';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -13,15 +15,22 @@ const HC_SLUG = 'cron-prediction-snapshot';
 // self-authenticate. See src/lib/cron-auth.ts for the full doc on
 // accepted auth modes. Fails CLOSED when CRON_SECRET is unset.
 async function handle(req: NextRequest): Promise<NextResponse> {
+  const { log, request_id } = loggerFor(req, { route: 'cron/prediction-snapshot' });
+
   const ok = await cronIsAuthorized(req, {
     routeName: '/api/cron/prediction-snapshot',
   });
-  if (!ok) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  if (!ok) {
+    log.warn('unauthorized cron call');
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  }
 
   await pingHealthcheck(HC_SLUG, 'start');
+  log.info('prediction-snapshot start');
 
   try {
     const result = await takePredictionSnapshot();
+    log.info({ inserted: result.inserted, deltas: result.deltas.length }, 'prediction-snapshot success');
     await pingHealthcheck(HC_SLUG, 'success');
     return NextResponse.json({
       ok: true,
@@ -35,8 +44,10 @@ async function handle(req: NextRequest): Promise<NextResponse> {
       })),
     });
   } catch (err) {
+    const eventId = captureRouteError(err, { request_id, route: 'cron/prediction-snapshot' });
+    log.error({ err: err instanceof Error ? err.message : String(err), sentry_event_id: eventId }, 'prediction-snapshot failed');
     await pingHealthcheck(HC_SLUG, 'fail');
-    return NextResponse.json({ error: (err as Error).message }, { status: 500 });
+    return NextResponse.json({ error: 'prediction-snapshot failed', sentry_event_id: eventId }, { status: 500 });
   }
 }
 

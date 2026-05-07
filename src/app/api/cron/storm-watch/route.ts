@@ -8,6 +8,8 @@ import {
 } from '@/lib/storm-engine';
 import { pingHealthcheck } from '@/lib/healthchecks';
 import { cronIsAuthorized } from '@/lib/cron-auth';
+import { captureRouteError } from '@/lib/api-error';
+import { loggerFor } from '@/lib/request-id';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -25,12 +27,18 @@ const HC_SLUG = 'cron-storm-watch';
 // src/lib/cron-auth.ts for the full doc on accepted auth modes. Fails
 // CLOSED when CRON_SECRET is unset.
 async function handle(req: NextRequest): Promise<NextResponse> {
+  const { log, request_id } = loggerFor(req, { route: 'cron/storm-watch' });
+
   const ok = await cronIsAuthorized(req, {
     routeName: '/api/cron/storm-watch',
   });
-  if (!ok) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  if (!ok) {
+    log.warn('unauthorized cron call');
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  }
 
   await pingHealthcheck(HC_SLUG, 'start');
+  log.info('storm-watch scan start');
 
   try {
     const mockParam = req.nextUrl.searchParams.get('mock');
@@ -61,8 +69,11 @@ async function handle(req: NextRequest): Promise<NextResponse> {
       })),
     });
   } catch (err) {
+    const eventId = captureRouteError(err, { request_id, route: 'cron/storm-watch' });
+    log.error({ err: err instanceof Error ? err.message : String(err), sentry_event_id: eventId }, 'storm-watch failed');
     await pingHealthcheck(HC_SLUG, 'fail');
-    return NextResponse.json({ error: (err as Error).message }, { status: 500 });
+    // Generic message — don't leak NHC/Supabase internals via raw err string.
+    return NextResponse.json({ error: 'storm-watch failed', sentry_event_id: eventId }, { status: 500 });
   }
 }
 
