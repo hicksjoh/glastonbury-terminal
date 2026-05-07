@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { validateEquitySymbol } from '@/lib/sanitize';
 import type { IVData } from '@/lib/options/types';
 
 const ALPACA_DATA_URL = 'https://data.alpaca.markets';
@@ -14,8 +15,12 @@ export async function GET(
   _req: NextRequest,
   { params }: { params: Promise<{ symbol: string }> }
 ) {
-  const { symbol } = await params;
-  const upper = symbol.toUpperCase();
+  const { symbol: rawSymbol } = await params;
+  // p6-5: strict equity-symbol validation
+  const upper = validateEquitySymbol(rawSymbol);
+  if (!upper) {
+    return NextResponse.json({ error: 'invalid symbol' }, { status: 400 });
+  }
 
   try {
     // Get current ATM option IV from Alpaca snapshots

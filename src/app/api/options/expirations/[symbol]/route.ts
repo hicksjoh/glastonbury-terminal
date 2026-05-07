@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { validateEquitySymbol } from '@/lib/sanitize';
 
 const ALPACA_TRADING_URL = process.env.ALPACA_BASE_URL || 'https://paper-api.alpaca.markets';
 
@@ -11,8 +12,12 @@ export async function GET(
   _req: NextRequest,
   { params }: { params: Promise<{ symbol: string }> }
 ) {
-  const { symbol } = await params;
-  const upper = symbol.toUpperCase();
+  const { symbol: rawSymbol } = await params;
+  // p6-5: strict equity-symbol validation
+  const upper = validateEquitySymbol(rawSymbol);
+  if (!upper) {
+    return NextResponse.json({ error: 'invalid symbol' }, { status: 400 });
+  }
 
   try {
     // Fetch active option contracts from Alpaca

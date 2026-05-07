@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { validateEquitySymbol } from '@/lib/sanitize';
 
 const FMP_BASE = 'https://financialmodelingprep.com/stable';
 const FMP_KEY = process.env.FMP_API_KEY || '';
@@ -20,13 +21,21 @@ export async function GET(
   { params }: { params: Promise<{ symbol: string }> }
 ) {
   try {
-    const { symbol } = await params;
+    const { symbol: rawSymbol } = await params;
+    // p6-5: strict equity-symbol validation. Path-traversal / unicode
+    // attacks via the dynamic [symbol] segment can no longer reach FMP
+    // or Alpaca URLs.
+    const symbol = validateEquitySymbol(rawSymbol);
+    if (!symbol) {
+      return NextResponse.json({ error: 'invalid symbol' }, { status: 400 });
+    }
+    const encoded = encodeURIComponent(symbol);
     const range = req.nextUrl.searchParams.get('range') || '3M';
 
     const [profileRes, quoteRes, newsRes] = await Promise.all([
-      FMP_KEY ? fetch(`${FMP_BASE}/profile?symbol=${symbol}&apikey=${FMP_KEY}`) : null,
-      FMP_KEY ? fetch(`${FMP_BASE}/quote?symbol=${symbol}&apikey=${FMP_KEY}`) : null,
-      fetch(`${ALPACA_DATA}/v1beta1/news?symbols=${symbol}&limit=10&sort=desc`, { headers: alpacaHeaders }),
+      FMP_KEY ? fetch(`${FMP_BASE}/profile?symbol=${encoded}&apikey=${FMP_KEY}`) : null,
+      FMP_KEY ? fetch(`${FMP_BASE}/quote?symbol=${encoded}&apikey=${FMP_KEY}`) : null,
+      fetch(`${ALPACA_DATA}/v1beta1/news?symbols=${encoded}&limit=10&sort=desc`, { headers: alpacaHeaders }),
     ]);
 
     const profile = profileRes?.ok ? ((await profileRes.json()) as Record<string, unknown>[])[0] || null : null;
@@ -51,7 +60,7 @@ export async function GET(
 
     try {
       const barsRes = await fetch(
-        `${ALPACA_DATA}/v2/stocks/${symbol}/bars?timeframe=${config.timeframe}&start=${config.start}&feed=${config.feed}&limit=1000&sort=asc`,
+        `${ALPACA_DATA}/v2/stocks/${encoded}/bars?timeframe=${config.timeframe}&start=${encodeURIComponent(config.start)}&feed=${config.feed}&limit=1000&sort=asc`,
         { headers: alpacaHeaders }
       );
       if (barsRes.ok) {

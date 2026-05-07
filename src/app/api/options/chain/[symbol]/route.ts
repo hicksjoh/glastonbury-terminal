@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { calculateGreeks } from '@/lib/options/greeks';
 import { buildOCCSymbol } from '@/lib/options/symbols';
+import { validateEquitySymbol } from '@/lib/sanitize';
 import type { OptionChainEntry } from '@/lib/options/types';
 
 const ALPACA_DATA_URL = 'https://data.alpaca.markets';
@@ -61,6 +62,8 @@ interface FMPOptionEntry {
 }
 
 async function fetchAlpacaChain(symbol: string, expiration?: string): Promise<OptionChainEntry[]> {
+  // Caller validates symbol via validateEquitySymbol — `^[A-Z]{1,5}(\.[A-Z])?$`
+  // is URL-safe by construction, no encoding needed here.
   try {
     // First get the stock price for Greeks calculation
     const quoteRes = await fetch(`${ALPACA_DATA_URL}/v2/stocks/${symbol}/quotes/latest`, {
@@ -229,7 +232,13 @@ export async function GET(
   req: NextRequest,
   { params }: { params: Promise<{ symbol: string }> }
 ) {
-  const { symbol } = await params;
+  const { symbol: rawSymbol } = await params;
+  // p6-5: strict equity-symbol validation. Path-traversal / unicode attacks
+  // via [symbol] can no longer reach Alpaca/FMP URLs.
+  const symbol = validateEquitySymbol(rawSymbol);
+  if (!symbol) {
+    return NextResponse.json({ error: 'invalid symbol' }, { status: 400 });
+  }
   const expiration = req.nextUrl.searchParams.get('expiration') || undefined;
 
   const cacheKey = `${symbol}:${expiration || 'all'}`;
@@ -239,10 +248,10 @@ export async function GET(
   }
 
   // Try Alpaca first, fall back to FMP
-  let chain = await fetchAlpacaChain(symbol.toUpperCase(), expiration);
+  let chain = await fetchAlpacaChain(symbol, expiration);
 
   if (chain.length === 0) {
-    chain = await fetchFMPChain(symbol.toUpperCase(), expiration);
+    chain = await fetchFMPChain(symbol, expiration);
   }
 
   // Sort by expiration, then strike
@@ -255,7 +264,7 @@ export async function GET(
 
   return NextResponse.json({
     chain,
-    symbol: symbol.toUpperCase(),
+    symbol,
     count: chain.length,
   });
 }
