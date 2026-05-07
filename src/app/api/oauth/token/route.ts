@@ -5,6 +5,7 @@ import { consumeCode } from '@/lib/oauth/codes';
 import { verifyS256 } from '@/lib/oauth/pkce';
 import { createAccessToken } from '@/lib/oauth/tokens';
 import { checkRateLimitDurable, getRateLimitIdentity } from '@/lib/rate-limit-durable';
+import { loggerFor } from '@/lib/request-id';
 
 // RFC 6749 §3.2 Token Endpoint, §4.1.3 Access Token Request.
 //
@@ -16,6 +17,14 @@ import { checkRateLimitDurable, getRateLimitIdentity } from '@/lib/rate-limit-du
 // PKCE verifier guessing. The PKCE verifier is 43-128 chars of entropy
 // per RFC 7636, so even without the rate limit guessing is impossible —
 // but defence in depth.
+//
+// p3-1: error responses are GENERIC. Pre-p3-1 the route returned distinct
+// error_description strings ("Unknown client_id" vs "client_secret
+// required" vs "client_secret mismatch") which let an attacker probe the
+// registered-client table and learn confidential-vs-public clients via
+// differential responses. Now: every client-identity failure returns the
+// same body, every grant failure returns the same body. Real reasons are
+// logged server-side via the structured logger.
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -56,9 +65,12 @@ async function readParams(req: NextRequest): Promise<Record<string, string>> {
 }
 
 export async function POST(req: NextRequest) {
+  const { log } = loggerFor(req, { route: 'oauth/token' });
+
   const { key } = await getRateLimitIdentity(req);
   const { allowed } = await checkRateLimitDurable('oauth-token', key, 30, 60);
   if (!allowed) {
+    log.warn('token rate limit hit');
     return tokenError('rate_limited', 'Too many token requests', 429);
   }
 
@@ -75,38 +87,39 @@ export async function POST(req: NextRequest) {
   if (!code_verifier) return tokenError('invalid_request', 'code_verifier required');
   if (!client_id) return tokenError('invalid_request', 'client_id required');
 
+  // ─── Generic invalid_client response. Three formerly-distinct paths
+  //     (unknown client / missing secret / wrong secret) collapse to one
+  //     so the table can't be enumerated via differential responses.
+  const invalidClient = (reason: string) => {
+    log.warn({ client_id, reason }, 'token invalid_client');
+    return tokenError('invalid_client', 'client authentication failed', 401);
+  };
+
   const client = await findClient(client_id);
-  if (!client) return tokenError('invalid_client', 'Unknown client_id', 401);
+  if (!client) return invalidClient('unknown_client_id');
 
-  // Authenticate the client per its registered method.
   if (client.token_endpoint_auth_method === 'client_secret_post') {
-    if (!client_secret) return tokenError('invalid_client', 'client_secret required', 401);
+    if (!client_secret) return invalidClient('client_secret_required');
     const ok = await verifyClientSecret(client, client_secret);
-    if (!ok) return tokenError('invalid_client', 'client_secret mismatch', 401);
+    if (!ok) return invalidClient('client_secret_mismatch');
   }
-  // For 'none' (PKCE public) we don't authenticate the client identity itself
-  // — PKCE proves the requester is the same one that started the flow.
+  // 'none' (PKCE public) — PKCE itself proves the requester started the flow.
 
-  // Atomically consume the code. Fails if not found / expired / already used.
+  // ─── Generic invalid_grant response. Four formerly-distinct paths
+  //     (consume failure / client mismatch / redirect mismatch / PKCE)
+  //     collapse to one so attackers can't tell which check failed.
+  const invalidGrant = (reason: string) => {
+    log.warn({ client_id, reason }, 'token invalid_grant');
+    return tokenError('invalid_grant', 'authorization grant invalid');
+  };
+
   const row = await consumeCode(code);
-  if (!row) {
-    return tokenError('invalid_grant', 'code is invalid, expired, or already used');
-  }
+  if (!row) return invalidGrant('consume_failed');
+  if (row.client_id !== client_id) return invalidGrant('client_mismatch');
+  if (row.redirect_uri !== redirect_uri) return invalidGrant('redirect_uri_mismatch');
 
-  // Bind: the same client must be the one that created the code.
-  if (row.client_id !== client_id) {
-    return tokenError('invalid_grant', 'code was issued to a different client');
-  }
-  // Bind: redirect_uri must match the one used at /authorize.
-  if (row.redirect_uri !== redirect_uri) {
-    return tokenError('invalid_grant', 'redirect_uri does not match the authorize step');
-  }
-
-  // PKCE verification.
   const pkceOk = await verifyS256(code_verifier, row.code_challenge);
-  if (!pkceOk) {
-    return tokenError('invalid_grant', 'PKCE verification failed');
-  }
+  if (!pkceOk) return invalidGrant('pkce_failed');
 
   // Mint the access token.
   const { token, expires_in } = await createAccessToken({
