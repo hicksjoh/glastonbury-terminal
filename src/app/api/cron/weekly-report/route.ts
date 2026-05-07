@@ -6,6 +6,7 @@ import { sendResendEmail } from '@/lib/resend-client';
 import { pingHealthcheck } from '@/lib/healthchecks';
 import { createServiceClient } from '@/lib/supabase';
 import { cronIsAuthorized } from '@/lib/cron-auth';
+import { tryClaimCronRun, markCronRunComplete, thisWeekKeyET } from '@/lib/cron-idempotency';
 
 // F13 — Weekly Sunday 7 PM ET auto-email report.
 //
@@ -23,6 +24,7 @@ export const dynamic = 'force-dynamic';
 export const maxDuration = 60;
 
 const HC_SLUG = 'weekly-report';
+const JOB_NAME = 'weekly-report';
 
 function fmtUSD(n: number): string {
   return n.toLocaleString('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 });
@@ -150,6 +152,19 @@ async function handle(req: NextRequest): Promise<NextResponse> {
   }
 
   const dryRun = req.nextUrl.searchParams.get('mode') === 'dry-run';
+
+  // Idempotency: one Sunday report per week. A Monday-morning Vercel retry
+  // for Sunday's missed run uses the same key (anchors on prior Sunday in
+  // ET) so we don't double-email.
+  // Dry-run skips the lease so test invocations don't burn the slot.
+  const runKey = thisWeekKeyET();
+  if (!dryRun) {
+    const claimed = await tryClaimCronRun(JOB_NAME, runKey);
+    if (!claimed) {
+      return NextResponse.json({ ok: true, skipped: 'already_ran_this_week', runKey });
+    }
+  }
+
   await pingHealthcheck(HC_SLUG, 'start');
 
   try {
@@ -180,13 +195,16 @@ async function handle(req: NextRequest): Promise<NextResponse> {
     }
 
     await pingHealthcheck(HC_SLUG, 'success');
+    await markCronRunComplete(JOB_NAME, runKey, { sent_id: sendResult.id });
     return NextResponse.json({
       ok: true,
       sentId: sendResult.id,
       subject: report.subject,
+      runKey,
     });
   } catch (err) {
     const msg = err instanceof Error ? err.message : 'Unknown error';
+    // Don't mark complete on failure — stale-window reclaim covers retries.
     await pingHealthcheck(HC_SLUG, 'fail');
     return NextResponse.json({ ok: false, error: msg }, { status: 500 });
   }

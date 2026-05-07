@@ -11,10 +11,12 @@ import {
 import { getSectorPerformance } from '@/lib/fmp-client';
 import { pingHealthcheck } from '@/lib/healthchecks';
 import { cronIsAuthorized } from '@/lib/cron-auth';
+import { tryClaimCronRun, markCronRunComplete, todayKeyET } from '@/lib/cron-idempotency';
 import { sendPushNotification } from '@/lib/web-push';
 import type { PushSubscriptionData } from '@/lib/web-push';
 
 const HC_SLUG = 'briefing-scheduled';
+const JOB_NAME = 'briefing-scheduled';
 
 // ─── Gather all portfolio + market data ───────────────────
 async function gatherPortfolioData() {
@@ -141,6 +143,19 @@ async function runScheduledBriefing(req: NextRequest) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
+  // Idempotency: one briefing per ET-day. Vercel cron retries (or accidental
+  // double-fires) for the same day return the existing successful run instead
+  // of generating a duplicate Opus call + duplicate push notifications.
+  const runKey = todayKeyET();
+  const claimed = await tryClaimCronRun(JOB_NAME, runKey);
+  if (!claimed) {
+    return NextResponse.json({
+      ok: true,
+      skipped: 'already_ran_today',
+      runKey,
+    });
+  }
+
   await pingHealthcheck(HC_SLUG, 'start');
 
   try {
@@ -228,6 +243,10 @@ async function runScheduledBriefing(req: NextRequest) {
     }
 
     await pingHealthcheck(HC_SLUG, 'success');
+    await markCronRunComplete(JOB_NAME, runKey, {
+      briefing_id: data.id,
+      push_sent: pushSent,
+    });
 
     return NextResponse.json({
       success: true,
@@ -235,6 +254,7 @@ async function runScheduledBriefing(req: NextRequest) {
       id: data.id,
       created_at: data.created_at,
       pushNotificationsSent: pushSent,
+      runKey,
       context_summary: {
         positions_count: portfolio.positions.length,
         equity: portfolio.equity,
@@ -245,6 +265,9 @@ async function runScheduledBriefing(req: NextRequest) {
   } catch (error) {
     const msg = error instanceof Error ? error.message : 'Unknown error';
     console.error('Scheduled briefing error:', msg);
+    // Intentionally NOT marking complete — a future retry should be allowed
+    // after the stale window so a transient Anthropic outage doesn't lose
+    // today's briefing.
     await pingHealthcheck(HC_SLUG, 'fail');
     return NextResponse.json({ error: msg }, { status: 500 });
   }
