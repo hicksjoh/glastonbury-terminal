@@ -125,7 +125,10 @@ interface AlpacaFetchOptions extends RequestInit {
  *   - upstream body preserved on the error for Sentry but NOT echoed
  *     to the public response unless the caller explicitly opts in
  */
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
+// Default T = any so existing callers (getAccount, getPositions, etc.)
+// keep their unrestricted return shapes. Specific call sites pass T to
+// narrow at use; in p6-15+ we'll add explicit return-type annotations.
+// eslint-disable-next-line
 export async function alpacaFetch<T = any>(
   endpoint: string,
   options: AlpacaFetchOptions = {},
