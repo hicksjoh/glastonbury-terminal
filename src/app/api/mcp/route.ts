@@ -3,6 +3,7 @@ import { WebStandardStreamableHTTPServerTransport } from '@modelcontextprotocol/
 import { buildTerminalMcpServer } from '@/lib/mcp/server';
 import { verifyAccessToken } from '@/lib/oauth/tokens';
 import { buildWwwAuthenticate, getIssuer } from '@/lib/oauth/metadata';
+import { safeSecretEqual } from '@/lib/safe-compare';
 
 // F1 — MCP streamable-HTTP transport.
 //
@@ -35,11 +36,15 @@ async function authorize(req: NextRequest): Promise<AuthResult> {
   const header = req.headers.get('authorization') ?? '';
   const expected = process.env.MCP_AUTH_TOKEN;
 
-  // Mode 1: static MCP_AUTH_TOKEN bearer
-  if (expected && header === `Bearer ${expected}`) return { ok: true };
+  // Mode 1: static MCP_AUTH_TOKEN bearer (constant-time compare)
+  if (expected && header.startsWith('Bearer ')) {
+    if (safeSecretEqual(header.slice(7), expected)) return { ok: true };
+  }
 
-  // Mode 3: x-api-key
-  if (expected && req.headers.get('x-api-key') === expected) return { ok: true };
+  // Mode 3: x-api-key (constant-time compare)
+  if (expected && safeSecretEqual(req.headers.get('x-api-key'), expected)) {
+    return { ok: true };
+  }
 
   // Mode 2: OAuth Bearer JWT
   const m = /^Bearer\s+(.+)$/i.exec(header);

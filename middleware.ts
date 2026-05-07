@@ -1,53 +1,74 @@
 import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
 import { verifySessionJwt, SESSION_COOKIE_NAME } from '@/lib/session';
+import { safeSecretEqual } from '@/lib/safe-compare';
 
-// API routes that don't require gt-auth cookie authentication.
-// NOTE: briefing/scheduled, portfolio/snapshot, and the four /api/cron/*
-// routes below all handle their own CRON_SECRET auth at the route level.
+// Public route allowlist.
 //
-// P0-3 (hardening/p0-codex-fixes):
-//   - /api/healthz is the new public liveness probe — emits only
-//     { status, timestamp } and is safe for Vercel uptime monitors.
-//   - /api/health is no longer public. The rich diagnostics (env validity,
-//     rate-limit state, circuit state) sit behind the session-cookie gate
-//     so the dashboard's Connections widget keeps working but unauthenticated
-//     callers can't fingerprint the backend.
-//   - /api/push/subscribe is no longer public — see P0-5.
-const PUBLIC_API_ROUTES = [
-  '/api/auth/login',
-  '/api/healthz',
-  '/api/briefing/scheduled',
-  '/api/briefing/morning-push',
-  '/api/cron/weekly-report',
-  '/api/cron/storm-watch',
-  '/api/cron/tax-harvest',
-  '/api/cron/coach-review',
-  '/api/cron/prediction-snapshot',
-  '/api/portfolio/snapshot',
-  '/api/img',
-  '/api/mcp',  // MCP server; gates on MCP_AUTH_TOKEN bearer or OAuth JWT internally (F1)
-  '/api/share/',  // F17 tokenized read-only dashboards — token IS the auth
-  '/share/',  // F17 share-page UI — public read-only
-  '/monitoring',  // Sentry tunnel route (see next.config.js tunnelRoute)
-  // OAuth 2.0 / RFC 7591 dynamic client registration + token endpoint
-  // (see /api/oauth/*). These MUST be public — Claude.app et al. hit them
-  // before they have a session.
-  '/api/oauth/register',
-  '/api/oauth/token',
-  // /api/oauth/authorize is technically auth-protected but the route
-  // handler does its own session check + redirects to /login?next=...
-  // when unauthenticated. We list it here so the middleware doesn't
-  // intercept with a 401 JSON response (which would break the browser-
-  // navigation flow from Claude.app's connector popup).
-  '/api/oauth/authorize',
-  // RFC 8414 + 9728 metadata endpoints. Both the .well-known path (what
-  // clients hit) and the /api/wellknown rewrite target are listed because
-  // Next.js middleware runs against the original URL before rewrites.
-  '/.well-known/oauth-authorization-server',
-  '/.well-known/oauth-protected-resource',
-  '/api/wellknown/',
+// P0-3 (hardening/p0-codex-fixes) tightened the static-asset regex so that
+// dotted dynamic routes (e.g. /stock/BRK.B) no longer bypassed auth. P1
+// (this commit) tightens the API allowlist similarly: each entry is now
+// either `exact` (single endpoint) or `prefix` (whole subtree). The legacy
+// `pathname.startsWith(route)` matched `/api/mcp` against any future sibling
+// like `/api/mcp-debug` — over-broad in a 137-route app, even if no such
+// route exists today. This rule structure makes intent explicit.
+//
+// History:
+//   - briefing/scheduled, portfolio/snapshot, and /api/cron/* routes self-
+//     authenticate via cronIsAuthorized() at the route handler level.
+//   - /api/healthz is the public liveness probe (P0-3); /api/health is
+//     behind auth for richer diagnostics.
+//   - /api/push/subscribe was moved off this list in P0-5 (it now does
+//     its own session check inside the handler).
+type PublicRouteRule = { path: string; match: 'exact' | 'prefix' };
+
+const PUBLIC_ROUTES: PublicRouteRule[] = [
+  // Single endpoints — exact match.
+  { path: '/api/auth/login', match: 'exact' },
+  { path: '/api/healthz', match: 'exact' },
+  { path: '/api/briefing/scheduled', match: 'exact' },
+  { path: '/api/briefing/morning-push', match: 'exact' },
+  { path: '/api/cron/weekly-report', match: 'exact' },
+  { path: '/api/cron/storm-watch', match: 'exact' },
+  { path: '/api/cron/tax-harvest', match: 'exact' },
+  { path: '/api/cron/coach-review', match: 'exact' },
+  { path: '/api/cron/prediction-snapshot', match: 'exact' },
+  { path: '/api/portfolio/snapshot', match: 'exact' },
+  { path: '/api/img', match: 'exact' },
+  // MCP server endpoint; gates on MCP_AUTH_TOKEN bearer or OAuth JWT internally (F1).
+  { path: '/api/mcp', match: 'exact' },
+  // OAuth 2.0 / RFC 7591 — Claude.app et al. hit these before they have a session.
+  { path: '/api/oauth/register', match: 'exact' },
+  { path: '/api/oauth/token', match: 'exact' },
+  // /api/oauth/authorize does its own session check + redirects to /login?next=...
+  // when unauthenticated. We allow-list it here so the middleware doesn't intercept
+  // with a 401 JSON response (which would break the browser-navigation flow from
+  // Claude.app's connector popup).
+  { path: '/api/oauth/authorize', match: 'exact' },
+  // RFC 8414 + 9728 metadata endpoints. Both the .well-known path (what clients hit)
+  // and the /api/wellknown rewrite target are allow-listed because Next.js middleware
+  // runs against the original URL before rewrites.
+  { path: '/.well-known/oauth-authorization-server', match: 'exact' },
+  { path: '/.well-known/oauth-protected-resource', match: 'exact' },
+
+  // Subtree allowlists — prefix match. Trailing slash kept in `path` for clarity
+  // and to prevent accidentally matching `/api/sharex` against `/api/share/`.
+  { path: '/api/share/', match: 'prefix' },  // F17 tokenized read-only dashboards
+  { path: '/share/', match: 'prefix' },       // F17 share-page UI
+  { path: '/api/wellknown/', match: 'prefix' }, // /api/wellknown/oauth-*
+  // Sentry tunnel route — Sentry SDK appends an event ID path segment
+  // (e.g. /monitoring/<envelope-id>). Must allow the whole subtree.
+  { path: '/monitoring', match: 'prefix' },
 ];
+
+function isPublicRoute(pathname: string): boolean {
+  for (const rule of PUBLIC_ROUTES) {
+    if (rule.match === 'exact' ? pathname === rule.path : pathname.startsWith(rule.path)) {
+      return true;
+    }
+  }
+  return false;
+}
 
 // Static assets ONLY. Tightened twice on 2026-04-28 (Codex review):
 //   Round 1: replaced `pathname.includes('.')` (which let dotted symbols
@@ -70,7 +91,7 @@ export async function middleware(request: NextRequest) {
     return NextResponse.next();
   }
 
-  if (PUBLIC_API_ROUTES.some(route => pathname.startsWith(route))) {
+  if (isPublicRoute(pathname)) {
     return NextResponse.next();
   }
 
@@ -93,10 +114,10 @@ export async function middleware(request: NextRequest) {
   // Protected API routes: return 401 JSON instead of redirect
   if (pathname.startsWith('/api/')) {
     // Server-to-server bypass: still supports INTERNAL_API_KEY for Keisha
-    // tool execution + any other internal callers.
-    const internalKey = request.headers.get('x-internal-key');
+    // tool execution + any other internal callers. Constant-time compare so
+    // a leaked-key probe can't be inferred from response timing.
     const expectedKey = process.env.INTERNAL_API_KEY;
-    if (expectedKey && internalKey === expectedKey) {
+    if (expectedKey && safeSecretEqual(request.headers.get('x-internal-key'), expectedKey)) {
       return NextResponse.next();
     }
     if (!isAuthenticated) {

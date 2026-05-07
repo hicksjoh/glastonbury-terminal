@@ -19,6 +19,7 @@
 
 import type { NextRequest } from 'next/server';
 import { verifySessionJwt, SESSION_COOKIE_NAME } from '@/lib/session';
+import { safeSecretEqual } from '@/lib/safe-compare';
 
 export interface CronAuthOptions {
   /** Route name for diagnostic logs when CRON_SECRET is missing. */
@@ -43,14 +44,19 @@ export async function cronIsAuthorized(
     return false;
   }
 
+  // Constant-time compare so an attacker can't statistically recover
+  // CRON_SECRET / INTERNAL_API_KEY by timing many probe requests.
   const authHeader = req.headers.get('authorization') ?? '';
-  if (authHeader === `Bearer ${cronSecret}`) return true;
-  if (req.headers.get('x-api-key') === cronSecret) return true;
+  if (authHeader.startsWith('Bearer ')) {
+    if (safeSecretEqual(authHeader.slice(7), cronSecret)) return true;
+  }
+  if (safeSecretEqual(req.headers.get('x-api-key'), cronSecret)) return true;
 
   if (opts.allowInternalKey) {
-    const internalKey = req.headers.get('x-internal-key') ?? '';
-    const expectedInternal = process.env.INTERNAL_API_KEY ?? '';
-    if (expectedInternal && internalKey === expectedInternal) return true;
+    const expectedInternal = process.env.INTERNAL_API_KEY;
+    if (expectedInternal && safeSecretEqual(req.headers.get('x-internal-key'), expectedInternal)) {
+      return true;
+    }
   }
 
   // gt-auth cookie path — must be a valid signed JWT, not just present.
