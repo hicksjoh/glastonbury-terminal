@@ -3,6 +3,7 @@ import type { NextRequest } from 'next/server';
 import { findClient } from '@/lib/oauth/clients';
 import { verifySessionJwt, SESSION_COOKIE_NAME } from '@/lib/session';
 import { checkRateLimitDurable, getRateLimitIdentity } from '@/lib/rate-limit-durable';
+import { mintConsentTransaction } from '@/lib/oauth/consent-tx';
 
 // RFC 6749 §4.1.1 Authorization Request.
 //
@@ -10,11 +11,12 @@ import { checkRateLimitDurable, getRateLimitIdentity } from '@/lib/rate-limit-du
 //   - If not signed into the terminal: 302 → /login?next=<this URL>
 //   - If signed in but params invalid: redirect back to client redirect_uri
 //     with ?error=...&error_description=... per RFC 6749 §4.1.2.1
-//   - If signed in and valid: 302 → /oauth/consent with all params preserved
+//   - If signed in and valid: mint a consent transaction (server-side
+//     binding) and 302 → /oauth/consent?tx=<id> with ONLY the tx id.
 //
-// We never auto-mint codes here — the human must click Approve on the
-// consent page first. That gives one extra layer of defense against a
-// malicious client tricking Wes by chaining redirects.
+// p3-2 (Codex #7): we no longer round-trip every authorize parameter
+// through the consent UI's hidden form fields. The transaction ID is
+// the only thing exposed; finalize loads the params server-side.
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -114,12 +116,29 @@ export async function GET(req: NextRequest) {
     return NextResponse.redirect(loginUrl, { status: 303 });
   }
 
-  // Forward to consent page with the same params. The consent page reads
-  // them, shows client info to Wes, and POSTs to /api/oauth/finalize.
-  const consentUrl = new URL('/oauth/consent', req.url);
-  for (const k of ['response_type', 'client_id', 'redirect_uri', 'code_challenge', 'code_challenge_method', 'scope', 'state']) {
-    const v = searchParams.get(k);
-    if (v !== null) consentUrl.searchParams.set(k, v);
+  // Mint a server-side consent transaction. The tx_id is the only thing
+  // we put in the URL — the consent page loads params from Supabase via
+  // peekConsentTransaction(), and /api/oauth/finalize consumes the row
+  // atomically. Hidden form fields are no longer load-bearing.
+  let tx_id: string;
+  try {
+    tx_id = await mintConsentTransaction({
+      client_id,
+      redirect_uri,
+      code_challenge: code_challenge as string,
+      code_challenge_method: 'S256',
+      scope,
+      subject: session.sub,
+      state: state ?? null,
+    });
+  } catch {
+    // If we can't mint (Supabase outage), fail with a generic error rather
+    // than redirecting to the client redirect_uri (which would expose a
+    // sentinel error_description that could be used for fingerprinting).
+    return badRequest('Internal error preparing consent');
   }
+
+  const consentUrl = new URL('/oauth/consent', req.url);
+  consentUrl.searchParams.set('tx', tx_id);
   return NextResponse.redirect(consentUrl, { status: 303 });
 }

@@ -57,17 +57,22 @@ interface CodeResult {
 
 /**
  * Walk the authorize → consent → finalize half of the OAuth flow against
- * the live server, ending with an authorization code. We can skip the
- * browser-rendered /oauth/consent page by POSTing the same form fields
- * directly to /api/oauth/finalize, which is what the consent page itself
- * does on Approve.
+ * the live server, ending with an authorization code.
+ *
+ * Post-p3-2 the consent page is keyed by a server-side transaction. The
+ * helper:
+ *   1. GETs /api/oauth/authorize with the OAuth params,
+ *   2. captures the tx_id from the Location header (redirect to /oauth/consent?tx=...),
+ *   3. POSTs that tx to /api/oauth/finalize,
+ *   4. captures the code from the resulting redirect to redirect_uri.
  */
 async function getAuthCode(
   req: APIRequestContext,
   client: TestClient,
   challenge: string,
 ): Promise<string | null> {
-  const form = new URLSearchParams({
+  const authorizeParams = new URLSearchParams({
+    response_type: 'code',
     client_id: client.client_id,
     redirect_uri: client.redirect_uri,
     code_challenge: challenge,
@@ -75,14 +80,23 @@ async function getAuthCode(
     scope: 'mcp',
     state: 'e2e-state',
   });
-  const res = await req.post('/api/oauth/finalize', {
-    data: form.toString(),
+  const authorizeRes = await req.get(`/api/oauth/authorize?${authorizeParams.toString()}`, {
+    maxRedirects: 0,
+  });
+  expect(authorizeRes.status(), 'authorize should redirect 303 to /oauth/consent?tx=...').toBe(303);
+  const consentLoc = authorizeRes.headers()['location'];
+  expect(consentLoc).toMatch(/\/oauth\/consent\?tx=/);
+  const tx = new URL(consentLoc!, 'https://example.com').searchParams.get('tx');
+  expect(tx).not.toBeNull();
+
+  const finalizeForm = new URLSearchParams({ tx: tx! });
+  const finalizeRes = await req.post('/api/oauth/finalize', {
+    data: finalizeForm.toString(),
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
     maxRedirects: 0,
   });
-  // 303 to the client redirect_uri with ?code=...&state=...
-  expect(res.status(), 'finalize should redirect 303').toBe(303);
-  const loc = res.headers()['location'];
+  expect(finalizeRes.status(), 'finalize should redirect 303 to client').toBe(303);
+  const loc = finalizeRes.headers()['location'];
   if (!loc) return null;
   const u = new URL(loc);
   return u.searchParams.get('code');

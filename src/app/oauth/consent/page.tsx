@@ -1,28 +1,24 @@
 import { findClient } from '@/lib/oauth/clients';
+import { peekConsentTransaction } from '@/lib/oauth/consent-tx';
 
 // OAuth consent screen.
 //
-// Server component — reads the request's search params, looks up the client
-// metadata, and renders a single-screen Approve/Deny form. This is the
-// only place where Wes can grant a client access to /api/mcp; without
-// this approval the auth code is never minted.
+// Server component — reads the `tx` query param (issued by /api/oauth/authorize),
+// loads the bound transaction server-side, and renders Approve/Deny.
 //
-// The form posts to /api/oauth/finalize, which mints the code and 303s
-// to the client's redirect_uri. The Deny button just redirects back to
-// home — clients don't get notified, but they'll fail the eventual token
-// exchange and Claude.app shows its own "didn't work" UI.
+// p3-2 (Codex #7): the consent page no longer trusts URL parameters for
+// client_id, redirect_uri, code_challenge, etc. Those are loaded from the
+// oauth_consent_transactions row keyed by tx_id. The Approve form posts
+// ONLY the tx_id back to /api/oauth/finalize, which atomically consumes
+// the row and mints the code from server-side state. A CSRF gadget that
+// tricked Wes into POSTing a constructed form can no longer mint a code
+// for an attacker-chosen client_id+redirect_uri tuple.
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
 
 interface ConsentSearchParams {
-  response_type?: string;
-  client_id?: string;
-  redirect_uri?: string;
-  code_challenge?: string;
-  code_challenge_method?: string;
-  scope?: string;
-  state?: string;
+  tx?: string;
 }
 
 export default async function ConsentPage({
@@ -30,18 +26,9 @@ export default async function ConsentPage({
 }: {
   searchParams: ConsentSearchParams;
 }) {
-  const {
-    client_id,
-    redirect_uri,
-    code_challenge,
-    code_challenge_method,
-    scope = 'mcp',
-    state,
-  } = searchParams;
+  const { tx } = searchParams;
 
-  // Bare-minimum guard — /api/oauth/authorize already validated, but if a
-  // user lands here directly (e.g., bookmarked) we want a clean error.
-  if (!client_id || !redirect_uri || !code_challenge) {
+  if (!tx) {
     return (
       <Shell>
         <h1 style={{ color: '#ff6b6b', marginTop: 0 }}>Invalid consent request</h1>
@@ -53,6 +40,21 @@ export default async function ConsentPage({
       </Shell>
     );
   }
+
+  const transaction = await peekConsentTransaction(tx);
+  if (!transaction) {
+    return (
+      <Shell>
+        <h1 style={{ color: '#ff6b6b', marginTop: 0 }}>Consent request expired</h1>
+        <p style={{ color: '#a0a0b0' }}>
+          This consent request is unknown, expired, or already approved.
+          Restart the authorization flow from the client app.
+        </p>
+      </Shell>
+    );
+  }
+
+  const { client_id, redirect_uri } = transaction;
 
   const client = await findClient(client_id);
   if (!client) {
@@ -71,9 +73,9 @@ export default async function ConsentPage({
       <Shell>
         <h1 style={{ color: '#ff6b6b', marginTop: 0 }}>Mismatched redirect URI</h1>
         <p style={{ color: '#a0a0b0' }}>
-          The redirect URI in this request does not match any URI registered
-          for <strong>{escapeHtml(client.client_name)}</strong>. This is
-          a strong signal of tampering — do not approve.
+          The redirect URI on this transaction does not match any URI
+          registered for <strong>{escapeHtml(client.client_name)}</strong>.
+          This is a strong signal of tampering — do not approve.
         </p>
       </Shell>
     );
@@ -128,12 +130,8 @@ export default async function ConsentPage({
       </Section>
 
       <form method="post" action="/api/oauth/finalize" style={{ display: 'flex', gap: 12, marginTop: 24 }}>
-        <input type="hidden" name="client_id" value={client_id} />
-        <input type="hidden" name="redirect_uri" value={redirect_uri} />
-        <input type="hidden" name="code_challenge" value={code_challenge} />
-        <input type="hidden" name="code_challenge_method" value={code_challenge_method ?? 'S256'} />
-        <input type="hidden" name="scope" value={scope} />
-        {state ? <input type="hidden" name="state" value={state} /> : null}
+        {/* The transaction id IS the consent — finalize loads everything server-side. */}
+        <input type="hidden" name="tx" value={tx} />
 
         <button
           type="submit"
