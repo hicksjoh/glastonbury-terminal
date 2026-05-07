@@ -4,6 +4,7 @@ import { createServiceClient } from '@/lib/supabase';
 import { verifySessionJwt, SESSION_COOKIE_NAME } from '@/lib/session';
 import { checkRateLimitDurable } from '@/lib/rate-limit-durable';
 import { publicError, validationError, captureAndPublic } from '@/lib/api-error';
+import { loggerFor } from '@/lib/request-id';
 
 // P0-5 (hardening/p0-codex-fixes).
 //
@@ -98,6 +99,8 @@ async function rateLimitOrReject(sub: string) {
 }
 
 export async function POST(req: NextRequest) {
+  const { log, request_id } = loggerFor(req, { route: 'push/subscribe' });
+
   // Belt + suspenders: middleware should have already 401'd unauthenticated
   // calls now that this route is gated, but we re-check inside the handler
   // because PUBLIC_API_ROUTES history shows route configs drift over time.
@@ -105,16 +108,22 @@ export async function POST(req: NextRequest) {
   if (!session) return publicError('UNAUTHORIZED');
 
   const limited = await rateLimitOrReject(session.sub);
-  if (limited) return limited;
+  if (limited) {
+    log.warn('push subscribe rate limited');
+    return limited;
+  }
 
   let parsed;
   try {
     const raw = await req.json();
     const result = requestSchema.safeParse(raw);
-    if (!result.success) return validationError(result.error);
+    if (!result.success) {
+      log.warn({ issue_count: result.error.issues.length }, 'push subscribe validation failed');
+      return validationError(result.error);
+    }
     parsed = result.data;
   } catch (err) {
-    return captureAndPublic(err, 'VALIDATION_ERROR', 'Invalid JSON body');
+    return captureAndPublic(err, 'VALIDATION_ERROR', 'Invalid JSON body', undefined, { request_id, route: 'push/subscribe' });
   }
 
   try {
@@ -132,35 +141,45 @@ export async function POST(req: NextRequest) {
       );
     if (error) throw new Error(error.message);
   } catch (err) {
-    return captureAndPublic(err, 'INTERNAL_ERROR', 'Failed to save subscription');
+    return captureAndPublic(err, 'INTERNAL_ERROR', 'Failed to save subscription', undefined, { request_id, route: 'push/subscribe' });
   }
 
+  log.info({ outcome: 'subscribed' }, 'push subscription upserted');
   return NextResponse.json({ success: true });
 }
 
 export async function DELETE(req: NextRequest) {
+  const { log, request_id } = loggerFor(req, { route: 'push/subscribe' });
+
   const session = await getSession(req);
   if (!session) return publicError('UNAUTHORIZED');
 
   const limited = await rateLimitOrReject(session.sub);
-  if (limited) return limited;
+  if (limited) {
+    log.warn('push unsubscribe rate limited');
+    return limited;
+  }
 
   let parsed;
   try {
     const raw = await req.json();
     const result = deleteSchema.safeParse(raw);
-    if (!result.success) return validationError(result.error);
+    if (!result.success) {
+      log.warn({ issue_count: result.error.issues.length }, 'push unsubscribe validation failed');
+      return validationError(result.error);
+    }
     parsed = result.data;
   } catch (err) {
-    return captureAndPublic(err, 'VALIDATION_ERROR', 'Invalid JSON body');
+    return captureAndPublic(err, 'VALIDATION_ERROR', 'Invalid JSON body', undefined, { request_id, route: 'push/subscribe' });
   }
 
   try {
     const supabase = createServiceClient();
     await supabase.from('push_subscriptions').delete().eq('endpoint', parsed.endpoint);
   } catch (err) {
-    return captureAndPublic(err, 'INTERNAL_ERROR', 'Failed to delete subscription');
+    return captureAndPublic(err, 'INTERNAL_ERROR', 'Failed to delete subscription', undefined, { request_id, route: 'push/subscribe' });
   }
 
+  log.info({ outcome: 'unsubscribed' }, 'push subscription deleted');
   return NextResponse.json({ success: true });
 }
