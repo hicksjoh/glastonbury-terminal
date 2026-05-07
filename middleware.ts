@@ -34,6 +34,7 @@ const PUBLIC_ROUTES: PublicRouteRule[] = [
   { path: '/api/cron/coach-review', match: 'exact' },
   { path: '/api/cron/prediction-snapshot', match: 'exact' },
   { path: '/api/cron/slo-roundup', match: 'exact' },
+  { path: '/api/cron/migration-drift-check', match: 'exact' },
   { path: '/api/portfolio/snapshot', match: 'exact' },
   { path: '/api/img', match: 'exact' },
   // MCP server endpoint; gates on MCP_AUTH_TOKEN bearer or OAuth JWT internally (F1).

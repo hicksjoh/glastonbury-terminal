@@ -20,6 +20,7 @@ column is the equivalent local time during DST (subtract 1h for EST winter).
 | `/api/cron/coach-review` | `0 1 * * 1` | 9:00 PM Sun | `cron-coach-review` | unique per weekOf | Anthropic Opus call · INSERT review · Resend email |
 | `/api/cron/weekly-report` | `0 23 * * 0` | 7:00 PM Sun | `weekly-report` | ✅ p1-4 | INSERT snapshot · Resend email |
 | `/api/cron/slo-roundup` | `0 21 * * 5` | 5:00 PM Fri | `slo-roundup` | ✅ p1-4 (per-week) | Aggregate SLO counters · Resend email |
+| `/api/cron/migration-drift-check` | `0 13 * * 1` | 9:00 AM Mon | `migration-drift-check` | ✅ p1-4 (per-week) | Canary-check schema · Resend alert if drift |
 
 ## Healthchecks.io setup (one-time)
 
@@ -43,6 +44,7 @@ isn't set, it silently no-ops. To activate:
    | `cron-coach-review` | 7 days | 4 hours | Email |
    | `weekly-report` | 7 days | 4 hours | Email |
    | `slo-roundup` | 7 days | 4 hours | Email |
+   | `migration-drift-check` | 7 days | 4 hours | Email |
 
 ## Why these specific schedules
 
