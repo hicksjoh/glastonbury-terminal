@@ -1,6 +1,8 @@
 import { NextResponse } from 'next/server';
 import { createServiceClient } from '@/lib/supabase';
 import { rateLimit } from '@/lib/rate-limit';
+import { captureRouteError } from '@/lib/api-error';
+import { loggerFor } from '@/lib/request-id';
 import type { FilingStatus } from '@/lib/tax-engine';
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -105,6 +107,7 @@ export async function GET(): Promise<NextResponse> {
 const VALID_FILING_STATUSES = ['single', 'mfj', 'mfs', 'hoh'];
 
 export async function PUT(request: Request): Promise<NextResponse> {
+  const { log, request_id } = loggerFor(request, { route: 'tax/profile' });
   const rl = rateLimit('tax-profile-put', 15, 60000);
   if (!rl.allowed) {
     return NextResponse.json(
@@ -213,9 +216,11 @@ export async function PUT(request: Request): Promise<NextResponse> {
       .single();
 
     if (updateErr) {
-      console.error('[tax/profile] UPDATE error:', updateErr.message);
+      const eventId = captureRouteError(updateErr, { request_id, route: 'tax/profile/put' });
+      log.error({ err: updateErr.message, sentry_event_id: eventId }, 'tax-profile update failed');
+      // Codex finding (#14): don't echo raw Supabase error message to client.
       return NextResponse.json(
-        { success: false, error: updateErr.message },
+        { success: false, error: 'Failed to update tax profile', sentry_event_id: eventId },
         { status: 500 },
       );
     }
@@ -225,8 +230,12 @@ export async function PUT(request: Request): Promise<NextResponse> {
       data: updated as TaxProfile,
     });
   } catch (err) {
-    const msg = err instanceof Error ? err.message : 'Failed to update tax profile';
-    console.error('[tax/profile] Error:', msg);
-    return NextResponse.json({ success: false, error: msg }, { status: 500 });
+    const eventId = captureRouteError(err, { request_id, route: 'tax/profile/put' });
+    log.error({ err: err instanceof Error ? err.message : String(err), sentry_event_id: eventId }, 'tax-profile threw');
+    // Generic message — full detail in Sentry, indexable by eventId.
+    return NextResponse.json(
+      { success: false, error: 'Failed to update tax profile', sentry_event_id: eventId },
+      { status: 500 },
+    );
   }
 }

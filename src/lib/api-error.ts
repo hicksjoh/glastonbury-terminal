@@ -88,18 +88,51 @@ export function validationError(zodErr: ZodError, message?: string): NextRespons
  * Capture an exception to Sentry (no-op if no DSN) and return a generic
  * client response with the captured eventId. The original error message is
  * NEVER echoed to the client.
+ *
+ * `extras` lets callers attach request-scoped context (request_id, route,
+ * relevant input fields) so the Sentry event is grep-correlatable with
+ * the structured log line for the same request. p2-5's loggerFor returns
+ * `request_id` — pass it through here for end-to-end traceability.
  */
 export function captureAndPublic(
   err: unknown,
   code: ApiErrorCode,
   message?: string,
   status?: number,
+  extras?: Record<string, unknown>,
 ): NextResponse {
   let eventId: string | undefined;
   try {
-    eventId = Sentry.captureException(err) || undefined;
+    eventId = Sentry.captureException(err, extras ? { extra: extras } : undefined) || undefined;
   } catch {
     // Sentry init failures must never mask the real error response.
   }
   return publicError(code, message, status, eventId ? { eventId } : undefined);
+}
+
+/**
+ * Capture an error to Sentry with route context, return the eventId for
+ * correlation, but DO NOT construct a NextResponse. Use this when the
+ * caller wants to keep its existing response shape (legacy `success:
+ * false` envelopes, custom error fields) but still wants Sentry capture.
+ *
+ * Standard call site:
+ *   } catch (err) {
+ *     const eventId = captureRouteError(err, { request_id, route });
+ *     log.error({ err: msg, sentry_event_id: eventId }, 'route X failed');
+ *     return NextResponse.json({ success: false, error: '...' }, { status: 500 });
+ *   }
+ *
+ * The eventId is the bridge between the structured log line and the
+ * Sentry event — Logtail query → eventId → Sentry issue.
+ */
+export function captureRouteError(
+  err: unknown,
+  extras?: Record<string, unknown>,
+): string | undefined {
+  try {
+    return Sentry.captureException(err, extras ? { extra: extras } : undefined) || undefined;
+  } catch {
+    return undefined;
+  }
 }

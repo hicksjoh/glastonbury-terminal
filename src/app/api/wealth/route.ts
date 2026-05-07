@@ -1,8 +1,11 @@
-import { NextResponse } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
 import { getAccount, getPositions } from '@/lib/alpaca';
 import { createServiceClient } from '@/lib/supabase';
+import { captureRouteError } from '@/lib/api-error';
+import { loggerFor } from '@/lib/request-id';
 
-export async function GET() {
+export async function GET(req: NextRequest) {
+  const { log, request_id } = loggerFor(req, { route: 'wealth' });
   try {
     const supabase = createServiceClient();
 
@@ -53,7 +56,8 @@ export async function GET() {
       },
     });
   } catch (error) {
-    console.error('Wealth API error:', error);
+    const eventId = captureRouteError(error, { request_id, route: 'wealth' });
+    log.error({ err: error instanceof Error ? error.message : String(error), sentry_event_id: eventId }, 'wealth GET failed');
     return NextResponse.json({ success: false, error: 'Failed to fetch wealth data' }, { status: 500 });
   }
 }

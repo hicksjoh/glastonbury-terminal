@@ -1,7 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createServiceClient } from '@/lib/supabase';
+import { captureRouteError } from '@/lib/api-error';
+import { loggerFor } from '@/lib/request-id';
 
 export async function GET(req: NextRequest) {
+  const { log, request_id } = loggerFor(req, { route: 'territories' });
   try {
     const supabase = createServiceClient();
     const filter = req.nextUrl.searchParams.get('filter'); // seacoast, westcoast, operate, sell, hybrid
@@ -51,12 +54,14 @@ export async function GET(req: NextRequest) {
 
     return NextResponse.json({ success: true, data: { territories, summary } });
   } catch (error) {
-    console.error('Territories API error:', error);
+    const eventId = captureRouteError(error, { request_id, route: 'territories/get' });
+    log.error({ err: error instanceof Error ? error.message : String(error), sentry_event_id: eventId }, 'territories GET failed');
     return NextResponse.json({ success: false, error: 'Failed to fetch territories' }, { status: 500 });
   }
 }
 
 export async function PUT(req: NextRequest) {
+  const { log, request_id } = loggerFor(req, { route: 'territories' });
   try {
     const supabase = createServiceClient();
     const body = await req.json();
@@ -76,7 +81,8 @@ export async function PUT(req: NextRequest) {
     if (error) throw error;
     return NextResponse.json({ success: true, data });
   } catch (error) {
-    console.error('Territory update error:', error);
+    const eventId = captureRouteError(error, { request_id, route: 'territories/put' });
+    log.error({ err: error instanceof Error ? error.message : String(error), sentry_event_id: eventId }, 'territories PUT failed');
     return NextResponse.json({ success: false, error: 'Failed to update territory' }, { status: 500 });
   }
 }

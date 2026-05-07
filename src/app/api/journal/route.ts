@@ -1,7 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createServiceClient } from '@/lib/supabase';
+import { captureRouteError } from '@/lib/api-error';
+import { loggerFor } from '@/lib/request-id';
 
 export async function GET(req: NextRequest) {
+  const { log, request_id } = loggerFor(req, { route: 'journal' });
   try {
     const supabase = createServiceClient();
     const strategy = req.nextUrl.searchParams.get('strategy');
@@ -35,12 +38,14 @@ export async function GET(req: NextRequest) {
       },
     });
   } catch (error) {
-    console.error('Journal API error:', error);
+    const eventId = captureRouteError(error, { request_id, route: 'journal/get' });
+    log.error({ err: error instanceof Error ? error.message : String(error), sentry_event_id: eventId }, 'journal GET failed');
     return NextResponse.json({ success: false, error: 'Failed to fetch journal' }, { status: 500 });
   }
 }
 
 export async function POST(req: NextRequest) {
+  const { log, request_id } = loggerFor(req, { route: 'journal' });
   try {
     const supabase = createServiceClient();
     const body = await req.json();
@@ -76,7 +81,8 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json({ success: true, data });
   } catch (error) {
-    console.error('Journal create error:', error);
+    const eventId = captureRouteError(error, { request_id, route: 'journal/post' });
+    log.error({ err: error instanceof Error ? error.message : String(error), sentry_event_id: eventId }, 'journal POST failed');
     return NextResponse.json({ success: false, error: 'Failed to create journal entry' }, { status: 500 });
   }
 }

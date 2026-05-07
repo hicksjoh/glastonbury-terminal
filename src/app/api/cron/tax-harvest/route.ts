@@ -3,6 +3,8 @@ import { runTaxHarvestScan, persistSuggestions } from '@/lib/tax-harvest-engine'
 import { sendResendEmail } from '@/lib/resend-client';
 import { pingHealthcheck } from '@/lib/healthchecks';
 import { cronIsAuthorized } from '@/lib/cron-auth';
+import { captureRouteError } from '@/lib/api-error';
+import { loggerFor } from '@/lib/request-id';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -16,13 +18,19 @@ const HC_SLUG = 'cron-tax-harvest';
 // INTERNAL_API_KEY, signed gt-auth JWT). Fails CLOSED when CRON_SECRET
 // is unset (Codex round-2 finding).
 async function handle(req: NextRequest): Promise<NextResponse> {
+  const { log, request_id } = loggerFor(req, { route: 'cron/tax-harvest' });
+
   const ok = await cronIsAuthorized(req, {
     routeName: '/api/cron/tax-harvest',
     allowInternalKey: true,
   });
-  if (!ok) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  if (!ok) {
+    log.warn('unauthorized cron call');
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  }
 
   await pingHealthcheck(HC_SLUG, 'start');
+  log.info('tax-harvest scan start');
 
   try {
     const suggestions = await runTaxHarvestScan();
@@ -53,8 +61,11 @@ async function handle(req: NextRequest): Promise<NextResponse> {
       })),
     });
   } catch (err) {
+    const eventId = captureRouteError(err, { request_id, route: 'cron/tax-harvest' });
+    log.error({ err: err instanceof Error ? err.message : String(err), sentry_event_id: eventId }, 'tax-harvest scan failed');
     await pingHealthcheck(HC_SLUG, 'fail');
-    return NextResponse.json({ error: (err as Error).message }, { status: 500 });
+    // Don't echo raw error message to caller (Codex finding) — pull details from Sentry by eventId.
+    return NextResponse.json({ error: 'tax-harvest scan failed', sentry_event_id: eventId }, { status: 500 });
   }
 }
 

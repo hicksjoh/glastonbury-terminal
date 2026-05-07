@@ -4,6 +4,8 @@ import {
   getSectorPerformance as getSectorPerformanceStable,
   getQuote,
 } from '@/lib/fmp-client';
+import { captureRouteError } from '@/lib/api-error';
+import { loggerFor } from '@/lib/request-id';
 
 // NOTE: FMP retired all /api/v3 endpoints for this account tier as of
 // Aug 31 2025 (they return 403 "Legacy Endpoint"). Quote calls are routed
@@ -80,6 +82,7 @@ async function fetchSectorPerformance(): Promise<{ sector: string; changesPercen
 }
 
 export async function GET(req: NextRequest) {
+  const { log, request_id } = loggerFor(req, { route: 'sectors' });
   try {
     if (!FMP_KEY) {
       // Return sectors with 0% and a hint
@@ -163,7 +166,11 @@ export async function GET(req: NextRequest) {
     setCache(cacheKey, payload, TTL.MEDIUM);
     return NextResponse.json(payload);
   } catch (error) {
-    console.error('Sectors error:', error);
+    // Sectors degrades gracefully — return empty payload rather than 5xx
+    // so the dashboard tile doesn't break. Still capture the upstream
+    // failure so we know FMP is down.
+    const eventId = captureRouteError(error, { request_id, route: 'sectors' });
+    log.warn({ err: error instanceof Error ? error.message : String(error), sentry_event_id: eventId }, 'sectors fallthrough — returning empty');
     return NextResponse.json({ sectors: [], stocks: [] });
   }
 }
