@@ -3,8 +3,11 @@ import { createServiceClient } from '@/lib/supabase';
 import { checkRateLimitDurable, getRateLimitIdentity } from '@/lib/rate-limit-durable';
 import { sanitizeSymbol } from '@/lib/sanitize';
 import { getQuote, getProfile } from '@/lib/fmp-client';
-import { ALPACA_BASE_URL, assertPaperTrading } from '@/lib/alpaca';
+import { assertPaperTrading, submitOrder, AlpacaError } from '@/lib/alpaca';
 import { consumePendingOrder } from '@/lib/keisha/pending-orders';
+import { alpacaOrderRequestSchema } from '@/lib/order-schemas';
+import { captureRouteError } from '@/lib/api-error';
+import { loggerFor } from '@/lib/request-id';
 
 interface ActionRequest {
   action: string;
@@ -96,6 +99,8 @@ export async function POST(req: NextRequest) {
         // come from the server-side row Keisha persisted when the agent
         // proposed the trade. Without this, a logged-in client could skip
         // the agent and POST any order body straight to Alpaca.
+        const { log, request_id } = loggerFor(req, { route: 'keisha/actions:place_order' });
+
         if (!pendingOrderId) {
           return NextResponse.json(
             { error: 'pendingOrderId is required for place_order' },
@@ -118,33 +123,36 @@ export async function POST(req: NextRequest) {
           return NextResponse.json({ error: msg }, { status: 400 });
         }
 
-        const symbol = sanitizeSymbol(String(storedParams.symbol || ''));
-        const side = String(storedParams.side || '').toLowerCase();
-        const qtyRaw = storedParams.qty ?? storedParams.quantity ?? storedParams.shares;
-        const qty = parseInt(String(qtyRaw));
-        const orderType = String(storedParams.orderType || 'market');
-        const limitPriceRaw = storedParams.limitPrice;
-        const limitPrice = limitPriceRaw !== undefined && limitPriceRaw !== null
-          ? parseFloat(String(limitPriceRaw))
-          : undefined;
-
-        if (!symbol || !side || !qty || isNaN(qty)) {
-          return NextResponse.json({ error: 'Missing symbol, side, or quantity' }, { status: 400 });
-        }
-
-        if (!['buy', 'sell'].includes(side)) {
-          return NextResponse.json({ error: 'Side must be buy or sell' }, { status: 400 });
-        }
-
-        const orderBody: any = {
-          symbol,
-          qty: qty.toString(),
-          side,
-          type: orderType,
+        // p6-11 (Codex #1, money-moving HIGH): the pre-fix code manually
+        // parsed storedParams with `String(...)` and `parseInt`, accepted
+        // arbitrary `orderType`, and submitted the result via raw fetch
+        // — bypassing the hardened submitOrder + Zod validation that
+        // /api/alpaca/orders uses. Now we go through alpacaOrderRequestSchema
+        // and submitOrder so every order path enforces the same rules
+        // (symbol shape, side enum, type+limit/stop coupling, qty bounds).
+        const candidateOrder = {
+          symbol: sanitizeSymbol(String(storedParams.symbol || '')),
+          qty: Number(storedParams.qty ?? storedParams.quantity ?? storedParams.shares ?? NaN),
+          side: String(storedParams.side || '').toLowerCase(),
+          type: String(storedParams.orderType || 'market'),
           time_in_force: String(storedParams.timeInForce || 'day'),
+          limit_price: storedParams.limitPrice !== undefined && storedParams.limitPrice !== null
+            ? Number(storedParams.limitPrice)
+            : undefined,
+          stop_price: storedParams.stopPrice !== undefined && storedParams.stopPrice !== null
+            ? Number(storedParams.stopPrice)
+            : undefined,
         };
-        if (orderType === 'limit' && limitPrice) {
-          orderBody.limit_price = limitPrice.toString();
+        const parsed = alpacaOrderRequestSchema.safeParse(candidateOrder);
+        if (!parsed.success) {
+          log.warn(
+            { issues: parsed.error.issues, candidate: { ...candidateOrder, qty: candidateOrder.qty } },
+            'keisha place_order failed schema validation',
+          );
+          return NextResponse.json(
+            { error: 'Order validation failed', issues: parsed.error.issues },
+            { status: 400 },
+          );
         }
 
         // Defense-in-depth: hard-block any attempt to submit to a non-paper host.
@@ -152,36 +160,55 @@ export async function POST(req: NextRequest) {
           assertPaperTrading();
         } catch (lockErr) {
           const msg = lockErr instanceof Error ? lockErr.message : 'paper-trading lock engaged';
-          console.error('Keisha place_order blocked by paper-trading lock:', msg);
+          log.error({ err: msg }, 'keisha place_order blocked by paper-trading lock');
           return NextResponse.json(
-            { error: `Paper-trading lock engaged: ${msg}` },
+            { error: 'Paper-trading lock engaged' },
             { status: 500 }
           );
         }
 
-        const res = await fetch(`${ALPACA_BASE_URL}/v2/orders`, {
-          method: 'POST',
-          headers: {
-            'APCA-API-KEY-ID': process.env.ALPACA_API_KEY || '',
-            'APCA-API-SECRET-KEY': process.env.ALPACA_SECRET_KEY || '',
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify(orderBody),
-        });
-
-        const data = await res.json();
-        if (!res.ok) {
-          return NextResponse.json({ error: data.message || 'Order failed', details: data }, { status: res.status });
+        // submitOrder now uses the hardened alpacaFetch (timeouts, typed
+        // errors, per-request env reads — see p6-10).
+        let data: { id?: string; status?: string; symbol?: string };
+        try {
+          data = await submitOrder({
+            symbol: parsed.data.symbol,
+            qty: parsed.data.qty,
+            side: parsed.data.side,
+            type: parsed.data.type,
+            time_in_force: parsed.data.time_in_force,
+            limit_price: parsed.data.limit_price,
+            stop_price: parsed.data.stop_price,
+          }) as { id?: string; status?: string; symbol?: string };
+        } catch (err) {
+          if (err instanceof AlpacaError) {
+            // p6-11 (Codex): NO MORE raw broker error echo. The public
+            // response gets a generic message; full upstream body goes to
+            // Sentry only. Eventid lets us cross-correlate.
+            const eventId = captureRouteError(err, {
+              request_id,
+              route: 'keisha/actions:place_order',
+              alpaca_status: err.status,
+              alpaca_code: err.code,
+              upstream_body: err.upstreamBody,
+            });
+            log.error({ alpaca_code: err.code, alpaca_status: err.status, sentry_event_id: eventId }, 'keisha place_order alpaca error');
+            return NextResponse.json(
+              { error: err.public(), sentry_event_id: eventId },
+              { status: err.status >= 500 ? 502 : err.status },
+            );
+          }
+          throw err;
         }
 
         // Log the trade to Supabase
         try {
           await supabase.from('trades').insert({
-            symbol,
-            side,
-            qty,
-            order_type: orderType,
-            limit_price: limitPrice,
+            symbol: parsed.data.symbol,
+            side: parsed.data.side,
+            qty: parsed.data.qty,
+            order_type: parsed.data.type,
+            limit_price: parsed.data.limit_price,
             status: data.status || 'new',
             order_id: data.id,
             submitted_at: new Date().toISOString(),
@@ -190,7 +217,7 @@ export async function POST(req: NextRequest) {
 
         return NextResponse.json({
           success: true,
-          message: `Order placed: ${side.toUpperCase()} ${qty} ${symbol} (${orderType})`,
+          message: `Order placed: ${parsed.data.side.toUpperCase()} ${parsed.data.qty} ${parsed.data.symbol} (${parsed.data.type})`,
           orderId: data.id,
           status: data.status,
         });
