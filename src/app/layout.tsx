@@ -3,6 +3,7 @@ import { Inter } from 'next/font/google';
 import './globals.css';
 import CommandBar from '@/components/CommandBar';
 import MarketTickerBar from '@/components/MarketTickerBar';
+import ServiceWorkerRegistration from '@/components/ServiceWorkerRegistration';
 import { Providers } from './providers';
 
 const inter = Inter({ subsets: ['latin'] });
@@ -50,20 +51,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           <MarketTickerBar />
           {children}
         </Providers>
-        <script
-          dangerouslySetInnerHTML={{
-            __html: `
-              if ('serviceWorker' in navigator) {
-                window.addEventListener('load', function() {
-                  navigator.serviceWorker.register('/sw.js').then(
-                    function(reg) { console.log('[SW] registered, scope:', reg.scope); },
-                    function(err) { console.warn('[SW] registration failed:', err); }
-                  );
-                });
-              }
-            `,
-          }}
-        />
+        <ServiceWorkerRegistration />
       </body>
     </html>
   );
