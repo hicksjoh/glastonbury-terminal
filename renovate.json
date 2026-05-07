@@ -1,0 +1,70 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": [
+    "config:recommended",
+    ":semanticCommits",
+    ":timezone(America/New_York)",
+    ":dependencyDashboard"
+  ],
+  "schedule": ["before 6am on monday"],
+  "labels": ["dependencies"],
+  "rangeStrategy": "bump",
+  "prHourlyLimit": 4,
+  "prConcurrentLimit": 8,
+  "lockFileMaintenance": {
+    "enabled": true,
+    "schedule": ["before 6am on the first day of the month"]
+  },
+  "vulnerabilityAlerts": {
+    "labels": ["security"],
+    "schedule": ["at any time"]
+  },
+  "packageRules": [
+    {
+      "description": "Auto-merge devDependency patch updates — low risk, high churn",
+      "matchDepTypes": ["devDependencies"],
+      "matchUpdateTypes": ["patch", "pin", "digest"],
+      "automerge": true,
+      "automergeType": "branch"
+    },
+    {
+      "description": "Group all @sentry/* updates so we don't get 6 PRs per release",
+      "matchPackagePatterns": ["^@sentry/"],
+      "groupName": "sentry"
+    },
+    {
+      "description": "Group all eslint-related updates",
+      "matchPackagePatterns": ["eslint"],
+      "groupName": "eslint"
+    },
+    {
+      "description": "Group all @types/* updates",
+      "matchPackagePatterns": ["^@types/"],
+      "groupName": "type definitions",
+      "automerge": true
+    },
+    {
+      "description": "Pin GitHub Actions to SHAs (supply-chain hardening)",
+      "matchManagers": ["github-actions"],
+      "pinDigests": true
+    },
+    {
+      "description": "MCP SDK is a moving target — manual review required",
+      "matchPackageNames": ["@modelcontextprotocol/sdk"],
+      "automerge": false,
+      "labels": ["dependencies", "needs-review"]
+    },
+    {
+      "description": "Anthropic SDK pinned ^0.24 since April; major bumps need eval coverage",
+      "matchPackageNames": ["@anthropic-ai/sdk"],
+      "automerge": false,
+      "labels": ["dependencies", "anthropic-sdk", "needs-review"]
+    },
+    {
+      "description": "Next.js stays on 14.x until a deliberate App Router 15 migration",
+      "matchPackageNames": ["next"],
+      "matchUpdateTypes": ["major"],
+      "enabled": false
+    }
+  ]
+}
