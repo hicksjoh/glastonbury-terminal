@@ -22,6 +22,7 @@ import type {
   ToolResultBlockParam,
 } from '@anthropic-ai/sdk/resources/messages';
 import type { CachedTextBlock } from '@/lib/prompts';
+import { tagAnthropicCall } from '@/lib/anthropic-cost';
 
 export interface KeishaAgentAction {
   type: string;
@@ -312,6 +313,23 @@ export async function runKeishaAgent(input: KeishaAgentInput): Promise<KeishaAge
       break;
     }
   }
+
+  // p6-12: tag the cumulative Anthropic spend for this whole agent run.
+  // Per-iteration tagging would be more granular but the agent's stream
+  // event loop accumulates usage across iterations directly into `usage` —
+  // tagging once at the end with the totals is correct and gives Sentry
+  // alert visibility for what is otherwise the most invisible spend path
+  // (Keisha tool-use loop can run 5+ iterations per user message).
+  tagAnthropicCall(
+    {
+      input_tokens: usage.inputTokens,
+      output_tokens: usage.outputTokens,
+      cache_creation_input_tokens: usage.cacheCreationTokens,
+      cache_read_input_tokens: usage.cacheReadTokens,
+    },
+    CLAUDE_MODEL_PRIMARY,
+    { caller: 'keisha-agent', iterations: usage.iterations },
+  );
 
   return { finalText, suggestions, actions, pendingConfirmations, usage };
 }

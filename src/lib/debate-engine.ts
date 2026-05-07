@@ -7,6 +7,7 @@
  */
 
 import { anthropic, CLAUDE_MODEL_PRIMARY, CLAUDE_MODEL_FALLBACK } from '@/lib/claude';
+import { tagAnthropicCall } from '@/lib/anthropic-cost';
 import { fetchQuote, fetchCompanyProfile, fetchRecentNews, fetchBars, computeIndicators } from '@/lib/crew-data';
 
 const ROUNDS = 3;
@@ -131,6 +132,7 @@ ${historyText ? `\nDEBATE SO FAR:\n${historyText}\n\n` : ''}It is now Round ${ar
   let text = '';
   stream.on('text', (delta: string) => { text += delta; args.onToken(delta); });
   const finalMsg = await stream.finalMessage();
+  tagAnthropicCall(finalMsg.usage, model, { caller: 'debate-engine:debater', side: args.side, round: args.round });
   return {
     side: args.side,
     round: args.round,
@@ -169,6 +171,7 @@ async function runModerator(args: {
   let text = '';
   stream.on('text', (delta: string) => { text += delta; args.onToken(delta); });
   const finalMsg = await stream.finalMessage();
+  tagAnthropicCall(finalMsg.usage, model, { caller: 'debate-engine:moderator' });
   return {
     raw: text,
     tokens_in: finalMsg.usage?.input_tokens ?? 0,

@@ -4,6 +4,7 @@ import {
   CLAUDE_MODEL_PRIMARY,
   CLAUDE_MODEL_FALLBACK,
 } from '@/lib/claude';
+import { tagAnthropicCall } from '@/lib/anthropic-cost';
 import { createServiceClient } from '@/lib/supabase';
 import { checkRateLimitDurable } from '@/lib/rate-limit-durable';
 import {
@@ -195,6 +196,7 @@ async function runSpecialist(
   });
 
   const finalMsg = await stream.finalMessage();
+  tagAnthropicCall(finalMsg.usage, modelUsed, { caller: 'crew/analyze:specialist', name });
   const tokensIn = finalMsg.usage?.input_tokens ?? 0;
   const tokensOut = finalMsg.usage?.output_tokens ?? 0;
 
@@ -322,6 +324,7 @@ async function runJudge(
   });
 
   const finalMsg = await stream.finalMessage();
+  tagAnthropicCall(finalMsg.usage, modelUsed, { caller: 'crew/analyze:judge' });
   const tokensIn = finalMsg.usage?.input_tokens ?? 0;
   const tokensOut = finalMsg.usage?.output_tokens ?? 0;
 
