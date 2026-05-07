@@ -3,22 +3,13 @@ import { getAccount, getPositions } from '@/lib/alpaca';
 import { createServiceClient } from '@/lib/supabase';
 import { pingHealthcheck } from '@/lib/healthchecks';
 import { verifySessionJwt, SESSION_COOKIE_NAME } from '@/lib/session';
+import { cronIsAuthorized } from '@/lib/cron-auth';
 
 const HC_SLUG = 'portfolio-snapshot';
 
-// ─── Auth check (same pattern as briefing/scheduled) ──────
-function isAuthorized(req: NextRequest): boolean {
-  const authHeader = req.headers.get('authorization');
-  const cronSecret = process.env.CRON_SECRET;
-  if (!cronSecret) return false;
-  if (authHeader === `Bearer ${cronSecret}`) return true;
-  if (req.headers.get('x-api-key') === cronSecret) return true;
-  return false;
-}
-
 // ─── POST: Take a snapshot of current portfolio state ─────
 export async function POST(req: NextRequest) {
-  if (!isAuthorized(req)) {
+  if (!(await cronIsAuthorized(req, { routeName: 'portfolio-snapshot' }))) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 

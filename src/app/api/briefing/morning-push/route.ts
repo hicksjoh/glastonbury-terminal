@@ -4,6 +4,7 @@ import { getQuote } from '@/lib/fmp-client';
 import { createServiceClient } from '@/lib/supabase';
 import { sendPushNotification, type PushSubscriptionData } from '@/lib/web-push';
 import { pingHealthcheck } from '@/lib/healthchecks';
+import { cronIsAuthorized } from '@/lib/cron-auth';
 
 // F10 — Lightweight 6:30 AM push notification.
 //
@@ -20,14 +21,6 @@ export const dynamic = 'force-dynamic';
 export const maxDuration = 30;
 
 const HC_SLUG = 'briefing-morning-push';
-
-function isAuthorized(req: NextRequest): boolean {
-  const cronSecret = process.env.CRON_SECRET;
-  if (!cronSecret) return false;
-  if (req.headers.get('authorization') === `Bearer ${cronSecret}`) return true;
-  if (req.headers.get('x-api-key') === cronSecret) return true;
-  return false;
-}
 
 function formatCurrency(n: number): string {
   return n.toLocaleString('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 });
@@ -73,7 +66,7 @@ async function buildMorningPushPayload(): Promise<{
 }
 
 async function handle(req: NextRequest): Promise<NextResponse> {
-  if (!isAuthorized(req)) {
+  if (!(await cronIsAuthorized(req, { routeName: 'briefing-morning-push' }))) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 

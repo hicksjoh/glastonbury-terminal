@@ -5,6 +5,7 @@ import { fetchLatestSnapshots } from '@/lib/prediction-markets';
 import { sendResendEmail } from '@/lib/resend-client';
 import { pingHealthcheck } from '@/lib/healthchecks';
 import { createServiceClient } from '@/lib/supabase';
+import { cronIsAuthorized } from '@/lib/cron-auth';
 
 // F13 — Weekly Sunday 7 PM ET auto-email report.
 //
@@ -22,14 +23,6 @@ export const dynamic = 'force-dynamic';
 export const maxDuration = 60;
 
 const HC_SLUG = 'weekly-report';
-
-function isAuthorized(req: NextRequest): boolean {
-  const cronSecret = process.env.CRON_SECRET;
-  if (!cronSecret) return false;
-  if (req.headers.get('authorization') === `Bearer ${cronSecret}`) return true;
-  if (req.headers.get('x-api-key') === cronSecret) return true;
-  return false;
-}
 
 function fmtUSD(n: number): string {
   return n.toLocaleString('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 });
@@ -152,7 +145,7 @@ async function buildReport(): Promise<{ subject: string; text: string; html: str
 }
 
 async function handle(req: NextRequest): Promise<NextResponse> {
-  if (!isAuthorized(req)) {
+  if (!(await cronIsAuthorized(req, { routeName: 'weekly-report' }))) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 

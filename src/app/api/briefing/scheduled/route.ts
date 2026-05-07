@@ -10,21 +10,11 @@ import {
 } from '@/lib/market-intel';
 import { getSectorPerformance } from '@/lib/fmp-client';
 import { pingHealthcheck } from '@/lib/healthchecks';
-
-const HC_SLUG = 'briefing-scheduled';
+import { cronIsAuthorized } from '@/lib/cron-auth';
 import { sendPushNotification } from '@/lib/web-push';
 import type { PushSubscriptionData } from '@/lib/web-push';
 
-// ─── Auth check ───────────────────────────────────────────
-function isAuthorized(req: NextRequest): boolean {
-  const authHeader = req.headers.get('authorization');
-  const cronSecret = process.env.CRON_SECRET;
-  if (!cronSecret) return false;
-  // Accept "Bearer <token>" or raw token in x-api-key header
-  if (authHeader === `Bearer ${cronSecret}`) return true;
-  if (req.headers.get('x-api-key') === cronSecret) return true;
-  return false;
-}
+const HC_SLUG = 'briefing-scheduled';
 
 // ─── Gather all portfolio + market data ───────────────────
 async function gatherPortfolioData() {
@@ -147,7 +137,7 @@ function buildBriefingPromptContext(
 // ─── Shared handler: Generate and save scheduled briefing ─
 // Exposed via both GET (Vercel cron sends GET) and POST (manual/external trigger).
 async function runScheduledBriefing(req: NextRequest) {
-  if (!isAuthorized(req)) {
+  if (!(await cronIsAuthorized(req, { routeName: 'briefing-scheduled' }))) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
