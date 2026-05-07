@@ -163,11 +163,38 @@ export async function POST(req: NextRequest) {
   // Scope is fixed for v1 — we only have 'mcp'.
   const scope = 'mcp';
 
-  // Stash the rest of the registration metadata verbatim for audit.
+  // p6-8 (Codex NEW issue #5): bound the pass-through metadata. Every
+  // field is type-checked + length-capped before persistence so a
+  // registration request can't push megabytes of junk into oauth_clients.
   const metadata: Record<string, unknown> = {};
-  for (const k of ['client_uri', 'logo_uri', 'contacts', 'software_id', 'software_version']) {
-    const v = (body as Record<string, unknown>)[k];
-    if (v !== undefined) metadata[k] = v;
+  const META_FIELDS: { key: string; max: number; arrayMax?: number }[] = [
+    { key: 'client_uri', max: 500 },
+    { key: 'logo_uri', max: 500 },
+    { key: 'contacts', max: 200, arrayMax: 5 },
+    { key: 'software_id', max: 100 },
+    { key: 'software_version', max: 50 },
+  ];
+  for (const f of META_FIELDS) {
+    const v = (body as Record<string, unknown>)[f.key];
+    if (v === undefined) continue;
+    if (typeof v === 'string') {
+      if (v.length > f.max) {
+        return bad(`${f.key} exceeds ${f.max} chars`);
+      }
+      metadata[f.key] = v;
+    } else if (f.arrayMax !== undefined && Array.isArray(v)) {
+      if (v.length > f.arrayMax) {
+        return bad(`${f.key} exceeds ${f.arrayMax} entries`);
+      }
+      const items: string[] = [];
+      for (const item of v) {
+        if (typeof item !== 'string') return bad(`${f.key} entries must be strings`);
+        if (item.length > f.max) return bad(`${f.key} entry exceeds ${f.max} chars`);
+        items.push(item);
+      }
+      metadata[f.key] = items;
+    }
+    // silently drop other types (object/number/bool) — RFC 7591 fields are scalars
   }
 
   try {

@@ -21,9 +21,15 @@ import { childLogger, type RequestLogContext } from './logger';
 
 const NANOID_LEN = 12;
 
+// p6-8 (Codex audit): tighten the regex on caller-supplied request IDs so
+// log indexers don't pollute on high-cardinality / control-char input.
+// Allowed: URL-safe chars only, 8-128 chars. Anything outside this gets
+// replaced with a fresh local id.
+const REQUEST_ID_RE = /^[A-Za-z0-9._\-:]{8,128}$/;
+
 export function getRequestId(req: NextRequest | Request): string {
   const incoming = req.headers.get('x-request-id') ?? req.headers.get('x-vercel-id');
-  if (incoming && incoming.length <= 128) return incoming;
+  if (incoming && REQUEST_ID_RE.test(incoming)) return incoming;
   return nanoid(NANOID_LEN);
 }
 
