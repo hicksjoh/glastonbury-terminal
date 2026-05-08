@@ -28,7 +28,7 @@ The migrations are idempotent (`CREATE TABLE IF NOT EXISTS` /
    supabase/migrations/20260506_oauth_consent_transactions.sql
    supabase/migrations/20260507_email_send_log.sql
    ```
-3. Verify with this canary query — should return **8 rows**:
+3. Verify with this canary query — should return **6 rows**:
    ```sql
    SELECT table_schema, table_name, column_name FROM information_schema.columns
    WHERE table_schema = 'public' AND (
@@ -38,9 +38,13 @@ The migrations are idempotent (`CREATE TABLE IF NOT EXISTS` /
      OR (table_name = 'email_send_log' AND column_name IN ('to_addr', 'outcome'))
    );
    ```
-   Expected output: 8 rows (cron_runs.job_name, oauth_clients.revoked_at,
-   oauth_clients.last_used_at, oauth_consent_transactions.tx_id, plus the
-   email_send_log columns).
+   Expected output: 6 rows
+   - `cron_runs.job_name`
+   - `oauth_clients.revoked_at`
+   - `oauth_clients.last_used_at`
+   - `oauth_consent_transactions.tx_id`
+   - `email_send_log.to_addr`
+   - `email_send_log.outcome`
 
 4. If you skip this step, the **next deploy of main will silently fail-open
    on revocation** (revoked_at column missing → `if (client.revoked_at)`
