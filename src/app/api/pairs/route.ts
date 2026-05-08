@@ -7,6 +7,8 @@ import {
   backtestPair,
 } from '@/lib/pairs-trading';
 import { getHistoricalPrices } from '@/lib/fmp-client';
+import { captureRouteError } from '@/lib/api-error';
+import { loggerFor } from '@/lib/request-id';
 
 const FMP_KEY = process.env.FMP_API_KEY;
 
@@ -92,6 +94,7 @@ async function handleDetail(a: string, b: string, lookback: number) {
 // ─── GET Handler ─────────────────────────────────────────────────────────────
 
 export async function GET(request: NextRequest) {
+  const { log, request_id } = loggerFor(request, { route: 'pairs' });
   try {
     if (!FMP_KEY) {
       return NextResponse.json({ error: 'FMP_API_KEY is not configured' }, { status: 500 });
@@ -136,8 +139,8 @@ export async function GET(request: NextRequest) {
 
     return await handleScanner(symbols, lookback);
   } catch (err) {
-    const message = err instanceof Error ? err.message : 'Unknown error';
-    console.error('[/api/pairs] Error:', message);
-    return NextResponse.json({ error: message }, { status: 500 });
+    const eventId = captureRouteError(err, { request_id, route: 'pairs' });
+    log.error({ err: err instanceof Error ? err.message : String(err), sentry_event_id: eventId }, 'pairs failed');
+    return NextResponse.json({ error: 'Pairs analysis failed', sentry_event_id: eventId }, { status: 500 });
   }
 }
