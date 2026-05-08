@@ -5,10 +5,35 @@
 // (P0-1, hardening/p0-codex-fixes).
 //
 // See memory/builders/D1.md for the full endpoint matrix.
+//
+// p6-14 (Codex #9): every failure mode now emits a structured log line so
+// the operator can tell "FMP timed out" vs "FMP returned 402 paid-tier" vs
+// "the symbol genuinely has no data." Pre-p6-14 every failure returned
+// `null` silently — UI couldn't distinguish, ops couldn't alert.
+// Return contract is preserved (null on failure) so existing callers
+// don't change.
+
+import { log as baseLog } from './logger';
 
 export const FMP_STABLE = 'https://financialmodelingprep.com/stable';
 const FMP_TIMEOUT_MS = 5_000;
 const SECTOR_CACHE_TTL_MS = 5 * 60 * 1_000;
+
+const fmpLog = baseLog.child({ component: 'fmp-client' });
+
+/** Categorize a fetch failure for log filtering / aggregation. */
+function classifyFmpError(err: unknown): { mode: string; detail: string } {
+  if (err instanceof Error) {
+    if (err.name === 'TimeoutError' || err.name === 'AbortError') {
+      return { mode: 'timeout', detail: `${FMP_TIMEOUT_MS}ms exceeded` };
+    }
+    if (err.message.includes('fetch failed') || err.message.includes('ECONNREFUSED')) {
+      return { mode: 'network', detail: err.message.slice(0, 200) };
+    }
+    return { mode: 'other', detail: err.message.slice(0, 200) };
+  }
+  return { mode: 'unknown', detail: String(err).slice(0, 200) };
+}
 
 /**
  * Endpoints that return a 402 (paid tier) on the current plan are surfaced as
@@ -50,12 +75,30 @@ export function buildStableUrl(path: string, params: Record<string, string | num
 
 async function fmpFetchJson<T>(path: string, params: Record<string, string | number | undefined> = {}): Promise<T | null> {
   const url = buildStableUrl(path, params);
-  if (!url) return null;
+  if (!url) {
+    fmpLog.warn({ path }, 'fmp call skipped — FMP_API_KEY unset');
+    return null;
+  }
   try {
     const res = await fmpFetch(url);
-    if (!res.ok) return null;
+    if (!res.ok) {
+      // p6-14: distinguish 402 (paid tier) from generic 4xx/5xx so ops can
+      // tell upstream-degraded from quota-blocked.
+      fmpLog.warn(
+        {
+          path,
+          status: res.status,
+          paid_tier: res.status === 402,
+          server_error: res.status >= 500,
+        },
+        'fmp non-2xx',
+      );
+      return null;
+    }
     return (await res.json()) as T;
-  } catch {
+  } catch (err) {
+    const cls = classifyFmpError(err);
+    fmpLog.warn({ path, fail_mode: cls.mode, detail: cls.detail }, 'fmp fetch threw');
     return null;
   }
 }
@@ -76,15 +119,26 @@ export interface FmpQuote {
 
 export async function getQuote(symbol: string): Promise<FmpQuote | null> {
   const k = key();
-  if (!k) return null;
+  if (!k) {
+    fmpLog.warn({ path: '/quote', symbol }, 'fmp call skipped — FMP_API_KEY unset');
+    return null;
+  }
   const url = `${FMP_STABLE}/quote?symbol=${encodeURIComponent(symbol)}&apikey=${k}`;
   try {
     const res = await fmpFetch(url);
-    if (!res.ok) return null;
+    if (!res.ok) {
+      fmpLog.warn({ path: '/quote', symbol, status: res.status, paid_tier: res.status === 402 }, 'fmp quote non-2xx');
+      return null;
+    }
     const data = await res.json();
-    if (!Array.isArray(data) || data.length === 0) return null;
+    if (!Array.isArray(data) || data.length === 0) {
+      fmpLog.debug({ path: '/quote', symbol }, 'fmp quote empty (legitimate no-data, not an error)');
+      return null;
+    }
     return data[0] as FmpQuote;
-  } catch {
+  } catch (err) {
+    const cls = classifyFmpError(err);
+    fmpLog.warn({ path: '/quote', symbol, fail_mode: cls.mode, detail: cls.detail }, 'fmp quote threw');
     return null;
   }
 }
@@ -122,15 +176,26 @@ export interface FmpProfile {
 
 export async function getProfile(symbol: string): Promise<FmpProfile | null> {
   const k = key();
-  if (!k) return null;
+  if (!k) {
+    fmpLog.warn({ path: '/profile', symbol }, 'fmp call skipped — FMP_API_KEY unset');
+    return null;
+  }
   const url = `${FMP_STABLE}/profile?symbol=${encodeURIComponent(symbol)}&apikey=${k}`;
   try {
     const res = await fmpFetch(url);
-    if (!res.ok) return null;
+    if (!res.ok) {
+      fmpLog.warn({ path: '/profile', symbol, status: res.status, paid_tier: res.status === 402 }, 'fmp profile non-2xx');
+      return null;
+    }
     const data = await res.json();
-    if (!Array.isArray(data) || data.length === 0) return null;
+    if (!Array.isArray(data) || data.length === 0) {
+      fmpLog.debug({ path: '/profile', symbol }, 'fmp profile empty (legitimate no-data)');
+      return null;
+    }
     return data[0] as FmpProfile;
-  } catch {
+  } catch (err) {
+    const cls = classifyFmpError(err);
+    fmpLog.warn({ path: '/profile', symbol, fail_mode: cls.mode, detail: cls.detail }, 'fmp profile threw');
     return null;
   }
 }
