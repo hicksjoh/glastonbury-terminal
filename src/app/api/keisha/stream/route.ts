@@ -3,6 +3,8 @@ import { KEISHA_SYSTEM_PROMPT } from '@/lib/claude';
 import { cachedSystem } from '@/lib/prompts';
 import { checkRateLimitDurable, getRateLimitIdentity } from '@/lib/rate-limit-durable';
 import { sanitizeInput } from '@/lib/sanitize';
+import { captureRouteError } from '@/lib/api-error';
+import { loggerFor } from '@/lib/request-id';
 import {
   buildFullPortfolioContext,
   logRecommendation,
@@ -70,6 +72,8 @@ function getActionButtons(
 // ═════════════════════════════════════════════════════════════════════════════
 
 export async function POST(req: NextRequest) {
+  const { log, request_id } = loggerFor(req, { route: 'keisha/stream' });
+
   // P0-6: durable, session-keyed limit. Streaming Anthropic calls are the
   // single most expensive route in the app — capping at 10 / 5 min per
   // session prevents wallet runaway across warm Vercel instances.
@@ -214,8 +218,10 @@ IMPORTANT RULES:
 
           controller.close();
         } catch (err) {
-          console.error('Stream error:', err);
-          send({ error: err instanceof Error ? err.message : 'Stream error' });
+          const eventId = captureRouteError(err, { request_id, route: 'keisha/stream', stage: 'agent_run' });
+          log.error({ err: err instanceof Error ? err.message : String(err), sentry_event_id: eventId }, 'keisha stream agent threw');
+          // Don't leak raw err.message into the SSE stream — generic message + eventId.
+          send({ error: 'Stream error', sentry_event_id: eventId });
           controller.close();
         }
       },
@@ -230,10 +236,10 @@ IMPORTANT RULES:
       },
     });
   } catch (error) {
-    const msg = error instanceof Error ? error.message : 'Unknown error';
-    console.error('Keisha Stream API error:', msg);
+    const eventId = captureRouteError(error, { request_id, route: 'keisha/stream', stage: 'setup' });
+    log.error({ err: error instanceof Error ? error.message : String(error), sentry_event_id: eventId }, 'keisha stream setup failed');
     return new Response(
-      JSON.stringify({ error: msg }),
+      JSON.stringify({ error: 'Stream setup failed', sentry_event_id: eventId }),
       { status: 500, headers: { 'Content-Type': 'application/json' } },
     );
   }

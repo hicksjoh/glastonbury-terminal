@@ -3,6 +3,8 @@ import { KEISHA_SYSTEM_PROMPT } from '@/lib/claude';
 import { cachedSystem } from '@/lib/prompts';
 import { checkRateLimitDurable, getRateLimitIdentity } from '@/lib/rate-limit-durable';
 import { sanitizeInput } from '@/lib/sanitize';
+import { captureRouteError } from '@/lib/api-error';
+import { loggerFor } from '@/lib/request-id';
 import {
   buildFullPortfolioContext,
   logRecommendation,
@@ -18,6 +20,8 @@ import type { MessageParam } from '@anthropic-ai/sdk/resources/messages';
 // ═════════════════════════════════════════════════════════════════════════════
 
 export async function POST(req: NextRequest) {
+  const { log, request_id } = loggerFor(req, { route: 'keisha' });
+
   // P0-6 (hardening/p0-codex-fixes): durable, session-keyed limit. Was a
   // module-level Map per Vercel instance — across N warm workers, the
   // effective Anthropic budget was N×declared. Durable RPC clamps it for
@@ -107,8 +111,8 @@ TOOL USAGE RULES:
       pendingConfirmations: pendingConfirmations.length > 0 ? pendingConfirmations : undefined,
     });
   } catch (error) {
-    const msg = error instanceof Error ? error.message : 'Unknown error';
-    console.error('Keisha API error:', msg);
-    return NextResponse.json({ error: msg }, { status: 500 });
+    const eventId = captureRouteError(error, { request_id, route: 'keisha' });
+    log.error({ err: error instanceof Error ? error.message : String(error), sentry_event_id: eventId }, 'keisha agent failed');
+    return NextResponse.json({ error: 'Keisha is having trouble right now', sentry_event_id: eventId }, { status: 500 });
   }
 }
