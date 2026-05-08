@@ -4,6 +4,8 @@ import { rateLimit } from '@/lib/rate-limit';
 import { scanForHarvestCandidates, type HarvestPosition } from '@/lib/tax-loss-harvester';
 import type { TradeRecord } from '@/lib/wash-sale-detector';
 import type { FilingStatus } from '@/lib/tax-engine';
+import { captureRouteError } from '@/lib/api-error';
+import { loggerFor } from '@/lib/request-id';
 
 const ALPACA_BASE = process.env.ALPACA_BASE_URL || 'https://paper-api.alpaca.markets';
 const ALPACA_HEADERS = {
@@ -96,6 +98,7 @@ async function fetchAlpacaTradeHistory(): Promise<TradeRecord[]> {
 // ─── Route Handler ──────────────────────────────────────────────────────────
 
 export async function GET(request: Request): Promise<NextResponse> {
+  const { log, request_id } = loggerFor(request, { route: 'tax/harvest' });
   // Rate limit: 20/hour
   const rl = rateLimit('tax-harvest', 20, 60 * 60 * 1000);
   if (!rl.allowed) {
@@ -149,8 +152,9 @@ export async function GET(request: Request): Promise<NextResponse> {
     setCache(CACHE_KEY, summary, TTL.LONG); // 30 min
     return NextResponse.json({ success: true, data: summary, cached: false });
   } catch (err) {
-    const msg = err instanceof Error ? err.message : 'Harvest scan failed';
-    console.error('[tax/harvest] Error:', msg);
-    return NextResponse.json({ success: false, error: msg }, { status: 500 });
+    const eventId = captureRouteError(err, { request_id, route: 'tax/harvest' });
+    log.error({ err: err instanceof Error ? err.message : String(err), sentry_event_id: eventId }, 'tax/harvest scan failed');
+    // p6-17: don't echo raw err.message
+    return NextResponse.json({ success: false, error: 'Harvest scan failed', sentry_event_id: eventId }, { status: 500 });
   }
 }

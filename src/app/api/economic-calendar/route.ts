@@ -1,9 +1,12 @@
 import { NextResponse } from 'next/server';
+import { captureRouteError } from '@/lib/api-error';
+import { loggerFor } from '@/lib/request-id';
 
 const FMP_BASE = 'https://financialmodelingprep.com/stable';
 const FMP_KEY = process.env.FMP_API_KEY || '';
 
-export async function GET() {
+export async function GET(request: Request) {
+  const { log, request_id } = loggerFor(request, { route: 'economic-calendar' });
   try {
     if (!FMP_KEY) return NextResponse.json({ events: [] });
 
@@ -47,7 +50,8 @@ export async function GET() {
 
     return NextResponse.json({ events });
   } catch (error) {
-    console.error('Calendar error:', error);
-    return NextResponse.json({ events: [] });
+    const eventId = captureRouteError(error, { request_id, route: 'economic-calendar' });
+    log.error({ err: error instanceof Error ? error.message : String(error), sentry_event_id: eventId }, 'economic-calendar threw');
+    return NextResponse.json({ events: [], sentry_event_id: eventId });
   }
 }

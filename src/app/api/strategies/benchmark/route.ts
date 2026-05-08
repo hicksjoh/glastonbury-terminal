@@ -1,9 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { captureRouteError } from '@/lib/api-error';
+import { loggerFor } from '@/lib/request-id';
 
 const FMP_BASE = 'https://financialmodelingprep.com/stable';
 const FMP_KEY = process.env.FMP_API_KEY || '';
 
 export async function GET(req: NextRequest) {
+  const { log, request_id } = loggerFor(req, { route: 'strategies/benchmark' });
   try {
     const strategy = req.nextUrl.searchParams.get('strategy') || '';
     const period = req.nextUrl.searchParams.get('period') || '1M';
@@ -64,8 +67,9 @@ export async function GET(req: NextRequest) {
 
     return NextResponse.json({ data });
   } catch (error) {
-    console.error('Benchmark error:', error);
-    return NextResponse.json({ data: [] });
+    const eventId = captureRouteError(error, { request_id, route: 'strategies/benchmark' });
+    log.error({ err: error instanceof Error ? error.message : String(error), sentry_event_id: eventId }, 'benchmark threw');
+    return NextResponse.json({ data: [], sentry_event_id: eventId });
   }
 }
 
