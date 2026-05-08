@@ -1,8 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { captureRouteError } from '@/lib/api-error';
+import { loggerFor } from '@/lib/request-id';
 
 const ALPACA_BASE = process.env.ALPACA_BASE_URL || 'https://paper-api.alpaca.markets';
 
 export async function GET(req: NextRequest) {
+  const { log, request_id } = loggerFor(req, { route: 'portfolio-history' });
   try {
     const period = req.nextUrl.searchParams.get('period') || '1M';
 
@@ -36,7 +39,7 @@ export async function GET(req: NextRequest) {
     );
 
     if (!res.ok) {
-      console.error('Portfolio history error:', res.status);
+      log.warn({ status: res.status }, 'portfolio-history non-2xx from Alpaca');
       return NextResponse.json({ history: [] });
     }
 
@@ -51,7 +54,8 @@ export async function GET(req: NextRequest) {
 
     return NextResponse.json({ history });
   } catch (error) {
-    console.error('Portfolio history error:', error);
-    return NextResponse.json({ history: [] });
+    const eventId = captureRouteError(error, { request_id, route: 'portfolio-history' });
+    log.error({ err: error instanceof Error ? error.message : String(error), sentry_event_id: eventId }, 'portfolio-history threw');
+    return NextResponse.json({ history: [], sentry_event_id: eventId });
   }
 }

@@ -1,11 +1,14 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createServiceClient } from '@/lib/supabase';
+import { captureRouteError } from '@/lib/api-error';
+import { loggerFor } from '@/lib/request-id';
 
 // GET: Fetch full conversation by ID
 export async function GET(
-  _req: NextRequest,
+  req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
+  const { log, request_id } = loggerFor(req, { route: 'keisha/conversations/[id]' });
   try {
     const { id } = await params;
     const supabase = createServiceClient();
@@ -17,14 +20,16 @@ export async function GET(
       .single();
 
     if (error) {
-      console.error('Error fetching conversation:', error);
-      return NextResponse.json({ error: error.message }, { status: 404 });
+      // Probably "not found" — log at info level, don't bother Sentry.
+      log.info({ conv_id: id, supabase_err: error.message }, 'conversation lookup miss');
+      return NextResponse.json({ error: 'Not found' }, { status: 404 });
     }
 
     return NextResponse.json({ conversation: data });
   } catch (error) {
-    const msg = error instanceof Error ? error.message : 'Unknown error';
-    return NextResponse.json({ error: msg }, { status: 500 });
+    const eventId = captureRouteError(error, { request_id, route: 'keisha/conversations/[id]', stage: 'get' });
+    log.error({ err: error instanceof Error ? error.message : String(error), sentry_event_id: eventId }, 'conversation get threw');
+    return NextResponse.json({ error: 'Failed to fetch conversation', sentry_event_id: eventId }, { status: 500 });
   }
 }
 
@@ -33,6 +38,7 @@ export async function PUT(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
+  const { log, request_id } = loggerFor(req, { route: 'keisha/conversations/[id]' });
   try {
     const { id } = await params;
     const supabase = createServiceClient();
@@ -58,22 +64,25 @@ export async function PUT(
       .single();
 
     if (error) {
-      console.error('Error updating conversation:', error);
-      return NextResponse.json({ error: error.message }, { status: 500 });
+      const eventId = captureRouteError(error, { request_id, route: 'keisha/conversations/[id]', stage: 'put', conv_id: id });
+      log.error({ err: error.message, sentry_event_id: eventId }, 'conversation update failed');
+      return NextResponse.json({ error: 'Failed to update conversation', sentry_event_id: eventId }, { status: 500 });
     }
 
     return NextResponse.json({ conversation: data });
   } catch (error) {
-    const msg = error instanceof Error ? error.message : 'Unknown error';
-    return NextResponse.json({ error: msg }, { status: 500 });
+    const eventId = captureRouteError(error, { request_id, route: 'keisha/conversations/[id]', stage: 'put' });
+    log.error({ err: error instanceof Error ? error.message : String(error), sentry_event_id: eventId }, 'conversation put threw');
+    return NextResponse.json({ error: 'Failed to update conversation', sentry_event_id: eventId }, { status: 500 });
   }
 }
 
 // DELETE: Delete a single conversation
 export async function DELETE(
-  _req: NextRequest,
+  req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
+  const { log, request_id } = loggerFor(req, { route: 'keisha/conversations/[id]' });
   try {
     const { id } = await params;
     const supabase = createServiceClient();
@@ -84,13 +93,15 @@ export async function DELETE(
       .eq('id', id);
 
     if (error) {
-      console.error('Error deleting conversation:', error);
-      return NextResponse.json({ error: error.message }, { status: 500 });
+      const eventId = captureRouteError(error, { request_id, route: 'keisha/conversations/[id]', stage: 'delete', conv_id: id });
+      log.error({ err: error.message, sentry_event_id: eventId }, 'conversation delete failed');
+      return NextResponse.json({ error: 'Failed to delete conversation', sentry_event_id: eventId }, { status: 500 });
     }
 
     return NextResponse.json({ success: true });
   } catch (error) {
-    const msg = error instanceof Error ? error.message : 'Unknown error';
-    return NextResponse.json({ error: msg }, { status: 500 });
+    const eventId = captureRouteError(error, { request_id, route: 'keisha/conversations/[id]', stage: 'delete' });
+    log.error({ err: error instanceof Error ? error.message : String(error), sentry_event_id: eventId }, 'conversation delete threw');
+    return NextResponse.json({ error: 'Failed to delete conversation', sentry_event_id: eventId }, { status: 500 });
   }
 }

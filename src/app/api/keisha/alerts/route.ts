@@ -1,5 +1,7 @@
 import { NextResponse } from 'next/server';
 import { createServiceClient } from '@/lib/supabase';
+import { captureRouteError } from '@/lib/api-error';
+import { loggerFor } from '@/lib/request-id';
 
 interface Alert {
   type: 'opportunity' | 'warning';
@@ -17,7 +19,8 @@ function getBaseUrl(): string {
     : 'http://localhost:3000';
 }
 
-export async function GET() {
+export async function GET(request: Request) {
+  const { log, request_id } = loggerFor(request, { route: 'keisha/alerts' });
   try {
     const baseUrl = getBaseUrl();
     const supabase = createServiceClient();
@@ -114,8 +117,9 @@ export async function GET() {
       timestamp: now,
     });
   } catch (error: unknown) {
-    const message = error instanceof Error ? error.message : 'Unknown error';
-    console.error('[/api/keisha/alerts] Error:', message);
-    return NextResponse.json({ error: message, alerts: [], count: 0 }, { status: 500 });
+    const eventId = captureRouteError(error, { request_id, route: 'keisha/alerts' });
+    log.error({ err: error instanceof Error ? error.message : String(error), sentry_event_id: eventId }, 'keisha alerts failed');
+    // p6-15: don't echo raw err.message
+    return NextResponse.json({ error: 'Failed to compute alerts', alerts: [], count: 0, sentry_event_id: eventId }, { status: 500 });
   }
 }

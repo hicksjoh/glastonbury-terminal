@@ -1,9 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { captureRouteError } from '@/lib/api-error';
+import { loggerFor } from '@/lib/request-id';
 
 const FMP_BASE = 'https://financialmodelingprep.com/stable';
 const FMP_KEY = process.env.FMP_API_KEY || '';
 
 export async function POST(req: NextRequest) {
+  const { log, request_id } = loggerFor(req, { route: 'screener' });
   try {
     if (!FMP_KEY) {
       return NextResponse.json({ results: [], error: 'FMP API key not configured' });
@@ -78,7 +81,8 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json({ results });
   } catch (error) {
-    console.error('Screener error:', error);
-    return NextResponse.json({ results: [] });
+    const eventId = captureRouteError(error, { request_id, route: 'screener' });
+    log.error({ err: error instanceof Error ? error.message : String(error), sentry_event_id: eventId }, 'screener threw');
+    return NextResponse.json({ results: [], sentry_event_id: eventId });
   }
 }

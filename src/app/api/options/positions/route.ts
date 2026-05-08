@@ -1,6 +1,8 @@
 import { NextResponse } from 'next/server';
 import { parseOCCSymbol, daysToExpiration } from '@/lib/options/symbols';
 import { calculateGreeks } from '@/lib/options/greeks';
+import { captureRouteError } from '@/lib/api-error';
+import { loggerFor } from '@/lib/request-id';
 
 const ALPACA_BASE_URL = process.env.ALPACA_BASE_URL || 'https://paper-api.alpaca.markets';
 const ALPACA_DATA_URL = 'https://data.alpaca.markets';
@@ -10,7 +12,8 @@ const alpacaHeaders = {
   'APCA-API-SECRET-KEY': process.env.ALPACA_SECRET_KEY!,
 };
 
-export async function GET() {
+export async function GET(request: Request) {
+  const { log, request_id } = loggerFor(request, { route: 'options/positions' });
   try {
     // Fetch all positions from Alpaca
     const res = await fetch(`${ALPACA_BASE_URL}/v2/positions`, {
@@ -101,7 +104,8 @@ export async function GET() {
       count: optionPositions.length,
     });
   } catch (err) {
-    console.error('Options positions error:', err);
-    return NextResponse.json({ positions: [], greeks: null, error: 'Failed' });
+    const eventId = captureRouteError(err, { request_id, route: 'options/positions' });
+    log.error({ err: err instanceof Error ? err.message : String(err), sentry_event_id: eventId }, 'options positions failed');
+    return NextResponse.json({ positions: [], greeks: null, error: 'Failed', sentry_event_id: eventId });
   }
 }
