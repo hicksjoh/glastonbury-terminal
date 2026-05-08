@@ -1,4 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { log as baseLog } from '@/lib/logger';
+
+const priceLog = baseLog.child({ component: 'prices/stream' });
 
 const FMP_BASE = 'https://financialmodelingprep.com/stable';
 const FMP_KEY = process.env.FMP_API_KEY || '';
@@ -49,7 +52,12 @@ async function fetchAlpacaQuotes(symbols: string[]): Promise<Record<string, Pric
       }
     }
   } catch (err) {
-    console.error('Alpaca batch quote error:', err);
+    // Non-fatal — caller falls back to empty object. Just emit a warn so
+    // we can detect when Alpaca-side issues cause widespread blank tiles.
+    priceLog.warn(
+      { err: err instanceof Error ? err.message : String(err), batch_size: symbols.length },
+      'alpaca batch quote failed',
+    );
   }
 
   return results;

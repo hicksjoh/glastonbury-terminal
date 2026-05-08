@@ -9,6 +9,8 @@ import {
   type FilingStatus,
 } from '@/lib/tax-engine';
 import { getWashSalePreview, getUpcomingWindowCloses, type TradeRecord } from '@/lib/wash-sale-detector';
+import { captureRouteError } from '@/lib/api-error';
+import { loggerFor } from '@/lib/request-id';
 
 // ═══════════════════════════════════════════════════════════════════════════
 //  Proactive Tax Alerts — Surface tax opportunities automatically
@@ -91,6 +93,7 @@ function makeId(type: string, key: string): string {
 }
 
 export async function GET(request: Request): Promise<NextResponse> {
+  const { log, request_id } = loggerFor(request, { route: 'tax/alerts' });
   const rl = rateLimit('tax-alerts', 20, 60000);
   if (!rl.allowed) {
     return NextResponse.json({ success: false, error: 'Rate limit exceeded' }, { status: 429 });
@@ -250,9 +253,9 @@ export async function GET(request: Request): Promise<NextResponse> {
     setCache(CACHE_KEY, alerts, TTL.SHORT); // 5 min
     return NextResponse.json({ success: true, alerts, cached: false });
   } catch (err) {
-    const msg = err instanceof Error ? err.message : 'Tax alert generation failed';
-    console.error('[tax/alerts] Error:', msg);
-    return NextResponse.json({ success: false, error: msg, alerts: [] }, { status: 500 });
+    const eventId = captureRouteError(err, { request_id, route: 'tax/alerts' });
+    log.error({ err: err instanceof Error ? err.message : String(err), sentry_event_id: eventId }, 'tax/alerts threw');
+    return NextResponse.json({ success: false, error: 'Tax alert generation failed', sentry_event_id: eventId, alerts: [] }, { status: 500 });
   }
 }
 
