@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { rateLimit } from '@/lib/rate-limit';
+import { checkRateLimitDurable, getRateLimitIdentity } from '@/lib/rate-limit-durable';
 import { ALPACA_BASE_URL, assertPaperTrading } from '@/lib/alpaca';
 import { singleOrderSchema } from '@/lib/order-schemas';
 import { publicError, validationError, captureAndPublic } from '@/lib/api-error';
@@ -11,7 +11,10 @@ const alpacaHeaders = {
 };
 
 export async function POST(req: NextRequest) {
-  const { allowed } = rateLimit('options-order', 10, 60000);
+  // Codex round-3 P1: durable, session-keyed limit. Per-Vercel-instance
+  // counters were a real exposure on a money-moving endpoint.
+  const { key } = await getRateLimitIdentity(req);
+  const { allowed } = await checkRateLimitDurable('options-order', key, 10, 60);
   if (!allowed) return publicError('RATE_LIMITED', 'Too many order requests');
 
   let parsed;

@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { verifyImageParams } from '@/lib/img-proxy';
+import { loggerFor } from '@/lib/request-id';
 
 export const runtime = 'nodejs';
 
@@ -25,6 +26,8 @@ function placeholderResponse(req: NextRequest, ttlSeconds: number): NextResponse
 }
 
 export async function GET(req: NextRequest) {
+  const { log } = loggerFor(req, { route: 'img' });
+
   const encoded = req.nextUrl.searchParams.get('u');
   const sig = req.nextUrl.searchParams.get('s');
   const target = encoded && sig ? verifyImageParams(encoded, sig) : null;
@@ -59,7 +62,17 @@ export async function GET(req: NextRequest) {
       if (done) break;
       total += value.byteLength;
       if (total > MAX_BYTES) {
-        try { reader.cancel(); } catch {}
+        try {
+          reader.cancel();
+        } catch (err) {
+          // Gemini round-3 P1 — was bare `catch {}`. The reader is already
+          // about to be discarded so behavior is unchanged; log so we see
+          // upstream bodies that misbehave under cancel (rare but real).
+          log.warn(
+            { err: err instanceof Error ? err.message : String(err), target },
+            'img proxy: reader.cancel() threw while aborting oversize body',
+          );
+        }
         return placeholderResponse(req, PLACEHOLDER_TTL);
       }
       chunks.push(value);

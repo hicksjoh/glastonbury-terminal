@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getOrders, submitOrder } from '@/lib/alpaca';
-import { rateLimit } from '@/lib/rate-limit';
+import { checkRateLimitDurable, getRateLimitIdentity } from '@/lib/rate-limit-durable';
 import { runOrderGuards } from '@/lib/order-guards';
 import { runDebateGate, shouldRunDebateGate, type DebateGateVerdict } from '@/lib/order-guards/debate-gate';
 import { alpacaOrderRequestSchema } from '@/lib/order-schemas';
@@ -18,7 +18,11 @@ export async function GET(req: NextRequest) {
 }
 
 export async function POST(req: NextRequest) {
-  const { allowed } = rateLimit('orders', 30, 60000);
+  // Codex round-3 P1: durable, session-keyed limit. The pre-fix in-memory
+  // limiter forked per Vercel instance, so the effective cap was
+  // 30 × N warm workers — a real money-moving amplification surface.
+  const { key } = await getRateLimitIdentity(req);
+  const { allowed } = await checkRateLimitDurable('alpaca-orders', key, 30, 60);
   if (!allowed) return publicError('RATE_LIMITED', 'Too many requests');
 
   let parsed;

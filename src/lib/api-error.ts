@@ -16,6 +16,7 @@
 import { NextResponse } from 'next/server';
 import * as Sentry from '@sentry/nextjs';
 import type { ZodError } from 'zod';
+import { log } from '@/lib/logger';
 
 export type ApiErrorCode =
   | 'VALIDATION_ERROR'
@@ -104,8 +105,14 @@ export function captureAndPublic(
   let eventId: string | undefined;
   try {
     eventId = Sentry.captureException(err, extras ? { extra: extras } : undefined) || undefined;
-  } catch {
-    // Sentry init failures must never mask the real error response.
+  } catch (sentryErr) {
+    // Gemini round-3 P1 — was bare `catch {}`. Sentry init failures must
+    // never mask the real error response, but they SHOULD be visible in
+    // the log drain so we can diagnose a broken Sentry pipeline.
+    log.warn(
+      { err: sentryErr instanceof Error ? sentryErr.message : String(sentryErr) },
+      'captureAndPublic: Sentry.captureException threw',
+    );
   }
   return publicError(code, message, status, eventId ? { eventId } : undefined);
 }
@@ -132,7 +139,14 @@ export function captureRouteError(
 ): string | undefined {
   try {
     return Sentry.captureException(err, extras ? { extra: extras } : undefined) || undefined;
-  } catch {
+  } catch (sentryErr) {
+    // Gemini round-3 P1 — was bare `catch {}`. Same reasoning as
+    // captureAndPublic: a broken Sentry pipeline shouldn't mask the
+    // route error, but it shouldn't be invisible either.
+    log.warn(
+      { err: sentryErr instanceof Error ? sentryErr.message : String(sentryErr) },
+      'captureRouteError: Sentry.captureException threw',
+    );
     return undefined;
   }
 }

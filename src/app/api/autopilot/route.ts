@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createServiceClient } from '@/lib/supabase';
-import { rateLimit } from '@/lib/rate-limit';
+import { checkRateLimitDurable, getRateLimitIdentity } from '@/lib/rate-limit-durable';
 import { ALPACA_BASE_URL, assertPaperTrading } from '@/lib/alpaca';
 
 const ALPACA_HEADERS = {
@@ -390,7 +390,11 @@ async function handleHistory(): Promise<NextResponse> {
 // ── Route Handlers ─────────────────────────────────────────────────────────
 
 export async function POST(req: NextRequest) {
-  const { allowed } = rateLimit('autopilot', 15, 60000);
+  // Codex round-3 P1: durable, session-keyed limit. Autopilot fans out
+  // through crew + guards + Alpaca, so a stuck retry loop could spend
+  // money fast across Vercel instances on the in-memory cap.
+  const { key } = await getRateLimitIdentity(req);
+  const { allowed } = await checkRateLimitDurable('autopilot', key, 15, 60);
   if (!allowed) return NextResponse.json({ error: 'Too many requests' }, { status: 429 });
 
   try {

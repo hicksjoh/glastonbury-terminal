@@ -74,17 +74,23 @@ export async function GET(req: NextRequest) {
   if (!redirect_uri) return badRequest('Missing redirect_uri');
 
   const client = await findClient(client_id);
-  // p6-1: revoked clients return the same "Unknown client_id" response so an
-  // attacker can't differentiate "never registered" from "revoked." The real
-  // reason is logged server-side for ops debugging.
+  // Codex round-3 P1: collapsed the differential error responses for
+  // unknown / revoked / wrong-redirect into a single 'invalid_client_or_redirect'.
+  // Before, an attacker could enumerate registered client_ids by
+  // submitting `client_id=X&redirect_uri=garbage` and comparing
+  // "Unknown client_id" vs "redirect_uri does not match" — telling them
+  // which IDs exist. The real reason for the refusal is still recorded
+  // in the structured log so ops can debug legitimate misconfigurations.
   if (!client || client.revoked_at) {
-    if (client?.revoked_at) {
-      log.warn({ client_id }, 'authorize: client revoked');
-    }
-    return badRequest('Unknown client_id');
+    log.warn(
+      { client_id, reason: !client ? 'unknown_client' : 'revoked_client' },
+      'authorize rejected: client unknown or revoked',
+    );
+    return badRequest('invalid_client_or_redirect');
   }
   if (!client.redirect_uris.includes(redirect_uri)) {
-    return badRequest('redirect_uri does not match any registered URI for this client');
+    log.warn({ client_id, reason: 'redirect_mismatch' }, 'authorize rejected: redirect_uri mismatch');
+    return badRequest('invalid_client_or_redirect');
   }
 
   // Now we can safely redirect errors back to the client.

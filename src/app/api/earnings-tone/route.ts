@@ -2,8 +2,16 @@ import { NextRequest, NextResponse } from 'next/server';
 import { anthropic, CLAUDE_MODEL_FALLBACK } from '@/lib/claude';
 import { tagAnthropicCall } from '@/lib/anthropic-cost';
 import { getSupabase } from '@/lib/supabase';
+import { checkRateLimitDurable, getRateLimitIdentity } from '@/lib/rate-limit-durable';
+import { loggerFor } from '@/lib/request-id';
+import { earningsToneQuerySchema } from './schema';
 
 const FMP_KEY = process.env.FMP_API_KEY;
+
+// Codex round-3 P1 — earnings-tone accepted raw `symbol`, `quarter`, `year`
+// straight into a Supabase query, an FMP URL, and a Claude prompt. The
+// schema (in ./schema.ts because Next 14 Route Handlers can't export Zod
+// objects from route.ts itself) tightens those inputs.
 
 function getCurrentQuarter(): number {
   const month = new Date().getMonth(); // 0-indexed
@@ -41,18 +49,37 @@ function fallbackKeywordAnalysis(transcript: string, symbol: string, quarter: nu
 }
 
 export async function GET(req: NextRequest) {
+  const { log } = loggerFor(req, { route: 'earnings-tone' });
+
+  // Codex round-3 P1: this route fans out to FMP (paid endpoint) AND
+  // Anthropic, so an unbounded caller pays Wes twice per request. Durable
+  // limit keeps the bucket consistent across Vercel instances. 20/min is
+  // generous enough for a human refreshing the earnings panel while
+  // catching automation that would burn $$$ at scale.
+  const { key } = await getRateLimitIdentity(req);
+  const { allowed } = await checkRateLimitDurable('earnings-tone', key, 20, 60);
+  if (!allowed) return NextResponse.json({ error: 'Too many requests' }, { status: 429 });
+
   try {
     if (!FMP_KEY) {
       return NextResponse.json({ error: 'FMP_API_KEY not configured' }, { status: 500 });
     }
 
-    const symbol = req.nextUrl.searchParams.get('symbol')?.toUpperCase();
-    if (!symbol) {
-      return NextResponse.json({ error: 'symbol parameter is required' }, { status: 400 });
+    // Codex round-3 P1 — zod-validate the query parameters before any of
+    // them are interpolated into a URL, SQL filter, or Claude prompt.
+    const queryParse = earningsToneQuerySchema.safeParse({
+      symbol: req.nextUrl.searchParams.get('symbol') ?? '',
+      quarter: req.nextUrl.searchParams.get('quarter') ?? String(getCurrentQuarter()),
+      year: req.nextUrl.searchParams.get('year') ?? '2026',
+    });
+    if (!queryParse.success) {
+      log.warn({ issues: queryParse.error.issues }, 'earnings-tone query validation failed');
+      return NextResponse.json(
+        { error: 'Invalid query parameters', issues: queryParse.error.issues },
+        { status: 400 },
+      );
     }
-
-    const quarter = parseInt(req.nextUrl.searchParams.get('quarter') || String(getCurrentQuarter()), 10);
-    const year = parseInt(req.nextUrl.searchParams.get('year') || '2026', 10);
+    const { symbol, quarter, year } = queryParse.data;
 
     // Check Supabase cache first
     try {
@@ -83,14 +110,15 @@ export async function GET(req: NextRequest) {
           cached: true,
         });
       }
-    } catch {
-      // Cache miss or Supabase not configured — continue
+    } catch (err) {
+      // Cache miss or Supabase not configured — log and continue.
+      log.debug({ err: err instanceof Error ? err.message : String(err) }, 'earnings-tone cache lookup failed');
     }
 
     // /stable/earning-call-transcript is a paid-tier endpoint on the current
     // plan; if the plan later upgrades this will work automatically. Until
     // then we degrade to "no transcript" instead of a hard error.
-    const transcriptUrl = `https://financialmodelingprep.com/stable/earning-call-transcript?symbol=${symbol}&quarter=${quarter}&year=${year}&apikey=${FMP_KEY}`;
+    const transcriptUrl = `https://financialmodelingprep.com/stable/earning-call-transcript?symbol=${encodeURIComponent(symbol)}&quarter=${quarter}&year=${year}&apikey=${FMP_KEY}`;
     const transcriptRes = await fetch(transcriptUrl);
 
     if (!transcriptRes.ok) {
@@ -163,7 +191,7 @@ ${transcript.slice(0, 80000)}`,
         throw new Error('No valid JSON found in Claude response');
       }
     } catch (claudeError) {
-      console.error('Claude analysis failed, falling back to keyword scan:', claudeError);
+      log.warn({ err: claudeError instanceof Error ? claudeError.message : String(claudeError) }, 'Claude tone analysis failed, falling back to keyword scan');
       toneAnalysis = fallbackKeywordAnalysis(transcript, symbol, quarter, year);
     }
 
@@ -191,9 +219,9 @@ ${transcript.slice(0, 80000)}`,
         },
         { onConflict: 'symbol,quarter,year' }
       );
-    } catch {
+    } catch (err) {
       // Caching failure is non-critical
-      console.warn('Failed to cache earnings tone in Supabase');
+      log.warn({ err: err instanceof Error ? err.message : String(err) }, 'Failed to cache earnings tone in Supabase');
     }
 
     return NextResponse.json({
@@ -205,7 +233,7 @@ ${transcript.slice(0, 80000)}`,
       lastUpdated,
     });
   } catch (error) {
-    console.error('Earnings tone API error:', error);
+    log.error({ err: error instanceof Error ? error.message : String(error) }, 'Earnings tone API error');
     return NextResponse.json(
       { error: 'Failed to analyze earnings tone' },
       { status: 500 }

@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createServiceClient } from '@/lib/supabase';
-import { rateLimit } from '@/lib/rate-limit';
+import { checkRateLimitDurable, getRateLimitIdentity } from '@/lib/rate-limit-durable';
 import { generateMemo } from '@/lib/earnings-engine';
 import { indexDoc } from '@/lib/doc-indexer';
 import { isEmbeddingConfigured } from '@/lib/embeddings';
@@ -10,8 +10,13 @@ export const dynamic = 'force-dynamic';
 export const maxDuration = 120;
 
 // POST /api/earnings/live/session/[id]/end — mark completed + generate memo
-export async function POST(_req: NextRequest, ctx: { params: { id: string } }) {
-  const { allowed } = rateLimit('earnings-end', 10, 60_000);
+export async function POST(req: NextRequest, ctx: { params: { id: string } }) {
+  // Codex round-3 P1: durable, session-keyed limit. End-session triggers
+  // generateMemo (Anthropic) + indexDoc (Voyage/OpenAI embeddings), both
+  // billed. In-memory caps forked per Vercel instance, leaving costs
+  // amplified by warm-worker count.
+  const { key } = await getRateLimitIdentity(req);
+  const { allowed } = await checkRateLimitDurable('earnings-end', key, 10, 60);
   if (!allowed) return NextResponse.json({ error: 'Too many requests' }, { status: 429 });
 
   const sessionId = ctx.params.id;

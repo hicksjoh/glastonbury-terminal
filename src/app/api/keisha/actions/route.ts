@@ -21,6 +21,8 @@ export async function POST(req: NextRequest) {
   const { allowed } = await checkRateLimitDurable('keisha-actions', key, 30, 60);
   if (!allowed) return NextResponse.json({ error: 'Too many requests' }, { status: 429 });
 
+  const { log } = loggerFor(req, { route: 'keisha/actions' });
+
   try {
     const body = (await req.json()) as ActionRequest;
     const action = body.action;
@@ -50,7 +52,15 @@ export async function POST(req: NextRequest) {
             companyName = p.companyName || symbol;
             currentPrice = p.price;
           }
-        } catch {}
+        } catch (err) {
+          // Gemini round-3 P0 — was bare `catch {}` (silent swallow). FMP
+          // profile lookup is best-effort here (we fall back to the symbol
+          // as the company name), but a sustained outage should be visible.
+          log.warn(
+            { err: err instanceof Error ? err.message : String(err), symbol },
+            'add_watchlist: getProfile failed, using symbol as company name',
+          );
+        }
 
         const { error } = await supabase.from('watchlist').insert({
           symbol,

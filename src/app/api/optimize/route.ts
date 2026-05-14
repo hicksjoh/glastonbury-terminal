@@ -4,6 +4,9 @@ import { correlationMatrix } from '@/lib/correlation';
 import { anthropic, CLAUDE_MODEL_FALLBACK } from '@/lib/claude';
 import { tagAnthropicCall } from '@/lib/anthropic-cost';
 import { getHistoricalPrices } from '@/lib/fmp-client';
+import { checkRateLimitDurable, getRateLimitIdentity } from '@/lib/rate-limit-durable';
+import { loggerFor } from '@/lib/request-id';
+import { optimizeRequestSchema } from './schema';
 
 const ALPACA_BASE_URL = process.env.ALPACA_BASE_URL || 'https://paper-api.alpaca.markets';
 const FMP_KEY = process.env.FMP_API_KEY;
@@ -194,8 +197,30 @@ Respond ONLY with a JSON array, no other text.`;
 }
 
 export async function POST(request: NextRequest) {
+  const { log } = loggerFor(request, { route: 'optimize' });
+
+  // Codex round-3 P1 — durable, session-keyed limit. This route fans out
+  // to FMP for every symbol AND optionally to Claude opus, so an
+  // unbounded caller has two attack surfaces for cost amplification.
+  // 10/min matches a human reasonably re-running with different inputs;
+  // anything beyond that is a script.
+  const { key } = await getRateLimitIdentity(request);
+  const { allowed } = await checkRateLimitDurable('optimize', key, 10, 60);
+  if (!allowed) return NextResponse.json({ error: 'Too many requests' }, { status: 429 });
+
   try {
-    const body: OptimizeRequest = await request.json();
+    // Codex round-3 P1 — zod-validate the body so an attacker can't submit
+    // a 5000-symbol array and burn FMP credits before we notice.
+    const rawBody = await request.json();
+    const parsed = optimizeRequestSchema.safeParse(rawBody);
+    if (!parsed.success) {
+      log.warn({ issues: parsed.error.issues }, 'optimize request validation failed');
+      return NextResponse.json(
+        { error: 'Invalid request body', issues: parsed.error.issues },
+        { status: 400 },
+      );
+    }
+    const body: OptimizeRequest = parsed.data;
     const { useAIViews = false, riskAversion = 2.5 } = body;
 
     // 1. Get symbols and market weights
