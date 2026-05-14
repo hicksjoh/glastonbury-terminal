@@ -8,9 +8,20 @@ import { cc, CcMcpUnavailableError, CcMcpError } from '@/lib/mcp/cc-client';
 //
 // Auth: middleware-protected (gt-auth session JWT). Client never sees
 // the CC_MCP_TOKEN; CC's bearer only lives in the server-side env.
+//
+// Notion bridge: NOTION_PIPELINE_URL points at the Notion DB that mirrors
+// pipeline.json. Wes edits prospects in Notion (mobile-friendly), then
+// asks Claude.app to "sync my Notion pipeline to the terminal" — Claude
+// reads via notion-* tools and writes via the empire_* MCP tools. The
+// page surfaces the link as a one-tap shortcut into Notion.
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
+
+const NOTION_PIPELINE_URL =
+  process.env.NOTION_PIPELINE_URL ?? 'https://www.notion.so/122e60309061422f93d23fe266e696b9';
+const NOTION_HUB_URL =
+  process.env.NOTION_HUB_URL ?? 'https://www.notion.so/360d01bc6fa381e796dcfdce1ee962f5';
 
 export async function GET() {
   try {
@@ -70,6 +81,10 @@ export async function GET() {
         present_files: Object.entries(status.agents)
           .filter(([, v]) => v.present)
           .map(([k]) => k),
+      },
+      notion: {
+        pipeline_url: NOTION_PIPELINE_URL,
+        hub_url: NOTION_HUB_URL,
       },
       pipeline: {
         total_deals: pipeline.count,

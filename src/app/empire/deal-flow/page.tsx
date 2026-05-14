@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react';
 import { AppShell } from '@/components/layout/AppShell';
 import { ErrorBoundary } from '@/components/ErrorBoundary';
 import { LoadingState } from '@/components/LoadingState';
-import { Briefcase, MapPin, AlertCircle, Activity } from 'lucide-react';
+import { Briefcase, MapPin, AlertCircle, Activity, ExternalLink } from 'lucide-react';
 
 interface Deal {
   id: string;
@@ -38,6 +38,10 @@ interface DealFlowData {
     server: string;
     cc_time: string;
     present_files: string[];
+  };
+  notion?: {
+    pipeline_url: string;
+    hub_url: string;
   };
   pipeline: {
     total_deals: number;
@@ -113,7 +117,25 @@ export default function DealFlowPage() {
     <ErrorBoundary label="DealFlow">
       <AppShell>
         <div>
-          <h1 style={{ fontSize: 28, fontWeight: 700, color: '#fff', margin: '0 0 4px' }}>Deal Flow</h1>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 4 }}>
+            <h1 style={{ fontSize: 28, fontWeight: 700, color: '#fff', margin: 0 }}>Deal Flow</h1>
+            {data?.notion?.pipeline_url && (
+              <a
+                href={data.notion.pipeline_url}
+                target="_blank"
+                rel="noopener noreferrer"
+                style={{
+                  display: 'inline-flex', alignItems: 'center', gap: 6,
+                  background: 'rgba(138,92,246,0.10)', border: '1px solid #8a5cf6',
+                  borderRadius: 8, padding: '6px 12px',
+                  color: '#a78bfa', fontSize: 12, fontWeight: 600,
+                  textDecoration: 'none',
+                }}
+              >
+                Edit in Notion <ExternalLink size={13} />
+              </a>
+            )}
+          </div>
           <p style={{ color: '#8888a8', fontSize: 14, margin: '0 0 28px' }}>
             Live CR3 franchise pipeline from the Command Center.
             {data && (
