@@ -1,226 +1,46 @@
-// Glastonbury Terminal — Service Worker v2 (p7-1 bumped to flush old OAuth consent cache)
-const CACHE_VERSION = 'gt-v2';
-const STATIC_CACHE = `static-${CACHE_VERSION}`;
-const DYNAMIC_CACHE = `dynamic-${CACHE_VERSION}`;
-const OFFLINE_URL = '/offline.html';
+// Glastonbury Terminal — Service Worker SELF-DESTRUCT (p7-3)
+//
+// The previous SW (gt-v1) cached responses including the /oauth/consent
+// HTML, which carried the pre-p7-1 form-action CSP. Even after the new
+// build shipped, browsers running the old SW kept serving the stale CSP
+// from DYNAMIC_CACHE, silently blocking the OAuth redirect to
+// https://claude.ai/api/mcp/auth_callback. Bumping CACHE_VERSION wasn't
+// enough — the old SW had to be torn down completely.
+//
+// This SW does one thing on activation: nukes every cache, unregisters
+// itself, and forces every open client to reload. After it runs once,
+// the origin has no service worker. The PWA's offline + push features
+// will need to be re-added in a later commit with /oauth/* explicitly
+// bypassed; for now, getting Claude.app's MCP connector working wins.
 
-// Assets to pre-cache on install
-const PRECACHE_ASSETS = [
-  '/',
-  '/offline.html',
-  '/icon.svg',
-  '/icon-192.png',
-  '/icon-512.png',
-  '/glastonbury-logo.png',
-  '/manifest.json',
-];
-
-// Install — pre-cache static assets
 self.addEventListener('install', (event) => {
-  event.waitUntil(
-    caches.open(STATIC_CACHE).then((cache) => {
-      return cache.addAll(PRECACHE_ASSETS);
-    })
-  );
-  // Activate immediately, don't wait for old SW to die
-  self.skipWaiting();
+  event.waitUntil(self.skipWaiting());
 });
 
-// Activate — clear old caches
 self.addEventListener('activate', (event) => {
   event.waitUntil(
-    caches.keys().then((cacheNames) => {
-      return Promise.all(
-        cacheNames
-          .filter((name) => name !== STATIC_CACHE && name !== DYNAMIC_CACHE)
-          .map((name) => caches.delete(name))
-      );
-    })
-  );
-  // Take control of all clients immediately
-  self.clients.claim();
-});
+    (async () => {
+      // Wipe every cache this origin owns.
+      const cacheNames = await caches.keys();
+      await Promise.all(cacheNames.map((name) => caches.delete(name)));
 
-// Fetch — routing strategy
-self.addEventListener('fetch', (event) => {
-  const { request } = event;
-  const url = new URL(request.url);
+      // Unregister this SW so the browser stops invoking it.
+      await self.registration.unregister();
 
-  // Skip non-GET requests
-  if (request.method !== 'GET') return;
-
-  // Skip chrome-extension and other non-http(s) requests
-  if (!url.protocol.startsWith('http')) return;
-
-  // OAuth flow — never SW-cache. CSP and Set-Cookie headers MUST come
-  // straight from the origin every time. A stale cached /oauth/consent
-  // with an outdated form-action CSP will silently block the redirect
-  // to claude.ai/api/mcp/auth_callback. Let the browser handle these.
-  if (url.pathname.startsWith('/oauth/') || url.pathname.startsWith('/api/oauth/')) {
-    return;
-  }
-
-  // API calls — network-first
-  if (url.pathname.startsWith('/api/')) {
-    event.respondWith(networkFirst(request));
-    return;
-  }
-
-  // Static assets (JS, CSS, fonts, images) — cache-first
-  if (isStaticAsset(url.pathname)) {
-    event.respondWith(cacheFirst(request));
-    return;
-  }
-
-  // Navigation requests — network-first with offline fallback
-  if (request.mode === 'navigate') {
-    event.respondWith(
-      networkFirst(request).catch(() => caches.match(OFFLINE_URL))
-    );
-    return;
-  }
-
-  // Everything else — network-first
-  event.respondWith(networkFirst(request));
-});
-
-// ---------- Strategies ----------
-
-async function cacheFirst(request) {
-  const cached = await caches.match(request);
-  if (cached) return cached;
-
-  try {
-    const response = await fetch(request);
-    if (response.ok) {
-      const cache = await caches.open(STATIC_CACHE);
-      cache.put(request, response.clone());
-    }
-    return response;
-  } catch {
-    return new Response('', { status: 503, statusText: 'Offline' });
-  }
-}
-
-async function networkFirst(request) {
-  try {
-    const response = await fetch(request);
-    if (response.ok) {
-      const cache = await caches.open(DYNAMIC_CACHE);
-      cache.put(request, response.clone());
-    }
-    return response;
-  } catch {
-    const cached = await caches.match(request);
-    if (cached) return cached;
-    if (request.mode === 'navigate') {
-      return caches.match(OFFLINE_URL);
-    }
-    return new Response('', { status: 503, statusText: 'Offline' });
-  }
-}
-
-// ---------- Helpers ----------
-
-function isStaticAsset(pathname) {
-  return /\.(js|css|woff2?|ttf|eot|otf|png|jpg|jpeg|gif|svg|webp|ico|avif)(\?.*)?$/.test(pathname)
-    || pathname.startsWith('/_next/static/');
-}
-
-// ---------- Background Sync ----------
-
-self.addEventListener('sync', (event) => {
-  if (event.tag === 'offline-actions') {
-    event.waitUntil(replayOfflineActions());
-  }
-});
-
-async function replayOfflineActions() {
-  // Read queued actions from IndexedDB and replay them
-  // This is a placeholder — wire up when offline mutation queue is built
-  try {
-    const db = await openActionDB();
-    const tx = db.transaction('actions', 'readwrite');
-    const store = tx.objectStore('actions');
-    const actions = await getAllFromStore(store);
-
-    for (const action of actions) {
-      try {
-        await fetch(action.url, {
-          method: action.method,
-          headers: action.headers,
-          body: action.body,
-        });
-        store.delete(action.id);
-      } catch {
-        // Still offline — will retry on next sync
-        break;
-      }
-    }
-  } catch {
-    // IndexedDB not available or empty — nothing to replay
-  }
-}
-
-function openActionDB() {
-  return new Promise((resolve, reject) => {
-    const req = indexedDB.open('gt-offline', 1);
-    req.onupgradeneeded = () => {
-      req.result.createObjectStore('actions', { keyPath: 'id', autoIncrement: true });
-    };
-    req.onsuccess = () => resolve(req.result);
-    req.onerror = () => reject(req.error);
-  });
-}
-
-function getAllFromStore(store) {
-  return new Promise((resolve, reject) => {
-    const req = store.getAll();
-    req.onsuccess = () => resolve(req.result);
-    req.onerror = () => reject(req.error);
-  });
-}
-
-// ---------- Push Notifications ----------
-
-self.addEventListener('push', (event) => {
-  let data = { title: 'Glastonbury Terminal', body: 'New alert', icon: '/icon-192.png' };
-
-  if (event.data) {
-    try {
-      data = { ...data, ...event.data.json() };
-    } catch {
-      data.body = event.data.text();
-    }
-  }
-
-  event.waitUntil(
-    self.registration.showNotification(data.title, {
-      body: data.body,
-      icon: data.icon || '/icon-192.png',
-      badge: '/icon-192.png',
-      vibrate: [100, 50, 100],
-      data: data.url ? { url: data.url } : {},
-      actions: data.actions || [],
-    })
-  );
-});
-
-self.addEventListener('notificationclick', (event) => {
-  event.notification.close();
-
-  const targetUrl = event.notification.data?.url || '/';
-
-  event.waitUntil(
-    self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((clients) => {
-      // Focus existing window if open
+      // Force every controlled tab to reload — they're still running
+      // against the old SW until they navigate again. A hard reload
+      // here means the next page load goes straight to origin.
+      const clients = await self.clients.matchAll({ type: 'window' });
       for (const client of clients) {
-        if (client.url.includes(targetUrl) && 'focus' in client) {
-          return client.focus();
+        try {
+          client.navigate(client.url);
+        } catch {
+          /* some browsers reject navigate() — ignore, the unregister
+             alone is enough for the next user-initiated navigation. */
         }
       }
-      // Otherwise open new window
-      return self.clients.openWindow(targetUrl);
-    })
+    })(),
   );
 });
+
+// No fetch handler — every request goes to the network untouched.
