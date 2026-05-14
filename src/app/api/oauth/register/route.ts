@@ -8,27 +8,44 @@ import { readBoundedJson, BodyTooLargeError, BODY_LIMIT } from '@/lib/bounded-bo
 
 // RFC 7591 OAuth 2.0 Dynamic Client Registration.
 //
-// Production hardening (p1-5): registration now requires either an
-// authenticated session (gt-auth cookie — Wes registering from his own
-// browser) OR an `OAUTH_REGISTRATION_TOKEN` bearer (programmatic admin).
+// Admission policy (highest match wins):
+//   1. gt-auth session cookie — Wes manually registering from his browser
+//      (used by curl-style admin onboarding).
+//   2. OAUTH_REGISTRATION_TOKEN bearer — programmatic admin registration
+//      (used by CI / scripts).
+//   3. OAUTH_OPEN_DCR=1 env var — standards-compatible anonymous DCR for
+//      remote MCP clients (Claude.app's Custom Connector flow, MCP Inspector,
+//      etc. which cannot attach a bearer header during RFC 7591 DCR).
+//   4. NODE_ENV !== 'production' — dev fallthrough so local Claude.app
+//      testing works without setup.
+//   5. Otherwise: deny.
 //
-// The pre-p1-5 behavior allowed any internet caller to register; the
-// consent screen was the only real gate. That's still effectively true
-// (a malicious client never gets a valid token without Wes clicking
-// approve), but an unauthenticated registry of "Glastonbury Terminal"
-// look-alike clients is a phishing vector and table-bloat risk.
+// History:
+//   - Pre-p1-5: anonymous registration was always allowed; the consent
+//     screen was the only gate.
+//   - p1-5 added the session/token gates above as defense-in-depth.
+//   - p6-1 (Codex hardening) flipped prod to fail-closed when the token
+//     gate was unset. That was the right call as a guard against accidental
+//     open DCR, BUT it also blocks Claude.app's Custom Connector flow,
+//     which uses standard RFC 7591 anonymous DCR and has no way to attach
+//     a bearer header during registration.
+//   - p7-1 (this commit) adds the explicit OAUTH_OPEN_DCR=1 opt-in so open
+//     DCR is an intentional product mode, not the silent default.
 //
-// Back-compat: if OAUTH_REGISTRATION_TOKEN is unset AND no valid session
-// is presented, the request is still accepted but logs a WARN. This keeps
-// any pre-p1-5 client integrations working until Wes sets the env var to
-// flip the gate to fully locked.
+// Even with OAUTH_OPEN_DCR=1, registration alone grants no access:
+//   - 5-per-minute-per-IP rate limit gates table bloat.
+//   - Redirect URI validation (HTTPS-only except loopback) gates phishing.
+//   - 8KB body cap + per-field metadata caps gate junk-payload DOS.
+//   - /api/oauth/authorize requires a valid Wes session before consent.
+//   - /oauth/consent is a human-in-the-loop click before any code issues.
+//   - Token endpoint enforces PKCE + redirect_uri exact match + single-use code.
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
 interface AdmissionResult {
   ok: boolean;
-  via: 'session' | 'token' | 'open' | 'denied';
+  via: 'session' | 'token' | 'open-dcr' | 'dev' | 'denied';
 }
 
 async function authorizeRegistration(req: NextRequest): Promise<AdmissionResult> {
@@ -46,32 +63,31 @@ async function authorizeRegistration(req: NextRequest): Promise<AdmissionResult>
     if (header.startsWith('Bearer ') && safeSecretEqual(header.slice(7), expected)) {
       return { ok: true, via: 'token' };
     }
-    // Token gate is configured AND no valid session AND token mismatch — deny.
-    return { ok: false, via: 'denied' };
+    // Token gate is configured but mismatched — fall through to the
+    // OAUTH_OPEN_DCR check below so both gates can coexist (token for
+    // admin scripts, open DCR for Claude.app's anonymous registration).
   }
 
-  // p6-1: fail-CLOSED in production when OAUTH_REGISTRATION_TOKEN is unset.
-  // The earlier "warn and allow" fallback was a deploy-time footgun — if the
-  // operator forgot to set the env var, anonymous registration was open to
-  // the internet. Production NEVER takes that path now. Dev preserves the
-  // ergonomic warn-and-allow so local Claude.app testing still works without
-  // every developer needing to set the env var.
-  if (process.env.NODE_ENV === 'production') {
-    console.error(
-      '[oauth/register] OAUTH_REGISTRATION_TOKEN not set in production — ' +
-        'rejecting anonymous registration. Set the env var to enable token-based ' +
-        'admin registration, or rely on session-based registration only.',
+  // Path 3: explicit open-DCR opt-in (RFC 7591 standards-compatible).
+  if (process.env.OAUTH_OPEN_DCR === '1') {
+    return { ok: true, via: 'open-dcr' };
+  }
+
+  // Path 4: dev fallthrough — never in production.
+  if (process.env.NODE_ENV !== 'production') {
+    console.warn(
+      '[oauth/register] No session / token / OAUTH_OPEN_DCR — allowing ' +
+        'unauthenticated registration (dev only). Production fails-closed here.',
     );
-    return { ok: false, via: 'denied' };
+    return { ok: true, via: 'dev' };
   }
 
-  // Dev only: no session, no env-var gate. Allow but warn.
-  console.warn(
-    '[oauth/register] OAUTH_REGISTRATION_TOKEN not set and no session ' +
-      'cookie present — allowing unauthenticated registration (dev only). ' +
-      'Production fails-closed in the same path.',
+  console.error(
+    '[oauth/register] denied: no session cookie, no matching ' +
+      'OAUTH_REGISTRATION_TOKEN bearer, and OAUTH_OPEN_DCR is not set to "1". ' +
+      'Set OAUTH_OPEN_DCR=1 to allow Claude.app-style anonymous DCR.',
   );
-  return { ok: true, via: 'open' };
+  return { ok: false, via: 'denied' };
 }
 
 interface RegisterBody {

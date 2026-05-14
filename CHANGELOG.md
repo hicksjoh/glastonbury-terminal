@@ -2,6 +2,35 @@
 
 All notable changes to Glastonbury Terminal go here. Newest first.
 
+## P7-1 — Unblock Claude.app Custom Connector — 2026-05-13
+
+Reopens RFC 7591 anonymous Dynamic Client Registration behind an explicit
+`OAUTH_OPEN_DCR=1` opt-in. The p6-1 fail-closed default also blocked
+Claude.app's Custom Connector flow (the connector backend hits `/register`
+anonymously — there's no surface to attach an admin bearer token), so
+adding `terminal.johnwesleyhicks.com/api/mcp` to Claude.app always died at
+the first step with `401 "Dynamic client registration is restricted"`.
+
+### Changed
+- `src/app/api/oauth/register/route.ts` — admission policy reordered:
+  session → registration-token-bearer → `OAUTH_OPEN_DCR=1` → dev → deny.
+  Existing security gates (5/min/IP rate limit, redirect_uri validation,
+  8KB body cap, per-field metadata caps, consent screen) are unchanged —
+  open DCR only relaxes the registration step, not anything that issues
+  credentials. The consent screen at `/oauth/consent` still requires a
+  valid Wes session before any authorization code can be minted.
+
+### Deployed
+- `OAUTH_OPEN_DCR=1` added to Production env on Vercel.
+
+### Verified (live on prod)
+- Anonymous POST `/api/oauth/register` → 201 + client_id.
+- Authorize endpoint still 303→/login when no session, 400 on bad
+  redirect_uri, 400 on unknown client_id.
+- All 6 S3 e2e tests pass against the live deploy.
+- MCP `tools/list` returns the 6 terminal tools when called with either
+  the static `MCP_AUTH_TOKEN` bearer or an OAuth access token.
+
 ## P0 Hardening — 2026-04-29
 
 Closes the six P0 ship-blockers from the Codex second-opinion audit
