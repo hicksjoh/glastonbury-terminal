@@ -24,6 +24,7 @@ import {
   listMemory,
   type AgentName,
 } from '@/lib/agent-memory';
+import { cc, CcMcpUnavailableError, CcMcpError } from '@/lib/mcp/cc-client';
 
 const SERVER_INFO = {
   name: 'glastonbury-terminal',
@@ -220,6 +221,94 @@ export function buildTerminalMcpServer(): McpServer {
         return fail(`terminal_write_memory failed: ${(err as Error).message}`);
       }
     },
+  );
+
+  // ─── empire_* tools: delegate to Command Center MCP ───────────────
+  // These wrap cc.johnwesleyhicks.com/mcp.php so Claude.app users can read
+  // and update CR3 deal pipeline + territory status WITHOUT having to add
+  // CC as a separate connector. The Terminal acts as the unified cockpit;
+  // CC stays the source of truth for empire/franchise data.
+  //
+  // Failure mode: if CC is unreachable or CC_MCP_TOKEN isn't set, tools
+  // return isError:true with a human-readable message instead of throwing.
+  // That way the agent gets a chance to either retry or fall back gracefully.
+  const safeCall = async <T>(label: string, fn: () => Promise<T>) => {
+    try {
+      const data = await fn();
+      return okJson(data);
+    } catch (err) {
+      if (err instanceof CcMcpUnavailableError) {
+        return fail(`Command Center is unavailable for ${label}: ${err.message}`);
+      }
+      if (err instanceof CcMcpError) {
+        return fail(`Command Center rejected ${label} (code ${err.code}): ${err.message}`);
+      }
+      return fail(`${label} failed: ${(err as Error).message}`);
+    }
+  };
+
+  server.tool(
+    'empire_get_pipeline',
+    'Returns the CR3 franchise deal pipeline from the Command Center: every active prospect with stage, value, next action, and score. Optional stage filter (lead|contacted|qualified|meeting|offer|signed|cold). Use this when asked about deals, pipeline, prospects, or CR3 sales activity.',
+    {
+      stage: z.string().optional().describe('Optional pipeline stage filter'),
+    },
+    async ({ stage }) => safeCall('empire_get_pipeline', () => cc.getPipeline(stage)),
+  );
+
+  server.tool(
+    'empire_get_deal',
+    'Get full details of one CR3 franchise deal by its id (e.g., "deal_001"). Returns prospect, territory, stage, value, notes, score, last activity.',
+    {
+      deal_id: z.string().describe('The deal id, e.g. "deal_001"'),
+    },
+    async ({ deal_id }) => safeCall('empire_get_deal', () => cc.getDeal(deal_id)),
+  );
+
+  server.tool(
+    'empire_log_deal',
+    'Add a new CR3 franchise prospect to the deal pipeline. Auto-assigns deal_id. Use this when the user describes a new lead, prospect, or interested party — capture them so they do not slip through the cracks.',
+    {
+      prospect: z.string().min(1).describe('Name of the prospect / company'),
+      territory: z.string().optional().describe('Territory id like "FTLAUD_FL-02"'),
+      stage: z.string().optional().describe('Initial stage; defaults to "lead"'),
+      value: z.number().optional().describe('Deal value in USD'),
+      next_action: z.string().optional().describe('First next action to take'),
+      notes: z.string().optional().describe('Free-form notes'),
+    },
+    async (input) => safeCall('empire_log_deal', () => cc.logDeal(input)),
+  );
+
+  server.tool(
+    'empire_update_deal',
+    'Update a CR3 franchise deal in the pipeline: change stage, append a timestamped note, set next_action, score, or value. Provide deal_id plus any subset of the other fields.',
+    {
+      deal_id: z.string().describe('The deal id to update'),
+      stage: z.string().optional(),
+      note_append: z.string().optional().describe('Text appended with a timestamp prefix'),
+      next_action: z.string().optional(),
+      score: z.number().int().min(0).max(100).optional(),
+      value: z.number().optional(),
+    },
+    async (input) => safeCall('empire_update_deal', () => cc.updateDeal(input)),
+  );
+
+  server.tool(
+    'empire_get_territories',
+    'List CR3 franchise territories from the Command Center, with status (available|in_play|sold), region, DMA, key zip codes, and AR agreement (AR_SEACOAST_FL or AR_WESTCOAST_FL). Filter by status or by ar_agreement.',
+    {
+      status: z.string().optional().describe('Filter by status'),
+      ar_agreement: z.string().optional().describe('Filter by AR agreement (substring match)'),
+    },
+    async ({ status, ar_agreement }) =>
+      safeCall('empire_get_territories', () => cc.getTerritories({ status, ar_agreement })),
+  );
+
+  server.tool(
+    'empire_get_agent_status',
+    'Health check on the Command Center: which agents have data, last-modified timestamps, server time. Use this before a long workflow to confirm CC is reachable and current.',
+    {},
+    async () => safeCall('empire_get_agent_status', () => cc.getAgentStatus()),
   );
 
   return server;

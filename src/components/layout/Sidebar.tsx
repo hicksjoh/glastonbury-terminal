@@ -10,7 +10,7 @@ import {
   LayoutDashboard, TrendingUp, BarChart3, MessageSquare, Zap, Newspaper,
   Star, Grid3X3, CalendarDays, ScanSearch, Filter, Shield, ShieldCheck, Bell, Settings,
   Wallet, MapPin, DollarSign, Receipt, BookOpen, FlaskConical, Radar, Activity, Users,
-  Layers, GitCompare, Globe, Target, Bot, Landmark, ChevronRight,
+  Layers, GitCompare, Globe, Target, Bot, Landmark, ChevronRight, Briefcase,
 } from 'lucide-react';
 
 const NAV_SECTIONS = [
@@ -43,6 +43,7 @@ const NAV_SECTIONS = [
   {
     label: 'EMPIRE',
     items: [
+      { href: '/empire/deal-flow', label: 'Deal Flow', icon: Briefcase },
       { href: '/territories', label: 'Territories', icon: MapPin },
       { href: '/cashflow', label: 'Cash Flow', icon: DollarSign },
       { href: '/tax', label: 'Tax Center', icon: Receipt },
