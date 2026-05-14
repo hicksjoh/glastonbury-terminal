@@ -1,5 +1,5 @@
-// Glastonbury Terminal — Service Worker v1
-const CACHE_VERSION = 'gt-v1';
+// Glastonbury Terminal — Service Worker v2 (p7-1 bumped to flush old OAuth consent cache)
+const CACHE_VERSION = 'gt-v2';
 const STATIC_CACHE = `static-${CACHE_VERSION}`;
 const DYNAMIC_CACHE = `dynamic-${CACHE_VERSION}`;
 const OFFLINE_URL = '/offline.html';
@@ -51,6 +51,14 @@ self.addEventListener('fetch', (event) => {
 
   // Skip chrome-extension and other non-http(s) requests
   if (!url.protocol.startsWith('http')) return;
+
+  // OAuth flow — never SW-cache. CSP and Set-Cookie headers MUST come
+  // straight from the origin every time. A stale cached /oauth/consent
+  // with an outdated form-action CSP will silently block the redirect
+  // to claude.ai/api/mcp/auth_callback. Let the browser handle these.
+  if (url.pathname.startsWith('/oauth/') || url.pathname.startsWith('/api/oauth/')) {
+    return;
+  }
 
   // API calls — network-first
   if (url.pathname.startsWith('/api/')) {
