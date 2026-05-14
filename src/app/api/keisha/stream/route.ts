@@ -86,6 +86,13 @@ export async function POST(req: NextRequest) {
     );
   }
 
+  // Gemini round-3 P0: tie the upstream Anthropic call to the client's
+  // lifetime. Without this, if the browser tab closes mid-stream the
+  // generation keeps running on Vercel and we keep paying for tokens
+  // nobody will ever see. ReadableStream.cancel() fires when the client
+  // disconnects; outer-catch aborts on unexpected failure paths too.
+  const agentAbort = new AbortController();
+
   try {
     const { messages, domain, conversationId, settings, image } = await req.json();
     const userMessage = sanitizeInput(messages[messages.length - 1]?.content || '');
@@ -186,6 +193,7 @@ IMPORTANT RULES:
           const { finalText, suggestions } = await runKeishaAgent({
             messages: conversationHistory,
             system: cachedSystem(KEISHA_SYSTEM_PROMPT, dynamicContext),
+            signal: agentAbort.signal,
             createPendingConfirmation: (p) =>
               createPendingOrder(supabase, {
                 toolName: p.type,
@@ -222,8 +230,15 @@ IMPORTANT RULES:
           log.error({ err: err instanceof Error ? err.message : String(err), sentry_event_id: eventId }, 'keisha stream agent threw');
           // Don't leak raw err.message into the SSE stream — generic message + eventId.
           send({ error: 'Stream error', sentry_event_id: eventId });
+          // Belt-and-braces: cut the upstream Anthropic call if it's still running.
+          agentAbort.abort('keisha stream agent threw');
           controller.close();
         }
+      },
+      cancel(reason) {
+        // Client disconnected (browser tab closed, network drop). Kill the
+        // upstream Anthropic call so we stop paying for tokens nobody will see.
+        agentAbort.abort(reason ?? 'client disconnected');
       },
     });
 
@@ -238,6 +253,9 @@ IMPORTANT RULES:
   } catch (error) {
     const eventId = captureRouteError(error, { request_id, route: 'keisha/stream', stage: 'setup' });
     log.error({ err: error instanceof Error ? error.message : String(error), sentry_event_id: eventId }, 'keisha stream setup failed');
+    // If we never reached the ReadableStream the controller is dangling — abort
+    // it explicitly so any straggler reference doesn't keep an Anthropic call alive.
+    agentAbort.abort('keisha stream setup failed');
     return new Response(
       JSON.stringify({ error: 'Stream setup failed', sentry_event_id: eventId }),
       { status: 500, headers: { 'Content-Type': 'application/json' } },

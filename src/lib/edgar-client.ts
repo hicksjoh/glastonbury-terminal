@@ -9,6 +9,13 @@ const USER_AGENT = 'GlastonburyTerminal/1.0 hicksjoh@gmail.com';
 const BASE = 'https://data.sec.gov';
 const EFTS_BASE = 'https://efts.sec.gov/LATEST';
 
+// Gemini round-3 P0: SEC EDGAR can be slow and the prior bare fetch had no
+// timeout — a hung response would eat the full Vercel 60s function budget.
+// 10s matches the SLA we hold FMP/Alpaca/Resend to (paper-api 8s, FMP 5s,
+// Resend 10s) — generous enough that legit EDGAR latency doesn't false-trip,
+// tight enough that one stalled call doesn't take the route with it.
+const EDGAR_TIMEOUT_MS = 10_000;
+
 interface EdgarFiling {
   form: string;
   filingDate: string;
@@ -43,6 +50,7 @@ async function edgarFetch<T>(url: string, cacheTtlMs = 60 * 60 * 1000): Promise<
         'User-Agent': USER_AGENT,
         'Accept': 'application/json',
       },
+      signal: AbortSignal.timeout(EDGAR_TIMEOUT_MS),
     });
 
     if (!res.ok) throw new Error(`EDGAR HTTP ${res.status}`);

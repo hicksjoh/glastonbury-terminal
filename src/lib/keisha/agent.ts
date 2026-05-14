@@ -9,7 +9,7 @@
 // hood. Streaming consumers wire up real-time hooks; non-streaming consumers
 // just await the final result. One code path, zero divergence.
 
-import { anthropic, CLAUDE_MODEL_PRIMARY } from '@/lib/claude';
+import { anthropic, CLAUDE_MODEL_PRIMARY, STREAM_TIMEOUT_MS } from '@/lib/claude';
 import {
   KEISHA_TOOLS,
   DANGEROUS_TOOLS,
@@ -71,6 +71,13 @@ export interface KeishaAgentInput extends KeishaAgentHooks {
    * if Claude gets stuck calling tools in a circle.
    */
   maxTotalTokens?: number;
+  /**
+   * Gemini round-3 P0: caller-supplied AbortSignal. The /api/keisha/stream
+   * route wires this to a controller it aborts on ReadableStream.cancel(),
+   * so a client closing the tab kills the upstream Anthropic call. If
+   * omitted, defaults to AbortSignal.timeout(STREAM_TIMEOUT_MS).
+   */
+  signal?: AbortSignal;
 }
 
 export const DEFAULT_KEISHA_TOKEN_BUDGET = 50_000;
@@ -103,6 +110,7 @@ export async function runKeishaAgent(input: KeishaAgentInput): Promise<KeishaAge
     onPendingConfirmation,
   } = input;
   const maxTotalTokens = input.maxTotalTokens ?? DEFAULT_KEISHA_TOKEN_BUDGET;
+  const signal = input.signal ?? AbortSignal.timeout(STREAM_TIMEOUT_MS);
 
   let currentMessages: MessageParam[] = [...messages];
   let finalText = '';
@@ -119,13 +127,16 @@ export async function runKeishaAgent(input: KeishaAgentInput): Promise<KeishaAge
   };
 
   for (let iteration = 0; iteration < MAX_TOOL_ITERATIONS; iteration++) {
-    const stream = await anthropic.messages.stream({
-      model: CLAUDE_MODEL_PRIMARY,
-      max_tokens: 4096,
-      system: system as unknown as string,
-      messages: currentMessages,
-      tools: KEISHA_TOOLS,
-    });
+    const stream = await anthropic.messages.stream(
+      {
+        model: CLAUDE_MODEL_PRIMARY,
+        max_tokens: 4096,
+        system: system as unknown as string,
+        messages: currentMessages,
+        tools: KEISHA_TOOLS,
+      },
+      { signal },
+    );
 
     usage.iterations += 1;
 

@@ -32,6 +32,8 @@ vi.mock('@/lib/claude', () => ({
   },
   CLAUDE_MODEL_PRIMARY: 'mock-model',
   KEISHA_SYSTEM_PROMPT: 'mock-system',
+  NON_STREAM_TIMEOUT_MS: 30_000,
+  STREAM_TIMEOUT_MS: 120_000,
 }));
 
 const executeToolCallMock = vi.fn();
