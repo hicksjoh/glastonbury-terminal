@@ -32,7 +32,13 @@ const securityHeaders = [
       "media-src 'self'",
       "object-src 'none'",
       "base-uri 'self'",
-      "form-action 'self'",
+      // OAuth 2.0 consent flow posts to /api/oauth/finalize, which 303-redirects
+      // to the registered OAuth client's redirect_uri (e.g. claude.ai for the
+      // Claude.app custom connector). The default `'self'` form-action would
+      // block that cross-origin navigation entirely. We allow claude.ai (and
+      // its sibling claude.com) so the OAuth flow can complete. Everything
+      // else still has to post same-origin.
+      "form-action 'self' https://claude.ai https://claude.com",
       "upgrade-insecure-requests",
     ].join('; '),
   },
