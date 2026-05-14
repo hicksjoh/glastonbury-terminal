@@ -98,25 +98,38 @@ async function logSend(row: {
 }): Promise<void> {
   try {
     const sb = createServiceClient();
-    await sb.from('email_send_log').insert({
+    // Codex round-4 followup: supabase-js returns {data, error} rather than
+    // throwing on RLS denials, constraint failures, or upstream PG errors.
+    // Inspect the response so we don't silently treat a rejected insert
+    // as a successful audit row.
+    const { error } = await sb.from('email_send_log').insert({
       to_addr: row.to_addr,
       subject: row.subject,
       outcome: row.outcome,
       resend_id: row.resend_id ?? null,
       error: row.error ?? null,
     });
+    if (error) {
+      log.warn(
+        {
+          err: error.message,
+          code: error.code,
+          outcome: row.outcome,
+          to_addr: row.to_addr,
+        },
+        'resend audit-log insert rejected by supabase — outcome not persisted',
+      );
+    }
   } catch (err) {
-    // Codex round-4: previously a bare catch swallowed the failure silently,
-    // which let DB outages mask runaway budgets and made auditing impossible.
-    // Still don't block the send (audit must be best-effort), but at minimum
-    // surface the failure to pino so it lands in our log pipeline.
+    // Network-level / client-init failures still throw. Same response:
+    // best-effort audit — log loudly, don't block the send.
     log.warn(
       {
         err: err instanceof Error ? err.message : String(err),
         outcome: row.outcome,
         to_addr: row.to_addr,
       },
-      'resend audit-log insert failed — outcome not persisted',
+      'resend audit-log insert threw — outcome not persisted',
     );
   }
 }
@@ -134,8 +147,23 @@ async function countTodaySends(): Promise<number | null> {
       .from('email_send_log')
       .select('id', { count: 'exact', head: true })
       .gte('sent_at', since);
-    const count = (res as unknown as { count?: number | null }).count ?? 0;
-    return typeof count === 'number' && count >= 0 ? count : null;
+    // Codex round-4 followup: supabase-js returns {error, count} — the prior
+    // version coerced a missing count to 0 via `?? 0`, which silently lifts
+    // the budget when the read fails (RLS, table missing, network blip).
+    // Treat an error response or missing count as "can't verify" (return
+    // null) so the caller fails closed.
+    const typed = res as unknown as { count?: number | null; error?: { message: string; code?: string } | null };
+    if (typed.error) {
+      log.warn(
+        { err: typed.error.message, code: typed.error.code },
+        'resend budget read rejected by supabase — failing closed on send',
+      );
+      return null;
+    }
+    if (typeof typed.count !== 'number' || typed.count < 0) {
+      return null;
+    }
+    return typed.count;
   } catch (err) {
     // Codex round-4: previously this returned 0 on error, which silently
     // lifted the daily budget when the DB was unreachable. Now we return
