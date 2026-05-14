@@ -24,6 +24,7 @@
  */
 
 import { createServiceClient } from '@/lib/supabase';
+import { log } from '@/lib/logger';
 
 type SendArgs = {
   subject: string;
@@ -86,7 +87,12 @@ function startOfTodayUtcIso(): string {
 async function logSend(row: {
   to_addr: string;
   subject: string;
-  outcome: 'sent' | 'failed' | 'rejected_allowlist' | 'rejected_budget';
+  outcome:
+    | 'sent'
+    | 'failed'
+    | 'rejected_allowlist'
+    | 'rejected_budget'
+    | 'rejected_no_recipient';
   resend_id?: string | null;
   error?: string | null;
 }): Promise<void> {
@@ -99,13 +105,28 @@ async function logSend(row: {
       resend_id: row.resend_id ?? null,
       error: row.error ?? null,
     });
-  } catch {
-    // Audit-log failures must not block sends; the runtime metric will catch
-    // a sustained outage via Sentry on the parent route.
+  } catch (err) {
+    // Codex round-4: previously a bare catch swallowed the failure silently,
+    // which let DB outages mask runaway budgets and made auditing impossible.
+    // Still don't block the send (audit must be best-effort), but at minimum
+    // surface the failure to pino so it lands in our log pipeline.
+    log.warn(
+      {
+        err: err instanceof Error ? err.message : String(err),
+        outcome: row.outcome,
+        to_addr: row.to_addr,
+      },
+      'resend audit-log insert failed — outcome not persisted',
+    );
   }
 }
 
-async function countTodaySends(): Promise<number> {
+/**
+ * Returns today's email send count, or `null` when the table cannot be read.
+ * Callers MUST treat `null` as "can't verify" and fail closed — otherwise a
+ * misconfigured DB silently lifts the daily budget.
+ */
+async function countTodaySends(): Promise<number | null> {
   try {
     const sb = createServiceClient();
     const since = startOfTodayUtcIso();
@@ -113,14 +134,17 @@ async function countTodaySends(): Promise<number> {
       .from('email_send_log')
       .select('id', { count: 'exact', head: true })
       .gte('sent_at', since);
-    // supabase-js exposes `count` on the response when the head/count opts
-    // are passed. Some test stubs return it directly.
     const count = (res as unknown as { count?: number | null }).count ?? 0;
-    return typeof count === 'number' && count >= 0 ? count : 0;
-  } catch {
-    // Fail open on count errors — if we can't read the table the env is
-    // misconfigured. The allowlist still acts as the primary defense.
-    return 0;
+    return typeof count === 'number' && count >= 0 ? count : null;
+  } catch (err) {
+    // Codex round-4: previously this returned 0 on error, which silently
+    // lifted the daily budget when the DB was unreachable. Now we return
+    // null so the caller fails closed.
+    log.warn(
+      { err: err instanceof Error ? err.message : String(err) },
+      'resend budget read failed — failing closed on send',
+    );
+    return null;
   }
 }
 
@@ -150,6 +174,16 @@ export async function sendResendEmail(args: SendArgs): Promise<SendResult> {
 
   if (allRecipients.length === 0) {
     const error = 'No recipient configured';
+    // Codex round-4: previously returned without writing email_send_log,
+    // which made budget enforcement leaky (these attempts didn't count
+    // toward the daily cap, so a misconfigured caller could hammer the
+    // endpoint forever). Log it.
+    await logSend({
+      to_addr: '<no-recipient>',
+      subject: args.subject,
+      outcome: 'rejected_no_recipient',
+      error,
+    });
     return { ok: false, error, errorCode: 'no_recipient' };
   }
 
@@ -161,8 +195,16 @@ export async function sendResendEmail(args: SendArgs): Promise<SendResult> {
   }
 
   // 2. Budget enforcement — count of TODAY's email_send_log rows.
+  // Codex round-4: countTodaySends() now returns null when the DB read
+  // fails, which we treat as "can't verify" and fail closed. Previously
+  // a DB outage silently returned 0 and lifted the budget entirely.
   const budget = readDailyBudget();
   const todayCount = await countTodaySends();
+  if (todayCount === null) {
+    const error = 'Refusing to send: cannot verify daily send budget (DB unreachable)';
+    await logSend({ to_addr: primaryAddr, subject: args.subject, outcome: 'rejected_budget', error });
+    return { ok: false, error, errorCode: 'rejected_budget' };
+  }
   if (todayCount >= budget) {
     const error = `Refusing to send: daily budget ${budget} reached (current count ${todayCount})`;
     await logSend({ to_addr: primaryAddr, subject: args.subject, outcome: 'rejected_budget', error });

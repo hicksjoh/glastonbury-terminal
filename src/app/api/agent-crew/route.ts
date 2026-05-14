@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { anthropic, CLAUDE_MODEL_FALLBACK } from '@/lib/claude';
+import { anthropic, CLAUDE_MODEL_FALLBACK, NON_STREAM_TIMEOUT_MS } from '@/lib/claude';
 import { tagAnthropicCall } from '@/lib/anthropic-cost';
 import { createServiceClient } from '@/lib/supabase';
 import { checkRateLimitDurable, getRateLimitIdentity } from '@/lib/rate-limit-durable';
@@ -241,7 +241,7 @@ async function callAgent(systemPrompt: string, userMessage: string): Promise<str
     max_tokens: 1500,
     system: systemPrompt,
     messages: [{ role: 'user', content: userMessage }],
-  });
+  }, { signal: AbortSignal.timeout(NON_STREAM_TIMEOUT_MS) });
   tagAnthropicCall(message.usage, CLAUDE_MODEL_FALLBACK, { caller: 'agent-crew' });
   return message.content[0].type === 'text' ? message.content[0].text : '';
 }

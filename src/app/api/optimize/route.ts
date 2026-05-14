@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { equilibriumReturns, blackLitterman, efficientFrontier, View } from '@/lib/black-litterman';
 import { correlationMatrix } from '@/lib/correlation';
-import { anthropic, CLAUDE_MODEL_FALLBACK } from '@/lib/claude';
+import { anthropic, CLAUDE_MODEL_FALLBACK, NON_STREAM_TIMEOUT_MS } from '@/lib/claude';
 import { tagAnthropicCall } from '@/lib/anthropic-cost';
 import { getHistoricalPrices } from '@/lib/fmp-client';
 import { checkRateLimitDurable, getRateLimitIdentity } from '@/lib/rate-limit-durable';
@@ -129,7 +129,7 @@ Respond ONLY with a JSON array, no other text.`;
       model: CLAUDE_MODEL_FALLBACK,
       max_tokens: 1024,
       messages: [{ role: 'user', content: prompt }],
-    });
+    }, { signal: AbortSignal.timeout(NON_STREAM_TIMEOUT_MS) });
     tagAnthropicCall(message.usage, CLAUDE_MODEL_FALLBACK, { caller: 'optimize' });
 
     const content = message.content[0];

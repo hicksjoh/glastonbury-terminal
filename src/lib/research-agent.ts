@@ -21,6 +21,7 @@ import {
   anthropic,
   CLAUDE_MODEL_PRIMARY,
   CLAUDE_MODEL_FALLBACK,
+  NON_STREAM_TIMEOUT_MS,
 } from '@/lib/claude';
 import { tagAnthropicCall } from '@/lib/anthropic-cost';
 import {
@@ -243,7 +244,7 @@ Use your tools to gather data, then deliver the final memo as your last message.
         system: RESEARCH_SYSTEM_PROMPT,
         tools,
         messages: conversation,
-      });
+      }, { signal: AbortSignal.timeout(NON_STREAM_TIMEOUT_MS) });
     } catch (err) {
       const status = (err as { status?: number })?.status;
       if ((status === 429 || status === 529 || status === 503) && modelUsed !== CLAUDE_MODEL_FALLBACK) {

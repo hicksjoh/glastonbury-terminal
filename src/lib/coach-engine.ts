@@ -7,7 +7,7 @@
  * concrete rule for the next week.
  */
 
-import { anthropic, CLAUDE_MODEL_PRIMARY, CLAUDE_MODEL_FALLBACK } from '@/lib/claude';
+import { anthropic, CLAUDE_MODEL_PRIMARY, CLAUDE_MODEL_FALLBACK, NON_STREAM_TIMEOUT_MS } from '@/lib/claude';
 import { tagAnthropicCall } from '@/lib/anthropic-cost';
 import { createServiceClient } from '@/lib/supabase';
 
@@ -133,7 +133,7 @@ Write the coaching review now.`;
     max_tokens: 2500,
     system: COACH_SYSTEM,
     messages: [{ role: 'user', content: userPrompt }],
-  });
+  }, { signal: AbortSignal.timeout(NON_STREAM_TIMEOUT_MS) });
 
   let modelUsed = pickModel();
   let msg: Awaited<ReturnType<typeof anthropic.messages.create>>;
