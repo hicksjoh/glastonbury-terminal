@@ -19,6 +19,13 @@ export interface OAuthCode {
   scope: string;
   subject: string;
   state: string | null;
+  /**
+   * P0-2: RFC 8707 resource indicator. Carried through from the consent
+   * transaction. The access token minted from this code will be stamped
+   * with `aud = resource`. Null on legacy rows / authorize requests that
+   * pre-date P0-2.
+   */
+  resource: string | null;
   created_at: string;
   expires_at: string;
   used_at: string | null;
@@ -33,6 +40,8 @@ export interface MintCodeInput {
   scope: string;
   subject: string;
   state?: string | null;
+  /** RFC 8707 resource indicator (typically `${issuer}/api/mcp`). */
+  resource?: string | null;
 }
 
 function randomCode(): string {
@@ -59,6 +68,7 @@ export async function mintCode(input: MintCodeInput): Promise<string> {
     scope: input.scope,
     subject: input.subject,
     state: input.state ?? null,
+    resource: input.resource ?? null,
     expires_at: expires,
   });
   if (error) throw new Error(`oauth_codes insert failed: ${error.message}`);

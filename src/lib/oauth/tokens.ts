@@ -1,13 +1,12 @@
 // OAuth access tokens — short-lived JWTs.
 //
 // We reuse the existing SESSION_SECRET (HS256) so there's only one secret
-// to rotate, but stamp `aud: 'terminal-mcp'` on every OAuth token. The
-// session-cookie verifier doesn't enforce audience (legacy code), but
-// verifyAccessToken below DOES require aud='terminal-mcp', and the MCP
-// route uses verifyAccessToken — so a session cookie can't be replayed
-// as an MCP access token, and an MCP token can't be presented as a
-// session cookie (different cookie name + signature won't matter because
-// MCP tokens are presented as Bearer headers, never cookies).
+// to rotate. Session-cookie JWTs carry NO aud claim and are rejected by
+// verifyAccessToken (which requires aud match); OAuth access tokens carry
+// aud=<resource URL> (or, for legacy tokens minted before P0-2, the
+// placeholder 'terminal-mcp'). P0-1 also rejects any JWT WITH an aud
+// claim from session verification, so cross-replay in either direction
+// is structurally impossible.
 //
 // Tokens are 1-hour. No refresh tokens in v1 — clients re-do the auth
 // dance when expired. Claude.app handles this transparently.
@@ -15,12 +14,19 @@
 // p2-1: every successful verify checks the oauth_clients row for
 // revoked_at != NULL, so revoking a client makes every outstanding token
 // inert immediately (no wait for the 1h JWT TTL).
+//
+// P0-2: tokens are RFC 8707-bound. The `aud` claim equals the resource
+// URL the authorize request specified (typically `${issuer}/api/mcp`).
+// verifyAccessToken accepts BOTH the new URL form AND the legacy
+// 'terminal-mcp' placeholder so tokens issued during the rollout window
+// don't break mid-flight. Once the rollout has soaked for >1h (token
+// TTL), the legacy acceptance can be removed.
 
 import { SignJWT, jwtVerify } from 'jose';
 import { findClient, touchClientUsage } from '@/lib/oauth/clients';
 
 const ALG = 'HS256';
-const AUDIENCE = 'terminal-mcp';
+const LEGACY_AUDIENCE = 'terminal-mcp';
 const TOKEN_TTL_SECONDS = 60 * 60; // 1 hour
 
 const DEV_FALLBACK_SECRET =
@@ -48,16 +54,38 @@ export interface AccessTokenPayload {
   sub: string;        // 'wes'
   client_id: string;  // OAuth client that requested it
   scope: string;      // 'mcp'
+  /** RFC 8707 resource URL the token is bound to (mirrors `aud`). */
+  resource: string;
+}
+
+export interface CreateAccessTokenInput {
+  sub: string;
+  client_id: string;
+  scope: string;
+  /**
+   * RFC 8707 resource URL (typically `${issuer}/api/mcp`). When omitted
+   * (legacy callers during P0-2 rollout window), the token is stamped
+   * with the LEGACY_AUDIENCE placeholder. The flow should always supply
+   * this once /api/oauth/authorize is post-P0-2.
+   */
+  resource?: string | null;
 }
 
 export async function createAccessToken(
-  payload: AccessTokenPayload,
+  input: CreateAccessTokenInput,
 ): Promise<{ token: string; expires_in: number }> {
   const now = Math.floor(Date.now() / 1000);
-  const token = await new SignJWT({ ...payload })
+  const audience = input.resource && input.resource.length > 0
+    ? input.resource
+    : LEGACY_AUDIENCE;
+  const token = await new SignJWT({
+    sub: input.sub,
+    client_id: input.client_id,
+    scope: input.scope,
+  })
     .setProtectedHeader({ alg: ALG })
     .setIssuedAt(now)
-    .setAudience(AUDIENCE)
+    .setAudience(audience)
     .setExpirationTime(now + TOKEN_TTL_SECONDS)
     .sign(encodedSecret());
   return { token, expires_in: TOKEN_TTL_SECONDS };
@@ -68,18 +96,31 @@ export async function createAccessToken(
  * null on every failure mode (missing, malformed, expired, wrong aud,
  * tampered, wrong secret, revoked client).
  *
+ * P0-2: pass `expectedResource` so the token is verified against the
+ * actual resource URL the request is hitting (RFC 8707). When
+ * `expectedResource` is omitted, the verifier still accepts tokens whose
+ * `aud` is the LEGACY_AUDIENCE placeholder — this is the rollout
+ * compatibility path; once all tokens issued pre-P0-2 expire (1h), the
+ * legacy path can be removed.
+ *
  * Adds one Supabase round-trip per MCP request to check revocation. ~10-30ms
  * on the warm path. If this becomes a bottleneck, cache (clientId →
  * revoked_at) for 30-60s — revocation propagates within the cache window.
  */
 export async function verifyAccessToken(
   token: string | undefined | null,
+  expectedResource?: string,
 ): Promise<AccessTokenPayload | null> {
   if (!token) return null;
   try {
+    // We accept either the expected resource URL OR the legacy placeholder.
+    // jose accepts a string[] for audience and matches against any.
+    const acceptedAudiences: string[] = expectedResource
+      ? [expectedResource, LEGACY_AUDIENCE]
+      : [LEGACY_AUDIENCE];
     const { payload } = await jwtVerify(token, encodedSecret(), {
       algorithms: [ALG],
-      audience: AUDIENCE,
+      audience: acceptedAudiences,
     });
     if (
       typeof payload.sub !== 'string' ||
@@ -88,6 +129,11 @@ export async function verifyAccessToken(
     ) {
       return null;
     }
+
+    // Resolve actual audience for the payload (jose verified the match but
+    // we want it on the returned payload for callers that care).
+    const aud = Array.isArray(payload.aud) ? payload.aud[0] : (payload.aud ?? LEGACY_AUDIENCE);
+    const resource = typeof aud === 'string' ? aud : LEGACY_AUDIENCE;
 
     // Revocation check. JWT signature was valid, but the client may have
     // been admin-revoked since the token was issued. We honor that here
@@ -104,6 +150,7 @@ export async function verifyAccessToken(
       sub: payload.sub,
       client_id: payload.client_id,
       scope: payload.scope,
+      resource,
     };
   } catch {
     return null;

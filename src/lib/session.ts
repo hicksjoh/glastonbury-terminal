@@ -76,6 +76,15 @@ export async function verifySessionJwt(
       algorithms: [ALG],
     });
     if (typeof payload.sub !== 'string' || payload.sub.length === 0) return null;
+    // P0-1: reject any token that carries an `aud` claim. Session JWTs are
+    // minted by createSessionJwt() with NO audience; OAuth access tokens
+    // (src/lib/oauth/tokens.ts) are minted with aud='terminal-mcp' (or the
+    // resource URL post-P0-2) but share the same HS256 + SESSION_SECRET. A
+    // stolen OAuth access token planted in the gt-auth cookie would
+    // otherwise verify cleanly and grant 1h of session-grade access —
+    // including the OAuth consent screen, which lets the attacker
+    // authorize new clients and chain a long-lived foothold.
+    if (typeof payload.aud !== 'undefined') return null;
     return { sub: payload.sub };
   } catch {
     // jose throws typed JOSEError subclasses for every token-level failure

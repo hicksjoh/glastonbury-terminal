@@ -23,6 +23,14 @@ export interface ConsentTransaction {
   scope: string;
   subject: string;
   state: string | null;
+  /**
+   * P0-2: RFC 8707 resource indicator. The full URL of the protected
+   * resource the access token will be bound to (typically
+   * `${issuer}/api/mcp`). Null on legacy rows that pre-date the
+   * 20260514 migration — those mint tokens with the legacy
+   * placeholder audience.
+   */
+  resource: string | null;
 }
 
 function randomTxId(): string {
@@ -55,6 +63,7 @@ export async function mintConsentTransaction(
     scope: params.scope,
     subject: params.subject,
     state: params.state ?? null,
+    resource: params.resource ?? null,
     expires_at,
   });
   if (error) {
@@ -90,6 +99,7 @@ export async function peekConsentTransaction(
     scope: row.scope as string,
     subject: row.subject as string,
     state: (row.state as string | null) ?? null,
+    resource: (row.resource as string | null) ?? null,
   };
 }
 
@@ -99,7 +109,8 @@ export async function peekConsentTransaction(
  *
  * Implementation note: uses the consume_consent_transaction RPC defined in
  * 20260506_oauth_consent_transactions.sql so the SELECT + UPDATE are one
- * atomic operation at the database level.
+ * atomic operation at the database level. Migration 20260514 adds the
+ * `resource` column to the return signature.
  */
 export async function consumeConsentTransaction(
   tx_id: string,
@@ -118,5 +129,6 @@ export async function consumeConsentTransaction(
     scope: row.scope as string,
     subject: row.subject as string,
     state: (row.state as string | null) ?? null,
+    resource: (row.resource as string | null) ?? null,
   };
 }

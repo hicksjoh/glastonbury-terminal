@@ -52,9 +52,16 @@ async function authorize(req: NextRequest): Promise<AuthResult> {
     const tok = m[1].trim();
     // The OAuth token is a JWT; the static token is whatever Wes set in
     // the env. They will never collide because verifyAccessToken requires
-    // a valid HS256 signature with aud='terminal-mcp', and the static
+    // a valid HS256 signature with a matching audience, and the static
     // token is just an opaque string the server compares directly above.
-    const payload = await verifyAccessToken(tok);
+    //
+    // P0-2: pass the canonical resource URL for this server so the
+    // verifier enforces RFC 8707 binding. Tokens minted post-P0-2 will
+    // have aud=resource; legacy tokens (issued before the rollout) will
+    // verify against the placeholder aud, which the verifier still
+    // accepts during the transition window (≤1h after deploy).
+    const issuer = getIssuer(req);
+    const payload = await verifyAccessToken(tok, `${issuer}/api/mcp`);
     if (payload) {
       return {
         ok: true,

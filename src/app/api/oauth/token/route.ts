@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
 import { findClient, verifyClientSecret } from '@/lib/oauth/clients';
 import { consumeCode } from '@/lib/oauth/codes';
-import { verifyS256 } from '@/lib/oauth/pkce';
+import { verifyS256, isWellFormedVerifier } from '@/lib/oauth/pkce';
 import { createAccessToken } from '@/lib/oauth/tokens';
 import { checkRateLimitDurable, getRateLimitIdentity } from '@/lib/rate-limit-durable';
 import { loggerFor } from '@/lib/request-id';
@@ -30,7 +30,12 @@ import { readBoundedText, BodyTooLargeError, BODY_LIMIT } from '@/lib/bounded-bo
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
-function tokenError(error: string, description: string, status = 400): NextResponse {
+function tokenError(
+  error: string,
+  description: string,
+  status = 400,
+  extraHeaders: Record<string, string> = {},
+): NextResponse {
   return NextResponse.json(
     { error, error_description: description },
     {
@@ -39,6 +44,7 @@ function tokenError(error: string, description: string, status = 400): NextRespo
         'Access-Control-Allow-Origin': '*',
         'Cache-Control': 'no-store',
         Pragma: 'no-cache',
+        ...extraHeaders,
       },
     },
   );
@@ -99,12 +105,39 @@ export async function POST(req: NextRequest) {
   if (!code_verifier) return tokenError('invalid_request', 'code_verifier required');
   if (!client_id) return tokenError('invalid_request', 'client_id required');
 
-  // ─── Generic invalid_client response. Three formerly-distinct paths
-  //     (unknown client / missing secret / wrong secret) collapse to one
-  //     so the table can't be enumerated via differential responses.
+  // P1-1: short-circuit a malformed PKCE verifier BEFORE we burn the
+  // single-use code via consumeCode(). RFC 7636 §4.1 verifier shape.
+  // Returns invalid_request (not invalid_grant) because this is a request
+  // shape error, not a grant-validation failure.
+  if (!isWellFormedVerifier(code_verifier)) {
+    return tokenError('invalid_request', 'code_verifier shape invalid');
+  }
+
+  // P1-2: RFC 6749 §5.2 — return 401 ONLY when client authentication was
+  // actually attempted. For public PKCE-only clients that don't send any
+  // credential, return 400. This matters because standard OAuth libraries
+  // (authlib, oauthlib) treat 401 as "retry with credentials" — they'll
+  // never recover from a 401 if they had nothing to send in the first place.
+  //
+  // We don't support HTTP Basic for client auth (token_endpoint_auth_method
+  // values are 'none' or 'client_secret_post' only), so "auth attempted" =
+  // a client_secret arrived in the body.
+  const authAttempted = typeof client_secret === 'string' && client_secret.length > 0;
   const invalidClient = (reason: string) => {
-    log.warn({ client_id, reason }, 'token invalid_client');
-    return tokenError('invalid_client', 'client authentication failed', 401);
+    log.warn({ client_id, reason, auth_attempted: authAttempted }, 'token invalid_client');
+    if (authAttempted) {
+      return tokenError(
+        'invalid_client',
+        'client authentication failed',
+        401,
+        // RFC 6749 §5.2 + RFC 6750 §3 — when returning 401 the server MUST
+        // include a WWW-Authenticate matching the scheme the client used.
+        // client_secret_post uses no Authorization header, but indicating
+        // 'Basic'-style realm is the closest standard hint.
+        { 'WWW-Authenticate': 'Basic realm="oauth-token", error="invalid_client"' },
+      );
+    }
+    return tokenError('invalid_client', 'client authentication failed', 400);
   };
 
   const client = await findClient(client_id);
@@ -138,11 +171,15 @@ export async function POST(req: NextRequest) {
   const pkceOk = await verifyS256(code_verifier, row.code_challenge);
   if (!pkceOk) return invalidGrant('pkce_failed');
 
-  // Mint the access token.
+  // P0-2: stamp `aud` with the resource URL recorded at authorize time.
+  // Falls back to null → the legacy placeholder audience for any code
+  // minted before the 20260514 migration backfilled the column. The
+  // strict resource binding kicks in for all new codes.
   const { token, expires_in } = await createAccessToken({
     sub: row.subject,
     client_id,
     scope: row.scope,
+    resource: row.resource,
   });
 
   return NextResponse.json(
