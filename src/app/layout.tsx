@@ -2,7 +2,6 @@ import type { Metadata } from 'next';
 import { Inter, Fraunces, JetBrains_Mono } from 'next/font/google';
 import './globals.css';
 import CommandBar from '@/components/CommandBar';
-import MarketTickerBar from '@/components/MarketTickerBar';
 import ServiceWorkerRegistration from '@/components/ServiceWorkerRegistration';
 import { Providers } from './providers';
 
@@ -75,7 +74,8 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         </a>
         <Providers>
           <CommandBar />
-          <MarketTickerBar />
+          {/* MarketTickerBar is mounted by AppShell — rendering it here too
+              produced two stacked ticker bars on every AppShell page. */}
           {children}
         </Providers>
         <ServiceWorkerRegistration />
