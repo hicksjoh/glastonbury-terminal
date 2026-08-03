@@ -175,7 +175,9 @@ describe('S2 cronIsAuthorized — fail closed when CRON_SECRET is missing', () =
       const { createSessionJwt } = await import('../session');
       const token = await createSessionJwt({ sub: 'wes' });
       const parts = token.split('.');
-      const tampered = `${parts[0]}.${parts[1]}.${parts[2].slice(0, -1)}X`;
+      // Replace the last signature char with a DIFFERENT char — a fixed 'X'
+      // is a no-op 1/64 of the time when the signature already ends in 'X'.
+      const tampered = `${parts[0]}.${parts[1]}.${parts[2].slice(0, -1)}${parts[2].endsWith('X') ? 'Y' : 'X'}`;
       expect(
         await cronIsAuthorized(
           mockReq({ cookies: { 'gt-auth': tampered } }),
