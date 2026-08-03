@@ -49,6 +49,9 @@
   --shadow-md:       rgba(0, 0, 0, 0.30);
   --shadow-hi:       rgba(0, 0, 0, 0.50);
 
+  /* Instrument ground texture — dot-grid ink on the obsidian bg */
+  --dot:             rgba(255, 255, 255, 0.045);
+
   /* Motion */
   --dur-fast:        120ms;
   --dur-base:        200ms;
@@ -67,17 +70,29 @@
 
 body {
   background-color: var(--bg);
+  /* Dot-grid ground — reads as texture, not pattern. Opaque surfaces
+     (cards, modals) sit on top; only the page ground shows the grid. */
+  background-image: radial-gradient(var(--dot) 1px, transparent 1px);
+  background-size: 22px 22px;
   color: var(--text);
   font-family: var(--font-sans), 'Inter', system-ui, -apple-system, sans-serif;
   margin: 0;
   font-feature-settings: 'cv02', 'cv03', 'cv04', 'cv11'; /* Inter stylistic sets */
 }
 
-/* Scrollbars — restrained, gold on hover only */
-::-webkit-scrollbar        { width: 6px; height: 6px; }
-::-webkit-scrollbar-track  { background: var(--bg); }
-::-webkit-scrollbar-thumb  { background: var(--border); border-radius: 3px; }
+/* Text selection — gold ink, obsidian text */
+::selection {
+  background: var(--gold);
+  color: var(--bg);
+}
+
+/* Scrollbars — 8px instrument rails: transparent track, faint thumb,
+   gold on hover only */
+::-webkit-scrollbar        { width: 8px; height: 8px; }
+::-webkit-scrollbar-track  { background: transparent; }
+::-webkit-scrollbar-thumb  { background: rgba(255, 255, 255, 0.12); border-radius: 4px; }
 ::-webkit-scrollbar-thumb:hover { background: var(--gold); }
+html { scrollbar-color: rgba(255, 255, 255, 0.12) transparent; } /* Firefox */
 
 /* ═══════════════════════════════════════════════════════════════════════════
    Focus ring — gold, single canonical rule. The double-declaration in the
@@ -124,6 +139,14 @@ body {
 @keyframes blink      { 50% { opacity: 0; } }
 @keyframes pulse      { 0%, 100% { opacity: 1; } 50% { opacity: 0.55; } }
 @keyframes streamDot  { 0%, 60%, 100% { opacity: 0.3; transform: scale(0.85); } 30% { opacity: 1; transform: scale(1); } }
+@keyframes marketPulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.25; } }
+@keyframes paletteIn {
+  from { opacity: 0; transform: translateY(8px) scale(0.985); }
+  to   { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+/* MARKET OPEN chip — the terminal's single ambient heartbeat */
+.market-pulse-dot { animation: marketPulse 2.4s ease-in-out infinite; }
 
 .msg-bubble                              { animation: msgSlideIn 200ms var(--ease-settle) forwards; }
 .msg-bubble:hover .msg-actions           { opacity: 1 !important; }
@@ -170,4 +193,16 @@ body {
 .font-mono {
   font-variant-numeric: tabular-nums;
   font-feature-settings: 'tnum';
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   Reduced motion — kill the ambient loops (pulse, shimmer, slide-in).
+   !important so inline `animation:` styles on the same classes lose too.
+   ═══════════════════════════════════════════════════════════════════════════ */
+@media (prefers-reduced-motion: reduce) {
+  .market-pulse-dot,
+  .skeleton-shimmer,
+  .msg-bubble {
+    animation: none !important;
+  }
 }

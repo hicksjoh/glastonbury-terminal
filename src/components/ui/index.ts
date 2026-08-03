@@ -34,3 +34,6 @@ export type { AgentTraceProps, AgentTraceStep } from './AgentTrace';
 
 export { SectionHeader } from './SectionHeader';
 export type { SectionHeaderProps } from './SectionHeader';
+
+export { HairlineTable } from './HairlineTable';
+export type { HairlineTableProps, HairlineColumn } from './HairlineTable';

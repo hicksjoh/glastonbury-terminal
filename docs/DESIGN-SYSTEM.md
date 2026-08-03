@@ -157,6 +157,7 @@ Every UI concern below has exactly one primitive. Do not fork.
 | `<ModelBadge>`         | "Opus 4.7" / "Sonnet 4.6" / "Haiku 4.5" pill w/ latency + cost                   |
 | `<AgentTrace>`         | Collapsible tool-use trace (each step is a `<Card>` with a `<ModelBadge>`)       |
 | `<EditorialProse>`     | Wraps long-form Keisha output in Fraunces + generous leading                     |
+| `<HairlineTable>`      | Dense grid-row data table — micro mono header, faint hairline separators, glassLo hover, tabular mono numerics |
 
 Import path: `@/components/ui/*`.
 

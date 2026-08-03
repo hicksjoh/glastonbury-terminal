@@ -9,8 +9,9 @@ import { MarketNarrative } from '@/components/dashboard/MarketNarrative';
 import { MorningBriefing } from '@/components/dashboard/MorningBriefing';
 import { BriefingCard } from '@/components/keisha/BriefingCard';
 import {
-  Card, HeroCard, MetricTile, PillBadge, StatusDot, SectionHeader,
+  Card, HeroCard, MetricTile, PillBadge, StatusDot, SectionHeader, HairlineTable,
 } from '@/components/ui';
+import type { HairlineColumn } from '@/components/ui';
 import { color, font, size as sz, space, weight, tracking, radius } from '@/lib/design-tokens';
 import { getRegimeUIConfig, mapApiRegime } from '@/lib/ui-regime-adapter';
 import type { RegimeUIConfig } from '@/lib/ui-regime-adapter';
@@ -111,6 +112,15 @@ const QUICK_ACTIONS: Array<{ icon: string; label: string; href: string; tone: 'g
 
 interface PositionData { symbol: string; qty: number; marketValue: number; allocation: number; dailyChange: number; }
 interface MoverData { symbol: string; name: string; changePercentage: number; }
+
+// ─── Top Positions table (HairlineTable showcase) ───────────────
+const POSITION_COLUMNS: HairlineColumn[] = [
+  { key: 'symbol', label: 'Symbol', width: '48px' },
+  { key: 'alloc',  label: 'Alloc' },
+  { key: 'pct',    label: '%',     align: 'right', width: '36px' },
+  { key: 'value',  label: 'Value', align: 'right', width: '72px' },
+  { key: 'day',    label: 'Day',   align: 'right', width: '60px' },
+];
 
 export default function DashboardPage() {
   const router = useRouter();
@@ -491,45 +501,48 @@ export default function DashboardPage() {
                 No open positions — {formatCurrency(cash)} cash ready to deploy
               </div>
             ) : (
-              <div style={{ flex: 1 }}>
-                {positions.map(pos => (
-                  <div
-                    key={pos.symbol}
-                    onClick={() => router.push(`/stock/${pos.symbol}`)}
-                    style={{
-                      display: 'flex', alignItems: 'center', gap: space[3], padding: `${space[2]}px 0`,
-                      borderBottom: `1px solid ${color.borderFaint}`, cursor: 'pointer',
-                    }}
-                  >
-                    <span style={{
-                      fontSize: sz.bodyLg.fontSize, fontWeight: weight.bold, color: color.text,
-                      fontFamily: font.mono, width: 48,
-                    }}>
-                      {pos.symbol}
-                    </span>
-                    <div style={{ flex: 1, height: 4, borderRadius: 2, background: color.glassMd, overflow: 'hidden' }}>
-                      <div style={{
-                        width: `${pos.allocation}%`, height: '100%', borderRadius: 2,
-                        background: color.gold, transition: 'width 0.6s ease',
-                      }} />
-                    </div>
-                    <span style={{ fontSize: sz.label.fontSize, color: color.textMuted, fontFamily: font.mono, width: 36, textAlign: 'right' }}>
-                      {pos.allocation.toFixed(0)}%
-                    </span>
-                    <span style={{ fontSize: sz.body.fontSize, color: color.text, fontFamily: font.mono, width: 72, textAlign: 'right' }}>
-                      {formatCurrency(pos.marketValue)}
-                    </span>
-                    <span style={{
-                      fontSize: sz.body.fontSize, fontWeight: weight.semibold, fontFamily: font.mono,
-                      width: 60, textAlign: 'right',
-                      color: pos.dailyChange >= 0 ? color.positive : color.negative,
-                      fontVariantNumeric: 'tabular-nums',
-                    }}>
-                      {isFinite(pos.dailyChange) ? `${pos.dailyChange >= 0 ? '+' : ''}${pos.dailyChange.toFixed(2)}%` : 'N/A'}
-                    </span>
-                  </div>
-                ))}
-              </div>
+              <HairlineTable
+                style={{ flex: 1 }}
+                columns={POSITION_COLUMNS}
+                rows={positions}
+                rowKey={pos => pos.symbol}
+                onRowClick={pos => router.push(`/stock/${pos.symbol}`)}
+                renderCell={(pos, col) => {
+                  switch (col.key) {
+                    case 'symbol':
+                      return (
+                        <span style={{ fontSize: sz.bodyLg.fontSize, fontWeight: weight.bold, color: color.text, fontFamily: font.mono }}>
+                          {pos.symbol}
+                        </span>
+                      );
+                    case 'alloc':
+                      return (
+                        <div style={{ height: 4, borderRadius: 2, background: color.glassMd, overflow: 'hidden' }}>
+                          <div style={{
+                            width: `${pos.allocation}%`, height: '100%', borderRadius: 2,
+                            background: color.gold, transition: 'width 0.6s ease',
+                          }} />
+                        </div>
+                      );
+                    case 'pct':
+                      return (
+                        <span style={{ fontSize: sz.label.fontSize, color: color.textMuted }}>
+                          {pos.allocation.toFixed(0)}%
+                        </span>
+                      );
+                    case 'value':
+                      return formatCurrency(pos.marketValue);
+                    case 'day':
+                      return (
+                        <span style={{ fontWeight: weight.semibold, color: pos.dailyChange >= 0 ? color.positive : color.negative }}>
+                          {isFinite(pos.dailyChange) ? `${pos.dailyChange >= 0 ? '+' : ''}${pos.dailyChange.toFixed(2)}%` : 'N/A'}
+                        </span>
+                      );
+                    default:
+                      return null;
+                  }
+                }}
+              />
             )}
 
             <div style={{ marginTop: space[3] }}>

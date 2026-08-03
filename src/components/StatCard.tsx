@@ -63,7 +63,7 @@ export function StatCard({
         </span>
         {icon && <span style={{ fontSize: 16, opacity: 0.6 }}>{icon}</span>}
       </div>
-      <div style={{ fontSize: 22, fontWeight: 700, color: accentColor, letterSpacing: '-0.02em' }}>
+      <div style={{ fontSize: 22, fontWeight: 700, color: accentColor, letterSpacing: '-0.02em', fontVariantNumeric: 'tabular-nums' }}>
         {value}
       </div>
       {subValue && (

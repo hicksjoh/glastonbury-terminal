@@ -396,8 +396,8 @@ export function Sidebar({ isOpen, isMobile, onClose, compact, onToggleCompact }:
           <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 6 }}>
             <div style={{
               display: 'inline-flex', alignItems: 'center', gap: 4,
-              background: 'rgba(138, 92, 246, 0.1)', border: '1px solid rgba(138, 92, 246, 0.2)',
-              borderRadius: 4, padding: '2px 8px', fontSize: 10, color: '#8a5cf6',
+              background: 'rgba(255, 255, 255, 0.04)', border: '1px solid #2A2A34',
+              borderRadius: 4, padding: '2px 8px', fontSize: 10, color: '#8A8A96',
               cursor: 'default',
             }}>
               Cmd+K Search

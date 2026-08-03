@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState, useRef } from 'react';
+import { color, font } from '@/lib/design-tokens';
 
 interface TickerItem {
   symbol: string;
@@ -83,14 +84,14 @@ export default function MarketTickerBar() {
     return (
       <div style={{
         height: 36,
-        background: 'rgba(0, 0, 0, 0.6)',
-        borderBottom: '1px solid rgba(138, 92, 246, 0.2)',
+        background: color.surfaceMuted,
+        borderBottom: `1px solid ${color.borderFaint}`,
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'center',
         fontSize: 12,
-        color: '#666',
-        fontFamily: "'JetBrains Mono', monospace",
+        color: color.textDim,
+        fontFamily: font.mono,
       }}>
         {loading ? 'Loading market data\u2026' : 'Live quotes unavailable'}
       </div>
@@ -101,8 +102,8 @@ export default function MarketTickerBar() {
     <>
       <style>{`
         @keyframes priceFlash {
-          0% { background: rgba(138, 92, 246, 0.3); }
-          50% { background: rgba(138, 92, 246, 0.15); }
+          0% { background: ${color.goldEmphasis}; }
+          50% { background: ${color.goldSubtle}; }
           100% { background: transparent; }
         }
         .ticker-flash {
@@ -111,15 +112,16 @@ export default function MarketTickerBar() {
       `}</style>
       <div aria-label="Market status" role="status" style={{
         height: 36,
-        background: 'rgba(0, 0, 0, 0.6)',
-        borderBottom: '1px solid rgba(138, 92, 246, 0.2)',
+        background: color.surfaceMuted,
+        borderBottom: `1px solid ${color.borderFaint}`,
         display: 'flex',
         alignItems: 'center',
         gap: 0,
         overflowX: 'auto',
         overflowY: 'hidden',
         whiteSpace: 'nowrap',
-        fontFamily: "'JetBrains Mono', monospace",
+        fontFamily: font.mono,
+        fontVariantNumeric: 'tabular-nums',
         fontSize: 12,
         scrollbarWidth: 'none',
       }}>
@@ -132,7 +134,7 @@ export default function MarketTickerBar() {
               alignItems: 'center',
               gap: 8,
               padding: '0 16px',
-              borderRight: i < tickers.length - 1 ? '1px solid rgba(138, 92, 246, 0.15)' : 'none',
+              borderRight: i < tickers.length - 1 ? `1px solid ${color.borderFaint}` : 'none',
               flexShrink: 0,
               borderRadius: 4,
               transition: 'background 0.3s',
