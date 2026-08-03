@@ -5,6 +5,8 @@ import { runOrderGuards } from '@/lib/order-guards';
 import { runDebateGate, shouldRunDebateGate, type DebateGateVerdict } from '@/lib/order-guards/debate-gate';
 import { alpacaOrderRequestSchema } from '@/lib/order-schemas';
 import { publicError, validationError, captureAndPublic } from '@/lib/api-error';
+import { assertLiveOrderAllowed, formatLiveOrderRejection } from '@/lib/live-order-safety';
+import { LiveOrderRejectedError } from '@/lib/trading-mode';
 
 export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url);
@@ -22,11 +24,19 @@ export async function POST(req: NextRequest) {
   if (!allowed) return publicError('RATE_LIMITED', 'Too many requests');
 
   let parsed;
+  let typedConfirm: string | undefined;
   try {
     const raw = await req.json();
     // P0-4 (hardening/p0-codex-fixes): the equity order schema rejects NaN
     // qty, lowercase symbols, unknown fields, and missing limit_price for
-    // type=limit. `mode` and `force` are the only extras the route allows.
+    // type=limit. `mode` and `force` are the only extras the schema allows.
+    // `typedConfirm` is a route-level live-safety field, plucked before parse.
+    if (raw && typeof raw === 'object') {
+      typedConfirm = typeof (raw as { typedConfirm?: unknown }).typedConfirm === 'string'
+        ? (raw as { typedConfirm: string }).typedConfirm
+        : undefined;
+      delete (raw as { typedConfirm?: unknown }).typedConfirm;
+    }
     const result = alpacaOrderRequestSchema.safeParse(raw);
     if (!result.success) return validationError(result.error);
     parsed = result.data;
@@ -93,6 +103,25 @@ export async function POST(req: NextRequest) {
       },
       { status: 409 },
     );
+  }
+
+  // Live-mode safety layer — no-op in paper, hard-blocks in live without
+  // (a) mode/URL alignment, (b) valid x-live-ack header, (c) typedConfirm
+  // matching the notional when notional ≥ LIVE_TYPED_CONFIRM_THRESHOLD_USD.
+  const notionalUsd = (parsed.qty ?? 0) * (estimatedPrice ?? 0);
+  try {
+    await assertLiveOrderAllowed({
+      request: req,
+      typedConfirm,
+      notionalUsd,
+      auditContext: { route: 'alpaca/orders', symbol: parsed.symbol, side: parsed.side, qty: parsed.qty },
+    });
+  } catch (err) {
+    if (err instanceof LiveOrderRejectedError) {
+      const [body, init] = formatLiveOrderRejection(err);
+      return NextResponse.json(body, init);
+    }
+    return captureAndPublic(err, 'INTERNAL_ERROR');
   }
 
   try {

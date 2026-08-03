@@ -1,7 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createServiceClient } from '@/lib/supabase';
 import { rateLimit } from '@/lib/rate-limit';
-import { ALPACA_BASE_URL, assertPaperTrading } from '@/lib/alpaca';
+import { ALPACA_BASE_URL, assertOrderSubmissionAllowed } from '@/lib/alpaca';
+import { getServerTradingMode, LiveOrderRejectedError } from '@/lib/trading-mode';
+import * as Sentry from '@sentry/nextjs';
 
 const ALPACA_HEADERS = {
   'APCA-API-KEY-ID': process.env.ALPACA_API_KEY!,
@@ -228,12 +230,28 @@ async function handleExecute(body: {
   shares: number;
   side: string;
 }): Promise<NextResponse> {
-  // CRITICAL SAFETY CHECK: Paper mode only
-  if (process.env.ALPACA_PAPER !== 'true') {
-    return NextResponse.json(
-      { error: 'Auto-pilot execution is only available in PAPER trading mode' },
-      { status: 403 }
+  // CRITICAL SAFETY CHECK: Autopilot in live mode requires an EXPLICIT
+  // opt-in (AUTOPILOT_ALLOW_LIVE=true). This is a second env flag on top
+  // of TRADING_MODE=live so the cron never fires real money on the
+  // strength of a single flipped variable. Cron ≠ interactive session,
+  // so the standard live-ack + typed-confirm layer doesn't apply here —
+  // this env is the sole gate.
+  const mode = getServerTradingMode();
+  if (mode === 'live') {
+    const allowLive = ['true', '1', 'yes'].includes(
+      (process.env.AUTOPILOT_ALLOW_LIVE ?? '').trim().toLowerCase(),
     );
+    if (!allowLive) {
+      Sentry.addBreadcrumb({
+        category: 'trading.autopilot_blocked',
+        level: 'warning',
+        message: 'Autopilot blocked: TRADING_MODE=live but AUTOPILOT_ALLOW_LIVE unset',
+      });
+      return NextResponse.json(
+        { error: 'Auto-pilot in LIVE mode requires AUTOPILOT_ALLOW_LIVE=true env flag.', code: 'autopilot_live_disabled' },
+        { status: 403 },
+      );
+    }
   }
 
   const { symbol, shares, side } = body;
@@ -245,19 +263,26 @@ async function handleExecute(body: {
     );
   }
 
-  // Defense-in-depth: hard-block any attempt to submit to a non-paper host.
-  // ALPACA_PAPER (checked above) and ALPACA_BASE_URL are independent env vars
-  // and can drift on Vercel — assertPaperTrading() inspects the actual base
-  // URL so neither alone is sufficient to fire a real order.
+  // Mode/URL alignment — refuses to fire if ALPACA_BASE_URL and
+  // TRADING_MODE disagree. Runs in both paper and live modes.
   try {
-    assertPaperTrading();
+    assertOrderSubmissionAllowed();
   } catch (lockErr) {
-    const msg = lockErr instanceof Error ? lockErr.message : 'paper-trading lock engaged';
-    console.error('Autopilot order blocked by paper-trading lock:', msg);
-    return NextResponse.json(
-      { error: `Paper-trading lock engaged: ${msg}` },
-      { status: 500 }
-    );
+    const msg = lockErr instanceof Error ? lockErr.message : 'trading-mode guard engaged';
+    console.error('Autopilot order blocked by trading-mode guard:', msg);
+    if (lockErr instanceof LiveOrderRejectedError) {
+      return NextResponse.json({ error: lockErr.message, code: lockErr.code }, { status: lockErr.status() });
+    }
+    return NextResponse.json({ error: `Order blocked by safety layer: ${msg}` }, { status: 500 });
+  }
+
+  if (mode === 'live') {
+    Sentry.addBreadcrumb({
+      category: 'trading.autopilot_live_attempt',
+      level: 'warning',
+      message: 'Autopilot submitting LIVE order',
+      data: { symbol, side, shares },
+    });
   }
 
   try {

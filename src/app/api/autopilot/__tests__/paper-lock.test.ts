@@ -1,20 +1,17 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 // ═══════════════════════════════════════════════════════════════════════════
-//  S2 — Autopilot paper-trading lock (Codex round-2 review 2026-04-28)
+//  Autopilot trading-mode lock
 //
-//  Gap closed: src/app/api/autopilot/route.ts at the `execute` action POSTs
-//  /v2/orders to ALPACA_BASE_URL but previously only checked the unrelated
-//  ALPACA_PAPER env var. The two can drift — ALPACA_PAPER=true alongside
-//  ALPACA_BASE_URL=https://api.alpaca.markets would still fire a real order.
+//  Originally the "paper-lock" suite (S2, Codex round-2 review 2026-04-28).
+//  Kept the same file name for git-log continuity when live trading unlocked.
 //
-//  This suite hammers two invariants:
-//    (1) When ALPACA_BASE_URL points at a non-paper host, the autopilot's
-//        execute path must NOT call fetch against /v2/orders, and must
-//        return a 5xx response containing "Paper-trading lock engaged".
-//    (2) The autopilot module imports assertPaperTrading from @/lib/alpaca,
-//        documenting the wiring so a future refactor doesn't quietly remove
-//        the guard.
+//  Invariants the autopilot cron MUST preserve:
+//    (1) Paper mode + non-paper URL → refuse (mode/URL drift)
+//    (2) Live mode + AUTOPILOT_ALLOW_LIVE unset → refuse (explicit opt-in)
+//    (3) Live mode + AUTOPILOT_ALLOW_LIVE=true + live URL → fire
+//    (4) Live mode + AUTOPILOT_ALLOW_LIVE=true + paper URL → refuse
+//    (5) The autopilot module still imports the guard from @/lib/alpaca
 // ═══════════════════════════════════════════════════════════════════════════
 
 const ORIGINAL_ENV = { ...process.env };
@@ -22,10 +19,6 @@ const ORIGINAL_ENV = { ...process.env };
 beforeEach(() => {
   vi.resetModules();
   process.env = { ...ORIGINAL_ENV };
-  // ALPACA_PAPER is intentionally set to 'true' for these tests — we are
-  // proving that even with the legacy ALPACA_PAPER guard satisfied, the
-  // host-level lock still blocks a misconfigured ALPACA_BASE_URL.
-  process.env.ALPACA_PAPER = 'true';
   process.env.ALPACA_API_KEY = 'test-key';
   process.env.ALPACA_SECRET_KEY = 'test-secret';
 });
@@ -35,96 +28,143 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-describe('autopilot paper-trading lock', () => {
-  it('blocks /v2/orders POST and returns "Paper-trading lock engaged" when ALPACA_BASE_URL is non-paper', async () => {
-    // Drift scenario: paper flag still set but base URL pointed at live host.
+function stubDeps() {
+  vi.doMock('@/lib/supabase', () => ({
+    createServiceClient: () => ({
+      from: () => ({
+        insert: () => Promise.resolve({ data: null, error: null }),
+        select: () => ({ order: () => ({ limit: () => Promise.resolve({ data: [], error: null }) }) }),
+      }),
+    }),
+  }));
+  vi.doMock('@/lib/rate-limit', () => ({
+    rateLimit: () => ({ allowed: true }),
+  }));
+}
+
+async function callExecute(symbol: string, shares: number, side: 'buy' | 'sell') {
+  const { POST } = await import('../route');
+  const { NextRequest } = await import('next/server');
+  const req = new NextRequest('http://localhost/api/autopilot', {
+    method: 'POST',
+    body: JSON.stringify({ action: 'execute', symbol, shares, side }),
+    headers: { 'Content-Type': 'application/json' },
+  });
+  return POST(req);
+}
+
+describe('autopilot mode/URL drift protection', () => {
+  it('paper mode + LIVE base URL: blocks and no /v2/orders POST is issued', async () => {
+    delete process.env.TRADING_MODE;
     process.env.ALPACA_BASE_URL = 'https://api.alpaca.markets';
+    stubDeps();
 
     const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
       new Response('{}', { status: 200, headers: { 'Content-Type': 'application/json' } }),
     );
 
-    // Stub Supabase service client so the route doesn't try to hit a real DB.
-    vi.doMock('@/lib/supabase', () => ({
-      createServiceClient: () => ({
-        from: () => ({
-          insert: () => Promise.resolve({ data: null, error: null }),
-          select: () => ({ order: () => ({ limit: () => Promise.resolve({ data: [], error: null }) }) }),
-        }),
-      }),
-    }));
-
-    // Stub rate limiter so it doesn't 429 us based on previous tests' state.
-    vi.doMock('@/lib/rate-limit', () => ({
-      rateLimit: () => ({ allowed: true }),
-    }));
-
-    const { POST } = await import('../route');
-    const { NextRequest } = await import('next/server');
-
-    const req = new NextRequest('http://localhost/api/autopilot', {
-      method: 'POST',
-      body: JSON.stringify({ action: 'execute', symbol: 'AAPL', shares: 1, side: 'buy' }),
-      headers: { 'Content-Type': 'application/json' },
+    const res = await callExecute('AAPL', 1, 'buy');
+    const orderCalls = fetchSpy.mock.calls.filter(([url]) => {
+      const u = typeof url === 'string' ? url : url instanceof URL ? url.href : (url as Request).url;
+      return /\/v2\/orders\b/.test(u);
     });
+    expect(orderCalls).toHaveLength(0);
+    expect(res.status).toBeGreaterThanOrEqual(400);
+  });
 
-    const res = await POST(req);
+  it('paper mode + spoofed host: blocks (host check is the gate, not network)', async () => {
+    delete process.env.TRADING_MODE;
+    process.env.ALPACA_BASE_URL = 'https://paper-api.alpaca.markets.evil.com';
+    stubDeps();
+
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response('{}', { status: 200, headers: { 'Content-Type': 'application/json' } }),
+    );
+
+    const res = await callExecute('TSLA', 5, 'buy');
+    const orderCalls = fetchSpy.mock.calls.filter(([url]) => {
+      const u = typeof url === 'string' ? url : url instanceof URL ? url.href : (url as Request).url;
+      return /\/v2\/orders\b/.test(u);
+    });
+    expect(orderCalls).toHaveLength(0);
+    expect(res.status).toBeGreaterThanOrEqual(400);
+  });
+});
+
+describe('autopilot live-mode explicit opt-in', () => {
+  it('live mode without AUTOPILOT_ALLOW_LIVE: refuses with autopilot_live_disabled code', async () => {
+    process.env.TRADING_MODE = 'live';
+    process.env.ALPACA_BASE_URL = 'https://api.alpaca.markets';
+    delete process.env.AUTOPILOT_ALLOW_LIVE;
+    stubDeps();
+
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response('{}', { status: 200, headers: { 'Content-Type': 'application/json' } }),
+    );
+
+    const res = await callExecute('NVDA', 1, 'buy');
     const body = await res.json();
 
-    // The lock must engage — no /v2/orders POST should have been issued.
     const orderCalls = fetchSpy.mock.calls.filter(([url]) => {
       const u = typeof url === 'string' ? url : url instanceof URL ? url.href : (url as Request).url;
       return /\/v2\/orders\b/.test(u);
     });
     expect(orderCalls).toHaveLength(0);
-
-    // Response is a 5xx with the lock message in the body.
-    expect(res.status).toBeGreaterThanOrEqual(500);
-    expect(JSON.stringify(body)).toMatch(/Paper-trading lock engaged/i);
+    expect(res.status).toBe(403);
+    expect(body).toEqual(expect.objectContaining({ code: 'autopilot_live_disabled' }));
   });
 
-  it('does NOT call /v2/orders even when fetch is otherwise reachable (host check is the gate, not network)', async () => {
-    process.env.ALPACA_BASE_URL = 'https://paper-api.alpaca.markets.evil.com';
+  it('live mode + AUTOPILOT_ALLOW_LIVE=true + paper URL: refuses on drift', async () => {
+    process.env.TRADING_MODE = 'live';
+    process.env.AUTOPILOT_ALLOW_LIVE = 'true';
+    process.env.ALPACA_BASE_URL = 'https://paper-api.alpaca.markets';
+    stubDeps();
 
     const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
       new Response('{}', { status: 200, headers: { 'Content-Type': 'application/json' } }),
     );
 
-    vi.doMock('@/lib/supabase', () => ({
-      createServiceClient: () => ({
-        from: () => ({
-          insert: () => Promise.resolve({ data: null, error: null }),
-          select: () => ({ order: () => ({ limit: () => Promise.resolve({ data: [], error: null }) }) }),
-        }),
-      }),
-    }));
-
-    vi.doMock('@/lib/rate-limit', () => ({
-      rateLimit: () => ({ allowed: true }),
-    }));
-
-    const { POST } = await import('../route');
-    const { NextRequest } = await import('next/server');
-
-    const req = new NextRequest('http://localhost/api/autopilot', {
-      method: 'POST',
-      body: JSON.stringify({ action: 'execute', symbol: 'TSLA', shares: 5, side: 'buy' }),
-      headers: { 'Content-Type': 'application/json' },
-    });
-
-    const res = await POST(req);
-
+    const res = await callExecute('SPY', 10, 'buy');
     const orderCalls = fetchSpy.mock.calls.filter(([url]) => {
       const u = typeof url === 'string' ? url : url instanceof URL ? url.href : (url as Request).url;
       return /\/v2\/orders\b/.test(u);
     });
     expect(orderCalls).toHaveLength(0);
-    expect(res.status).toBeGreaterThanOrEqual(500);
+    expect(res.status).toBeGreaterThanOrEqual(400);
   });
 
-  it('autopilot module imports assertPaperTrading from @/lib/alpaca (wiring guard)', async () => {
-    // If a future refactor accidentally drops the import, this test fails
-    // even before any network mock — documenting the guard's presence.
+  it('live mode + AUTOPILOT_ALLOW_LIVE=true + live URL: does fire /v2/orders', async () => {
+    process.env.TRADING_MODE = 'live';
+    process.env.AUTOPILOT_ALLOW_LIVE = 'true';
+    process.env.ALPACA_BASE_URL = 'https://api.alpaca.markets';
+    stubDeps();
+
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response(JSON.stringify({ id: 'test-order', status: 'accepted' }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }),
+    );
+
+    const res = await callExecute('SPY', 1, 'buy');
+    const orderCalls = fetchSpy.mock.calls.filter(([url]) => {
+      const u = typeof url === 'string' ? url : url instanceof URL ? url.href : (url as Request).url;
+      return /\/v2\/orders\b/.test(u);
+    });
+    // In live-mode with explicit opt-in, the guard MUST let the call through.
+    expect(orderCalls.length).toBeGreaterThanOrEqual(1);
+    // Fired against the live host, not paper.
+    const orderUrl = String(orderCalls[0][0]);
+    expect(orderUrl).toContain('api.alpaca.markets');
+    expect(orderUrl).not.toContain('paper-api.alpaca.markets');
+    expect(res.status).toBeLessThan(400);
+  });
+});
+
+describe('autopilot wiring guard', () => {
+  it('autopilot module still imports the trading-mode guard from @/lib/alpaca', async () => {
+    // Documenting the guard's presence — if a future refactor drops the
+    // import, this test fails even before any network mock.
     const fs = await import('node:fs/promises');
     const path = await import('node:path');
     const src = await fs.readFile(
@@ -132,6 +172,6 @@ describe('autopilot paper-trading lock', () => {
       'utf8',
     );
     expect(src).toMatch(/from\s+['"]@\/lib\/alpaca['"]/);
-    expect(src).toContain('assertPaperTrading');
+    expect(src).toMatch(/assertOrderSubmissionAllowed|assertPaperTrading/);
   });
 });

@@ -1,8 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { rateLimit } from '@/lib/rate-limit';
-import { ALPACA_BASE_URL, assertPaperTrading } from '@/lib/alpaca';
+import { ALPACA_BASE_URL } from '@/lib/alpaca';
 import { multiLegOrderSchema } from '@/lib/order-schemas';
 import { publicError, validationError, captureAndPublic } from '@/lib/api-error';
+import { assertLiveOrderAllowed, formatLiveOrderRejection } from '@/lib/live-order-safety';
+import { LiveOrderRejectedError } from '@/lib/trading-mode';
 
 const alpacaHeaders = {
   'APCA-API-KEY-ID': process.env.ALPACA_API_KEY!,
@@ -15,8 +17,15 @@ export async function POST(req: NextRequest) {
   if (!allowed) return publicError('RATE_LIMITED', 'Too many order requests');
 
   let parsed;
+  let typedConfirm: string | undefined;
   try {
     const raw = await req.json();
+    if (raw && typeof raw === 'object') {
+      typedConfirm = typeof (raw as { typedConfirm?: unknown }).typedConfirm === 'string'
+        ? (raw as { typedConfirm: string }).typedConfirm
+        : undefined;
+      delete (raw as { typedConfirm?: unknown }).typedConfirm;
+    }
     // P0-4: zod-validate the entire multi-leg shape — bounds leg count to
     // ≤4, asserts every leg's OCC symbol matches the regex, and caps total
     // ratio_qty so a malformed payload can't queue a 100M-contract trade.
@@ -40,10 +49,24 @@ export async function POST(req: NextRequest) {
   };
   if (parsed.limit_price !== undefined) order.limit_price = parsed.limit_price;
 
+  // Multi-leg options: notional ≈ Σ(leg_ratio) × limit_price × 100 (contract multiplier).
+  // For debit spreads this equals the net premium × 100 × total qty.
+  const totalRatio = parsed.legs.reduce((s, l) => s + (l.ratio_qty || 0), 0);
+  const notionalUsd = totalRatio * (parsed.limit_price ?? 0) * 100;
+
   try {
-    assertPaperTrading();
+    await assertLiveOrderAllowed({
+      request: req,
+      typedConfirm,
+      notionalUsd,
+      auditContext: { route: 'options/multi-leg', legs: parsed.legs.length, type: parsed.type },
+    });
   } catch (lockErr) {
-    return captureAndPublic(lockErr, 'INTERNAL_ERROR', 'Paper-trading lock engaged');
+    if (lockErr instanceof LiveOrderRejectedError) {
+      const [body, init] = formatLiveOrderRejection(lockErr);
+      return NextResponse.json(body, init);
+    }
+    return captureAndPublic(lockErr, 'INTERNAL_ERROR', 'Order blocked by safety layer');
   }
 
   let res: Response;

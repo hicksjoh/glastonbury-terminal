@@ -1,10 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { analyzeFactorExposure } from '@/lib/factor-engine';
 import { buildMeta } from '@/lib/api-meta';
+import { ALPACA_BASE_URL } from '@/lib/alpaca';
 
 export async function GET(req: NextRequest) {
   try {
-    // Get portfolio positions from Alpaca
+    // Get portfolio positions from Alpaca (mode-aware URL — respects TRADING_MODE)
     const alpacaKey = process.env.ALPACA_API_KEY;
     const alpacaSecret = process.env.ALPACA_SECRET_KEY;
 
@@ -15,7 +16,7 @@ export async function GET(req: NextRequest) {
       }, { status: 500 });
     }
 
-    const res = await fetch('https://paper-api.alpaca.markets/v2/positions', {
+    const res = await fetch(`${ALPACA_BASE_URL}/v2/positions`, {
       headers: {
         'APCA-API-KEY-ID': alpacaKey,
         'APCA-API-SECRET-KEY': alpacaSecret,

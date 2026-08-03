@@ -10,6 +10,12 @@ import { useKeyboardShortcuts } from '@/hooks/useKeyboardShortcuts';
 
 const MarketTickerBar = dynamic(() => import('@/components/MarketTickerBar'), { ssr: false });
 const VoiceMic = dynamic(() => import('@/components/keisha/VoiceMic').then(m => m.VoiceMic), { ssr: false });
+// LiveTradingGate reads NEXT_PUBLIC_TRADING_MODE and is a no-op in paper.
+// In live mode it either mints the session ack or shows the red modal.
+const LiveTradingGate = dynamic(
+  () => import('@/components/trade/LiveTradingGate').then(m => m.LiveTradingGate),
+  { ssr: false },
+);
 
 const VOICE_ENABLED = process.env.NEXT_PUBLIC_FEATURE_VOICE === 'true';
 
@@ -108,6 +114,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       </div>
       <ShortcutsHelp />
       {VOICE_ENABLED && <VoiceMic />}
+      <LiveTradingGate />
     </div>
   );
 }

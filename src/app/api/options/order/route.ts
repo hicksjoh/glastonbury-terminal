@@ -1,8 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { rateLimit } from '@/lib/rate-limit';
-import { ALPACA_BASE_URL, assertPaperTrading } from '@/lib/alpaca';
+import { ALPACA_BASE_URL } from '@/lib/alpaca';
 import { singleOrderSchema } from '@/lib/order-schemas';
 import { publicError, validationError, captureAndPublic } from '@/lib/api-error';
+import { assertLiveOrderAllowed, formatLiveOrderRejection } from '@/lib/live-order-safety';
+import { LiveOrderRejectedError } from '@/lib/trading-mode';
 
 const alpacaHeaders = {
   'APCA-API-KEY-ID': process.env.ALPACA_API_KEY!,
@@ -15,8 +17,15 @@ export async function POST(req: NextRequest) {
   if (!allowed) return publicError('RATE_LIMITED', 'Too many order requests');
 
   let parsed;
+  let typedConfirm: string | undefined;
   try {
     const raw = await req.json();
+    if (raw && typeof raw === 'object') {
+      typedConfirm = typeof (raw as { typedConfirm?: unknown }).typedConfirm === 'string'
+        ? (raw as { typedConfirm: string }).typedConfirm
+        : undefined;
+      delete (raw as { typedConfirm?: unknown }).typedConfirm;
+    }
     // P0-4 (hardening/p0-codex-fixes): zod parse before any property reads
     // so NaN qty, lowercase symbols, and unknown fields die at the boundary.
     const result = singleOrderSchema.safeParse(raw);
@@ -37,11 +46,23 @@ export async function POST(req: NextRequest) {
   if (parsed.limit_price !== undefined) order.limit_price = parsed.limit_price;
   if (parsed.stop_price !== undefined) order.stop_price = parsed.stop_price;
 
-  // Defense-in-depth: hard-block any attempt to submit to a non-paper host.
+  // Options contracts settle per-share × 100. Notional ≈ qty × limit_price × 100.
+  const notionalUsd = (parsed.qty ?? 0) * (parsed.limit_price ?? 0) * 100;
+
+  // Live-mode safety: mode/URL alignment, x-live-ack header, typedConfirm.
   try {
-    assertPaperTrading();
+    await assertLiveOrderAllowed({
+      request: req,
+      typedConfirm,
+      notionalUsd,
+      auditContext: { route: 'options/order', symbol: parsed.symbol, side: parsed.side, qty: parsed.qty },
+    });
   } catch (lockErr) {
-    return captureAndPublic(lockErr, 'INTERNAL_ERROR', 'Paper-trading lock engaged');
+    if (lockErr instanceof LiveOrderRejectedError) {
+      const [body, init] = formatLiveOrderRejection(lockErr);
+      return NextResponse.json(body, init);
+    }
+    return captureAndPublic(lockErr, 'INTERNAL_ERROR', 'Order blocked by safety layer');
   }
 
   let res: Response;

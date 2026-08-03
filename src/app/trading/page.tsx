@@ -21,6 +21,11 @@ import OrderConfirmation from '@/components/options/OrderConfirmation';
 import OptionsPositions from '@/components/options/OptionsPositions';
 import GreeksSummary from '@/components/options/GreeksSummary';
 import type { OptionChainEntry } from '@/lib/options/types';
+import { useLiveAck, NotionalConfirmDialog } from '@/components/trade/LiveTradingGate';
+
+const LIVE_TYPED_CONFIRM_THRESHOLD_USD = Number(
+  process.env.NEXT_PUBLIC_LIVE_TYPED_CONFIRM_THRESHOLD_USD || 5_000,
+);
 
 interface MockPosition {
   symbol: string;
@@ -104,6 +109,11 @@ function TradingPage() {
   const [crewResult, setCrewResult] = useState<any>(null);
   const [showCrew, setShowCrew] = useState(false);
   const [crewOverride, setCrewOverride] = useState(false);
+
+  // Live-mode safety: header + notional-typed-confirm dialog
+  const liveAck = useLiveAck();
+  const [notionalDialogOpen, setNotionalDialogOpen] = useState(false);
+  const [pendingNotional, setPendingNotional] = useState(0);
 
   // Options state
   const [optionsSymbol, setOptionsSymbol] = useState('');
@@ -289,8 +299,8 @@ function TradingPage() {
     setCrewLoading(false);
   }
 
-  async function submitOrder() {
-    const order = {
+  async function doSubmitOrder(typedConfirm?: string) {
+    const order: Record<string, unknown> = {
       symbol: form.symbol.toUpperCase(),
       qty: parseInt(form.qty),
       side: form.side,
@@ -298,12 +308,36 @@ function TradingPage() {
       time_in_force: 'day',
       ...(form.type === 'limit' ? { limit_price: parseFloat(form.limitPrice) } : {}),
     };
+    if (typedConfirm) order.typedConfirm = typedConfirm;
+
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    // In live mode, attach the session ack token. In paper mode it's null.
+    if (liveAck.token) headers['x-live-ack'] = liveAck.token;
+
     try {
-      await fetch('/api/alpaca/orders', {
+      const res = await fetch('/api/alpaca/orders', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers,
         body: JSON.stringify(order),
       });
+      // If server rejected with a live-safety code, surface it —
+      // the modals inform the user what to do next.
+      if (!res.ok) {
+        try {
+          const body = await res.json();
+          if (body?.code === 'typed_confirm_required') {
+            // Server-side threshold might disagree with client-side estimate
+            // (e.g., unknown limit price for market orders). Re-open dialog.
+            setPendingNotional(Number((body?.notional_usd ?? pendingNotional) || 0));
+            setNotionalDialogOpen(true);
+            return;
+          }
+          if (body?.code === 'live_ack_required' || body?.code === 'live_ack_expired' || body?.code === 'live_ack_invalid') {
+            alert('Live-mode ack expired — reload the page and re-confirm.');
+            return;
+          }
+        } catch { /* fall through to generic path */ }
+      }
     } catch {
       // Silently handle — still show submitted state for paper demo
     }
@@ -314,6 +348,22 @@ function TradingPage() {
     setCrewResult(null);
     setShowCrew(false);
     setCrewOverride(false);
+  }
+
+  async function submitOrder() {
+    // Estimate notional for the client-side typed-confirm gate. For market
+    // orders (no limit price) we fall back to selectedPrice from search.
+    const price = form.type === 'limit'
+      ? parseFloat(form.limitPrice) || 0
+      : (selectedPrice ?? 0);
+    const notional = (parseInt(form.qty) || 0) * price;
+
+    if (liveAck.isLive && notional >= LIVE_TYPED_CONFIRM_THRESHOLD_USD) {
+      setPendingNotional(notional);
+      setNotionalDialogOpen(true);
+      return;
+    }
+    await doSubmitOrder();
   }
 
   function handleSelectOption(entry: OptionChainEntry, side: 'call' | 'put') {
@@ -1324,6 +1374,20 @@ function TradingPage() {
           onClose={() => setDebateOpen(false)}
         />
       )}
+
+      {/* Live-mode notional-typed-confirm — appears only when TRADING_MODE=live
+          and the order notional meets/exceeds LIVE_TYPED_CONFIRM_THRESHOLD. */}
+      <NotionalConfirmDialog
+        open={notionalDialogOpen}
+        notionalUsd={pendingNotional}
+        thresholdUsd={LIVE_TYPED_CONFIRM_THRESHOLD_USD}
+        onCancel={() => { setNotionalDialogOpen(false); setPendingNotional(0); }}
+        onConfirm={async (typed) => {
+          setNotionalDialogOpen(false);
+          await doSubmitOrder(typed);
+          setPendingNotional(0);
+        }}
+      />
       </ErrorBoundary>
     </AppShell>
   );

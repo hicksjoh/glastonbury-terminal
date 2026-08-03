@@ -22,35 +22,61 @@
 //     accessor when responding to clients.
 
 import { validateEquitySymbol } from '@/lib/sanitize';
+import {
+  assertTradingModeAllowed,
+  expectedAlpacaBaseUrl,
+  getServerTradingMode,
+} from '@/lib/trading-mode';
 
+/**
+ * The base URL Alpaca clients should use. Resolves in this order:
+ *   1. ALPACA_BASE_URL env (whatever the operator explicitly set)
+ *   2. The host that matches the current TRADING_MODE
+ * So if TRADING_MODE=live and ALPACA_BASE_URL is unset, we return
+ * https://api.alpaca.markets — never accidentally fall back to paper
+ * when the operator intended live.
+ */
 export const ALPACA_BASE_URL =
-  process.env.ALPACA_BASE_URL || 'https://paper-api.alpaca.markets';
+  process.env.ALPACA_BASE_URL || expectedAlpacaBaseUrl();
+
 const ALPACA_DATA_URL = 'https://data.alpaca.markets';
 
 const DEFAULT_TIMEOUT_MS = 8_000;
 
 /**
- * Hard-block any Alpaca order submission that isn't pointed at the paper
- * trading endpoint. Defense-in-depth — env-config drift, copy-paste, or
- * typo on Vercel must NOT be enough to place real orders. Every order
- * endpoint MUST funnel through this guard before calling fetch().
+ * Guard every order-submission path: refuse if ALPACA_BASE_URL disagrees
+ * with the declared TRADING_MODE. Enforces mode/URL alignment so a mis-
+ * configured Vercel env can't flip us onto the wrong host silently.
+ *
+ * See @/lib/trading-mode for the full contract. This is only ONE of the
+ * three live-mode safety layers — route handlers also enforce
+ * verifyLiveAckToken() and assertNotionalTypedConfirm() before calling
+ * submitOrder().
  */
-const ALPACA_PAPER_HOST = 'paper-api.alpaca.markets';
+export function assertOrderSubmissionAllowed(baseUrl: string = ALPACA_BASE_URL): void {
+  assertTradingModeAllowed(baseUrl);
+}
 
+/**
+ * @deprecated — Use assertOrderSubmissionAllowed() or, when the caller
+ * genuinely requires paper-only (test harnesses, migration tools), call
+ * `assertTradingModeAllowed(url, 'paper')` from @/lib/trading-mode.
+ *
+ * Kept for source-compat with the several routes that still import
+ * `assertPaperTrading`. When called with no args, it now defers to the
+ * current TRADING_MODE — the historical "must be paper" semantics were
+ * removed by design so live trading can unlock.
+ */
 export function assertPaperTrading(baseUrl: string = ALPACA_BASE_URL): void {
-  let host: string;
-  try {
-    host = new URL(baseUrl).host;
-  } catch {
-    throw new Error(`Invalid ALPACA_BASE_URL: ${baseUrl}`);
-  }
-  if (host !== ALPACA_PAPER_HOST) {
-    throw new Error(
-      `Refusing to submit order: ALPACA_BASE_URL host is "${host}", ` +
-        `expected "${ALPACA_PAPER_HOST}". This terminal is locked to paper trading. ` +
-        `If you intend to enable live trading, remove this guard intentionally.`,
-    );
-  }
+  assertTradingModeAllowed(baseUrl);
+}
+
+/**
+ * Convenience: is the current server env live-mode? Import this instead
+ * of duplicating the env read.
+ */
+export function isLiveMode(): boolean {
+  return getServerTradingMode() === 'live';
 }
 
 /** Public-safe Alpaca error. Don't include `upstreamBody` in API responses. */
@@ -197,7 +223,10 @@ export async function submitOrder(order: {
   limit_price?: number;
   stop_price?: number;
 }) {
-  assertPaperTrading();
+  // Mode/URL alignment. Route handlers must ALSO enforce the live-ack
+  // + notional-typed-confirm checks BEFORE reaching this call — this
+  // guard alone doesn't grant permission to place real orders.
+  assertOrderSubmissionAllowed();
   return alpacaFetch('/v2/orders', {
     method: 'POST',
     body: JSON.stringify(order),
