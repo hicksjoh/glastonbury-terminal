@@ -2,43 +2,101 @@
 @tailwind components;
 @tailwind utilities;
 
+/* ═══════════════════════════════════════════════════════════════════════════
+   CSS variables — mirror src/lib/design-tokens.ts.
+   Kept for:
+     1. Legacy inline styles that still read `var(--gold)` etc.
+     2. Non-Tailwind CSS (scrollbar, keyframes, animations).
+   The token file is the source of truth. If you change a value here,
+   change it there too.
+   ═══════════════════════════════════════════════════════════════════════════ */
 :root {
-  --bg: #08080d;
-  --secondary: #1a1a24;
-  --border: #2a2a3a;
-  --gold: #c9a84c;
-  --gold-dim: #8a6f2e;
-  --text: #e8e8e8;
-  --text-muted: #6b6b80;
-  --green: #22c55e;
-  --red: #ef4444;
+  /* Surfaces */
+  --bg:              #08080D;
+  --surface:         #12121A;
+  --surface-high:    #1C1C26;
+  --surface-muted:   #0F0F16;
+
+  /* Borders */
+  --border:          #2A2A34;
+  --border-strong:   #3D3D48;
+  --border-faint:    #1E1E28;
+
+  /* Text */
+  --text:            #EDEBE4;
+  --text-muted:      #8A8A96;
+  --text-dim:        #5A5A64;
+  --text-faint:      #3D3D48;
+
+  /* Brand accent — the ONE gold */
+  --gold:            #C9A84C;
+  --gold-hover:      #D9B85C;
+  --gold-subtle:     rgba(201, 168, 76, 0.12);
+  --gold-emphasis:   rgba(201, 168, 76, 0.24);
+
+  /* Semantic */
+  --positive:        #4ADE80;
+  --negative:        #F87171;
+  --warning:         #F0C674;
+  --info:            #22D3EE;
+  --danger:          #B85C4E;
+
+  /* Glass / shadow */
+  --glass-lo:        rgba(255, 255, 255, 0.02);
+  --glass-md:        rgba(255, 255, 255, 0.04);
+  --glass-hi:        rgba(255, 255, 255, 0.06);
+  --shadow-lo:       rgba(0, 0, 0, 0.20);
+  --shadow-md:       rgba(0, 0, 0, 0.30);
+  --shadow-hi:       rgba(0, 0, 0, 0.50);
+
+  /* Motion */
+  --dur-fast:        120ms;
+  --dur-base:        200ms;
+  --dur-slow:        400ms;
+  --ease-settle:     cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-default:    cubic-bezier(0.4, 0, 0.2, 1);
+
+  /* Legacy aliases — keep old CSS references working during migration */
+  --secondary:       var(--surface);
+  --gold-dim:        #8A6F2E;
+  --green:           var(--positive);
+  --red:             var(--negative);
 }
 
-* {
-  box-sizing: border-box;
-}
+* { box-sizing: border-box; }
 
 body {
   background-color: var(--bg);
   color: var(--text);
-  font-family: 'Inter', sans-serif;
+  font-family: var(--font-sans), 'Inter', system-ui, -apple-system, sans-serif;
   margin: 0;
+  font-feature-settings: 'cv02', 'cv03', 'cv04', 'cv11'; /* Inter stylistic sets */
 }
 
-::-webkit-scrollbar {
-  width: 6px;
-  height: 6px;
-}
-::-webkit-scrollbar-track { background: var(--bg); }
-::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
-::-webkit-scrollbar-thumb:hover { background: var(--gold-dim); }
+/* Scrollbars — restrained, gold on hover only */
+::-webkit-scrollbar        { width: 6px; height: 6px; }
+::-webkit-scrollbar-track  { background: var(--bg); }
+::-webkit-scrollbar-thumb  { background: var(--border); border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: var(--gold); }
 
-.gold-glow {
-  box-shadow: 0 0 20px rgba(201, 168, 76, 0.15);
+/* ═══════════════════════════════════════════════════════════════════════════
+   Focus ring — gold, single canonical rule. The double-declaration in the
+   pre-2026 file caused the "which color wins" bug (purple #a78bfa vs drift
+   gold #f0c674). Now: brand gold, one place.
+   ═══════════════════════════════════════════════════════════════════════════ */
+*:focus-visible {
+  outline: 2px solid var(--gold);
+  outline-offset: 2px;
+  border-radius: 4px;
 }
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   Utility classes retained for existing code paths.
+   ═══════════════════════════════════════════════════════════════════════════ */
+.gold-glow      { box-shadow: 0 0 20px rgba(201, 168, 76, 0.15); }
 
 .terminal-card {
-  background: var(--secondary);
+  background: var(--surface);
   border: 1px solid var(--border);
   border-radius: 12px;
   padding: 24px;
@@ -49,125 +107,67 @@ body {
   font-weight: 700;
   color: var(--gold);
   letter-spacing: -0.02em;
+  font-family: var(--font-mono), 'JetBrains Mono', Menlo, monospace;
+  font-variant-numeric: tabular-nums;
 }
 
-@keyframes spin {
-  from { transform: rotate(0deg); }
-  to { transform: rotate(360deg); }
-}
+/* ═══════════════════════════════════════════════════════════════════════════
+   Keyframes — consolidated. Deleted the duplicate `shimmer` block that
+   overrode the first definition with a different bg color.
+   ═══════════════════════════════════════════════════════════════════════════ */
+@keyframes spin       { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+@keyframes bounce     { 0%, 80%, 100% { transform: translateY(0); } 40% { transform: translateY(-6px); } }
+@keyframes shimmer    { 0% { background-position: -200px 0; } 100% { background-position: calc(200px + 100%) 0; } }
+@keyframes msgSlideIn { from { opacity: 0; transform: translateY(12px); } to { opacity: 1; transform: translateY(0); } }
+@keyframes fadeInUp   { to { opacity: 1; transform: translateY(0); } }
+@keyframes pillPop    { 0% { transform: scale(1); } 50% { transform: scale(1.03); } 100% { transform: scale(1); } }
+@keyframes blink      { 50% { opacity: 0; } }
+@keyframes pulse      { 0%, 100% { opacity: 1; } 50% { opacity: 0.55; } }
+@keyframes streamDot  { 0%, 60%, 100% { opacity: 0.3; transform: scale(0.85); } 30% { opacity: 1; transform: scale(1); } }
 
-@keyframes bounce {
-  0%, 80%, 100% { transform: translateY(0); }
-  40% { transform: translateY(-6px); }
-}
+.msg-bubble                              { animation: msgSlideIn 200ms var(--ease-settle) forwards; }
+.msg-bubble:hover .msg-actions           { opacity: 1 !important; }
 
-*:focus-visible {
-  outline: 2px solid #a78bfa;
-  outline-offset: 2px;
-  border-radius: 4px;
-}
-
-@keyframes shimmer {
-  0% { background-position: 200% 0; }
-  100% { background-position: -200% 0; }
-}
-
-/* Keisha chat message animations */
-@keyframes msgSlideIn {
-  from { opacity: 0; transform: translateY(12px); }
-  to { opacity: 1; transform: translateY(0); }
-}
-
-.msg-bubble {
-  animation: msgSlideIn 200ms ease-out forwards;
-}
-
-.msg-bubble:hover .msg-actions {
-  opacity: 1 !important;
-}
-
-/* Suggestion pill hover */
-@keyframes pillPop {
-  0% { transform: scale(1); }
-  50% { transform: scale(1.03); }
-  100% { transform: scale(1); }
-}
-
+/* Skip-to-content — now uses brand gold, not the retired purple */
 .skip-to-content {
   position: absolute;
-  width: 1px;
-  height: 1px;
-  padding: 0;
-  margin: -1px;
-  overflow: hidden;
-  clip: rect(0, 0, 0, 0);
-  white-space: nowrap;
-  border-width: 0;
-  text-decoration: none;
-  color: #fff;
+  width: 1px; height: 1px; padding: 0; margin: -1px;
+  overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap;
+  border-width: 0; text-decoration: none; color: #fff;
 }
-
 .skip-to-content:focus {
-  position: fixed;
-  top: 16px;
-  left: 16px;
-  width: auto;
-  height: auto;
-  padding: 8px 16px;
-  margin: 0;
-  overflow: visible;
-  clip: auto;
-  white-space: normal;
-  z-index: 9999;
-  background: #8a5cf6;
-  border-radius: 8px;
-  font-size: 14px;
-  font-weight: 600;
+  position: fixed; top: 16px; left: 16px; width: auto; height: auto;
+  padding: 8px 16px; margin: 0; overflow: visible; clip: auto;
+  white-space: normal; z-index: 9999;
+  background: var(--gold); color: var(--bg);
+  border-radius: 8px; font-size: 14px; font-weight: 600;
 }
 
-/* ─── Micro-interaction Classes ──────────────────────────────────────────── */
+/* ═══════════════════════════════════════════════════════════════════════════
+   Micro-interactions
+   ═══════════════════════════════════════════════════════════════════════════ */
+.card-hover           { transition: transform var(--dur-fast) var(--ease-default), box-shadow var(--dur-fast) var(--ease-default); }
+.card-hover:hover     { transform: translateY(-1px); box-shadow: 0 8px 24px var(--shadow-md); }
 
-.card-hover {
-  transition: transform 150ms ease, box-shadow 150ms ease;
-}
-.card-hover:hover {
-  transform: translateY(-1px);
-  box-shadow: 0 8px 24px rgba(0,0,0,0.3);
-}
-
-.suggestion-btn {
-  opacity: 0;
-  transform: translateY(8px);
-  animation: fadeInUp 200ms ease forwards;
-}
+.suggestion-btn                                  { opacity: 0; transform: translateY(8px); animation: fadeInUp 200ms ease forwards; }
 .suggestion-btn:nth-child(1) { animation-delay: 0ms; }
 .suggestion-btn:nth-child(2) { animation-delay: 50ms; }
 .suggestion-btn:nth-child(3) { animation-delay: 100ms; }
 .suggestion-btn:nth-child(4) { animation-delay: 150ms; }
 
-@keyframes fadeInUp {
-  to { opacity: 1; transform: translateY(0); }
-}
+.btn-gold        { transition: background-color var(--dur-fast) var(--ease-default); }
+.btn-gold:hover  { background-color: var(--gold-hover); }
 
-.btn-gold { transition: background-color 150ms ease; }
-.btn-gold:hover { background-color: #f5d597; }
-.btn-purple:hover { box-shadow: 0 0 12px rgba(138, 92, 246, 0.4); }
-
-/* Shimmer skeleton utility */
+/* Shimmer skeleton — retuned to warm obsidian palette */
 .skeleton-shimmer {
-  background: linear-gradient(90deg, #1a1a3a 25%, #252545 50%, #1a1a3a 75%);
+  background: linear-gradient(90deg, var(--surface) 25%, var(--surface-high) 50%, var(--surface) 75%);
   background-size: 200px 100%;
   animation: shimmer 1.5s ease-in-out infinite;
 }
 
-@keyframes shimmer {
-  0% { background-position: -200px 0; }
-  100% { background-position: calc(200px + 100%) 0; }
-}
-
-/* Focus override for gold ring */
-*:focus-visible {
-  outline: 2px solid #f0c674;
-  outline-offset: 2px;
-  border-radius: 4px;
+/* Numeric type — tabular figures everywhere by default */
+.tabular-nums,
+.font-mono {
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: 'tnum';
 }
