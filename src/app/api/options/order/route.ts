@@ -3,7 +3,7 @@ import { rateLimit } from '@/lib/rate-limit';
 import { ALPACA_BASE_URL } from '@/lib/alpaca';
 import { singleOrderSchema } from '@/lib/order-schemas';
 import { publicError, validationError, captureAndPublic } from '@/lib/api-error';
-import { assertLiveOrderAllowed, formatLiveOrderRejection } from '@/lib/live-order-safety';
+import { assertLiveOrderAllowed, formatLiveOrderRejection, resolveNotionalUsd } from '@/lib/live-order-safety';
 import { LiveOrderRejectedError } from '@/lib/trading-mode';
 
 const alpacaHeaders = {
@@ -46,8 +46,18 @@ export async function POST(req: NextRequest) {
   if (parsed.limit_price !== undefined) order.limit_price = parsed.limit_price;
   if (parsed.stop_price !== undefined) order.stop_price = parsed.stop_price;
 
-  // Options contracts settle per-share × 100. Notional ≈ qty × limit_price × 100.
-  const notionalUsd = (parsed.qty ?? 0) * (parsed.limit_price ?? 0) * 100;
+  // Options settle per-share × 100. skipQuoteLookup because OCC symbols
+  // aren't equity-quotable — a market options order therefore resolves to
+  // NaN and FAILS CLOSED (assertNotionalTypedConfirm rejects it with
+  // notional_indeterminate, telling the user to use a limit order).
+  const notionalUsd = await resolveNotionalUsd({
+    symbol: parsed.symbol,
+    qty: parsed.qty,
+    limitPrice: parsed.limit_price,
+    stopPrice: parsed.stop_price,
+    multiplier: 100,
+    skipQuoteLookup: true,
+  });
 
   // Live-mode safety: mode/URL alignment, x-live-ack header, typedConfirm.
   try {

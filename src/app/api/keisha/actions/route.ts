@@ -4,7 +4,7 @@ import { checkRateLimitDurable, getRateLimitIdentity } from '@/lib/rate-limit-du
 import { sanitizeSymbol } from '@/lib/sanitize';
 import { getQuote, getProfile } from '@/lib/fmp-client';
 import { submitOrder, AlpacaError } from '@/lib/alpaca';
-import { assertLiveOrderAllowed, formatLiveOrderRejection } from '@/lib/live-order-safety';
+import { assertLiveOrderAllowed, formatLiveOrderRejection, resolveNotionalUsd } from '@/lib/live-order-safety';
 import { LiveOrderRejectedError } from '@/lib/trading-mode';
 import { consumePendingOrder } from '@/lib/keisha/pending-orders';
 import { alpacaOrderRequestSchema } from '@/lib/order-schemas';
@@ -165,7 +165,13 @@ export async function POST(req: NextRequest) {
         const typedConfirm = typeof bodyExtras.typedConfirm === 'string'
           ? bodyExtras.typedConfirm
           : undefined;
-        const notionalUsd = (parsed.data.qty ?? 0) * (parsed.data.limit_price ?? 0);
+        // Live quote fallback for market orders — see resolveNotionalUsd.
+        const notionalUsd = await resolveNotionalUsd({
+          symbol: parsed.data.symbol,
+          qty: parsed.data.qty,
+          limitPrice: parsed.data.limit_price,
+          stopPrice: parsed.data.stop_price,
+        });
         try {
           await assertLiveOrderAllowed({
             request: req,

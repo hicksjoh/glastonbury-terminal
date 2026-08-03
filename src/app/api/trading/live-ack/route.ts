@@ -40,9 +40,22 @@ export async function POST(req: NextRequest) {
   if (modeGuard) return modeGuard;
 
   const { key } = await getRateLimitIdentity(req);
-  // Tight limit — we don't need many ack mints per session
-  const { allowed } = await checkRateLimitDurable('live-ack-mint', key, 5, 60);
-  if (!allowed) return NextResponse.json({ error: 'Too many ack attempts — slow down' }, { status: 429 });
+  // Tight limit — we don't need many ack mints per session.
+  const limit = await checkRateLimitDurable('live-ack-mint', key, 5, 60);
+  if (!limit.allowed) {
+    return NextResponse.json({ error: 'Too many ack attempts — slow down' }, { status: 429 });
+  }
+  // FAIL CLOSED on limiter degradation. checkRateLimitDurable silently falls
+  // back to a per-instance in-memory counter when Supabase is unreachable,
+  // which on Vercel means the effective limit becomes (5 × instance count).
+  // For a real-money authorization endpoint we'd rather be unavailable than
+  // under-throttled.
+  if (limit.source === 'memory-fallback') {
+    return NextResponse.json(
+      { error: 'Live-ack minting is temporarily unavailable (rate-limit store degraded). Retry shortly.' },
+      { status: 503 },
+    );
+  }
 
   let phrase: string;
   try {
@@ -53,9 +66,11 @@ export async function POST(req: NextRequest) {
   }
 
   try {
+    // `key` is the session subject — mintLiveAckToken BINDS the token to it
+    // and refuses to mint for a non-session (ip:/unknown) identity.
     const result = await mintLiveAckToken({
       phrase,
-      userHint: key,
+      subject: key,
     });
     return NextResponse.json({
       token: result.token,
@@ -77,7 +92,10 @@ export async function GET(req: NextRequest) {
 
   const token = req.headers.get('x-live-ack') ?? undefined;
   try {
-    const row = await verifyLiveAckToken(token);
+    // Scoped to the caller's own session so this can't be used as a
+    // validity oracle for a token belonging to someone else.
+    const { key } = await getRateLimitIdentity(req);
+    const row = await verifyLiveAckToken(token, key);
     return NextResponse.json({ valid: true, expiresAt: row.expires_at });
   } catch (err) {
     if (err instanceof LiveOrderRejectedError) {
@@ -93,6 +111,10 @@ export async function GET(req: NextRequest) {
 // ── DELETE: revoke token ───────────────────────────────────────────────
 export async function DELETE(req: NextRequest) {
   const token = req.headers.get('x-live-ack') ?? undefined;
-  await revokeLiveAckToken(token);
+  // Scoped to the caller's session — one session can't revoke another's
+  // token as a denial-of-service. Always reports success either way so
+  // this isn't a token-existence oracle.
+  const { key } = await getRateLimitIdentity(req);
+  await revokeLiveAckToken(token, key);
   return NextResponse.json({ revoked: true });
 }

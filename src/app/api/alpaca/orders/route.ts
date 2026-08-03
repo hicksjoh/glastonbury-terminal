@@ -5,7 +5,7 @@ import { runOrderGuards } from '@/lib/order-guards';
 import { runDebateGate, shouldRunDebateGate, type DebateGateVerdict } from '@/lib/order-guards/debate-gate';
 import { alpacaOrderRequestSchema } from '@/lib/order-schemas';
 import { publicError, validationError, captureAndPublic } from '@/lib/api-error';
-import { assertLiveOrderAllowed, formatLiveOrderRejection } from '@/lib/live-order-safety';
+import { assertLiveOrderAllowed, formatLiveOrderRejection, resolveNotionalUsd } from '@/lib/live-order-safety';
 import { LiveOrderRejectedError } from '@/lib/trading-mode';
 
 export async function GET(req: NextRequest) {
@@ -106,9 +106,16 @@ export async function POST(req: NextRequest) {
   }
 
   // Live-mode safety layer — no-op in paper, hard-blocks in live without
-  // (a) mode/URL alignment, (b) valid x-live-ack header, (c) typedConfirm
-  // matching the notional when notional ≥ LIVE_TYPED_CONFIRM_THRESHOLD_USD.
-  const notionalUsd = (parsed.qty ?? 0) * (estimatedPrice ?? 0);
+  // (a) mode/URL alignment, (b) valid session-bound x-live-ack header,
+  // (c) typedConfirm matching notional when ≥ LIVE_TYPED_CONFIRM_THRESHOLD_USD.
+  // resolveNotionalUsd falls back to a live quote for market orders so a
+  // large market order can't slip the gate by having no limit_price.
+  const notionalUsd = await resolveNotionalUsd({
+    symbol: parsed.symbol,
+    qty: parsed.qty,
+    limitPrice: parsed.limit_price,
+    stopPrice: parsed.stop_price,
+  });
   try {
     await assertLiveOrderAllowed({
       request: req,

@@ -61,7 +61,13 @@ interface AckRow {
  */
 export async function mintLiveAckToken(args: {
   phrase: string;
-  userHint: string;   // free-form label — e.g., "wes@localhost" for audit
+  /**
+   * The requester's identity from getRateLimitIdentity() — e.g. "sub:<jwt-sub>".
+   * This is BOUND to the token: verifyLiveAckToken refuses a token presented
+   * by a different subject, so a token lifted out of one browser can't be
+   * replayed from another session.
+   */
+  subject: string;
 }): Promise<{ token: string; expiresAt: string }> {
   if (!isValidLiveAckPhrase(args.phrase)) {
     throw new LiveOrderRejectedError(
@@ -69,6 +75,18 @@ export async function mintLiveAckToken(args: {
       `Live-mode ack requires typing "${LIVE_ACK_PHRASE}" verbatim.`,
     );
   }
+
+  // Refuse to bind an ack to a non-session identity. An `ip:` or `unknown`
+  // key is not stable (mobile networks roam, proxies rotate) and would make
+  // the binding check either useless or a lockout. Live trading requires a
+  // real authenticated session.
+  if (!args.subject.startsWith('sub:')) {
+    throw new LiveOrderRejectedError(
+      'live_ack_invalid',
+      'Live-mode acknowledgment requires an authenticated session. Sign in and retry.',
+    );
+  }
+
   const token = randomBytes(32).toString('hex');
   const now = new Date();
   const expiresAt = new Date(now.getTime() + ttlMs());
@@ -76,7 +94,7 @@ export async function mintLiveAckToken(args: {
   const sb = createServiceClient();
   const { error } = await sb.from('live_trading_acks').insert({
     token,
-    user_hint: args.userHint.slice(0, 200),
+    user_hint: args.subject.slice(0, 200),
     created_at: now.toISOString(),
     expires_at: expiresAt.toISOString(),
   });
@@ -95,7 +113,25 @@ export async function mintLiveAckToken(args: {
  * for its full TTL and can back many orders. Wes doesn't want to
  * re-type on every order submission; just once per session.
  */
-export async function verifyLiveAckToken(token: string | undefined): Promise<AckRow> {
+/**
+ * Minimum remaining TTL required at verify time. Verification happens
+ * before we build and POST the order to Alpaca; without this margin a
+ * token that is 50ms from expiry authorizes a request that reaches the
+ * broker after it has expired. Rejecting early closes that window.
+ * (It does NOT make revocation cancel an already in-flight POST —
+ * see the note on revokeLiveAckToken.)
+ */
+const MIN_REMAINING_TTL_MS = 30_000;
+
+export async function verifyLiveAckToken(
+  token: string | undefined,
+  /**
+   * Requester identity from getRateLimitIdentity(). When supplied, it MUST
+   * match the subject the token was minted for. Callers in the order path
+   * always pass this; omitting it is only for internal introspection.
+   */
+  subject?: string,
+): Promise<AckRow> {
   if (!token || token.length !== 64) {
     throw new LiveOrderRejectedError(
       'live_ack_required',
@@ -118,18 +154,46 @@ export async function verifyLiveAckToken(token: string | undefined): Promise<Ack
   if (row.revoked_at) {
     throw new LiveOrderRejectedError('live_ack_invalid', 'Live-ack token was revoked.');
   }
-  if (new Date(row.expires_at).getTime() < Date.now()) {
+
+  const remainingMs = new Date(row.expires_at).getTime() - Date.now();
+  if (remainingMs <= 0) {
     throw new LiveOrderRejectedError('live_ack_expired', 'Live-ack token expired — re-confirm live mode.');
   }
+  if (remainingMs < MIN_REMAINING_TTL_MS) {
+    throw new LiveOrderRejectedError(
+      'live_ack_expired',
+      'Live-ack token is about to expire — re-confirm live mode before submitting.',
+    );
+  }
+
+  // Session binding: possession alone is not authorization.
+  if (subject && row.user_hint !== subject) {
+    throw new LiveOrderRejectedError(
+      'live_ack_invalid',
+      'Live-ack token was issued to a different session.',
+    );
+  }
+
   return row;
 }
 
 /**
- * Revoke an ack token — used on explicit sign-out or "exit live mode"
- * button. Silently succeeds if the token doesn't exist (no info leak).
+ * Revoke an ack token — used on explicit sign-out or "exit live mode".
+ * Silently succeeds if the token doesn't exist (no info leak).
+ *
+ * LIMITATION (by design): revocation cannot cancel an order that has
+ * already cleared verifyLiveAckToken and is mid-flight to Alpaca. It
+ * prevents all SUBSEQUENT orders. Cancelling something already at the
+ * broker is a broker-side operation (DELETE /v2/orders/:id), not an
+ * ack-layer one.
+ *
+ * Scoped to the requesting subject when supplied so one session cannot
+ * grief another by revoking its token.
  */
-export async function revokeLiveAckToken(token: string | undefined): Promise<void> {
+export async function revokeLiveAckToken(token: string | undefined, subject?: string): Promise<void> {
   if (!token) return;
   const sb = createServiceClient();
-  await sb.from('live_trading_acks').update({ revoked_at: new Date().toISOString() }).eq('token', token);
+  let q = sb.from('live_trading_acks').update({ revoked_at: new Date().toISOString() }).eq('token', token);
+  if (subject) q = q.eq('user_hint', subject);
+  await q;
 }

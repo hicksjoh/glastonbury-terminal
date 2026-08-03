@@ -88,6 +88,78 @@ describe('assertTradingModeAllowed — live mode', () => {
   });
 });
 
+describe('assertTradingModeAllowed — transport hardening (Codex finding #6)', () => {
+  // The pre-fix guard compared only URL.host, so plaintext HTTP to the
+  // real broker hostname passed and would have shipped credentials in
+  // the clear.
+  it('rejects http:// even when the host is correct (paper)', () => {
+    delete process.env.TRADING_MODE;
+    expect(() => assertTradingModeAllowed(`http://${ALPACA_PAPER_HOST}`)).toThrow(/HTTPS is required/);
+  });
+
+  it('rejects http:// even when the host is correct (live)', () => {
+    process.env.TRADING_MODE = 'live';
+    expect(() => assertTradingModeAllowed(`http://${ALPACA_LIVE_HOST}`)).toThrow(/HTTPS is required/);
+  });
+
+  it('rejects embedded credentials in the URL', () => {
+    process.env.TRADING_MODE = 'live';
+    expect(() => assertTradingModeAllowed(`https://user:pass@${ALPACA_LIVE_HOST}`)).toThrow(/must not embed credentials/);
+  });
+
+  it('rejects a non-443 port on the broker host', () => {
+    process.env.TRADING_MODE = 'live';
+    expect(() => assertTradingModeAllowed(`https://${ALPACA_LIVE_HOST}:8443`)).toThrow(/unexpected port/);
+  });
+
+  it('still accepts the plain https broker URL', () => {
+    process.env.TRADING_MODE = 'live';
+    expect(() => assertTradingModeAllowed(`https://${ALPACA_LIVE_HOST}`)).not.toThrow();
+  });
+});
+
+describe('assertNotionalTypedConfirm — indeterminate notional FAILS CLOSED (Codex finding #1)', () => {
+  // Root cause of the market-order bypass: the pre-fix code returned early
+  // when !Number.isFinite(notional), so a market order (no limit price →
+  // notional NaN) skipped the gate entirely no matter how large.
+  it('live mode + NaN notional: throws notional_indeterminate (does NOT pass)', () => {
+    process.env.TRADING_MODE = 'live';
+    expect(() => assertNotionalTypedConfirm(Number.NaN, undefined)).toThrow(LiveOrderRejectedError);
+    try {
+      assertNotionalTypedConfirm(Number.NaN, undefined);
+    } catch (err) {
+      expect((err as LiveOrderRejectedError).code).toBe('notional_indeterminate');
+      expect((err as LiveOrderRejectedError).status()).toBe(428);
+    }
+  });
+
+  it('live mode + Infinity notional: throws notional_indeterminate', () => {
+    process.env.TRADING_MODE = 'live';
+    expect(() => assertNotionalTypedConfirm(Number.POSITIVE_INFINITY, undefined)).toThrow(/Cannot determine/);
+  });
+
+  it('a typedConfirm string cannot talk its way past an indeterminate notional', () => {
+    process.env.TRADING_MODE = 'live';
+    expect(() => assertNotionalTypedConfirm(Number.NaN, '999999')).toThrow(LiveOrderRejectedError);
+  });
+
+  it('paper mode + NaN notional: still a no-op (gate only applies live)', () => {
+    delete process.env.TRADING_MODE;
+    expect(() => assertNotionalTypedConfirm(Number.NaN, undefined)).not.toThrow();
+  });
+
+  it('rejection carries the server-computed notional so the client dialog matches', () => {
+    process.env.TRADING_MODE = 'live';
+    try {
+      assertNotionalTypedConfirm(7_500, undefined);
+    } catch (err) {
+      const e = err as LiveOrderRejectedError;
+      expect(e.detail?.notionalUsd).toBe(7500);
+      expect(e.detail?.thresholdUsd).toBe(5000);
+    }
+  });
+});
+
 describe('assertTradingModeAllowed — malformed / mis-set env', () => {
   it('unset TRADING_MODE defaults to paper', () => {
     delete process.env.TRADING_MODE;

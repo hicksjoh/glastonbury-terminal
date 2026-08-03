@@ -69,16 +69,35 @@ export function assertTradingModeAllowed(
   baseUrl: string,
   mode: TradingMode = getServerTradingMode(),
 ): void {
-  let host: string;
+  let url: URL;
   try {
-    host = new URL(baseUrl).host;
+    url = new URL(baseUrl);
   } catch {
     throw new Error(`Invalid ALPACA_BASE_URL: ${baseUrl}`);
   }
-  const expected = expectedAlpacaHost(mode);
-  if (host !== expected) {
+
+  // TLS is non-negotiable — the pre-fix guard compared only `.host`, so
+  // `http://api.alpaca.markets` sailed through and would have shipped
+  // broker credentials and order payloads in cleartext.
+  if (url.protocol !== 'https:') {
     throw new Error(
-      `Refusing to submit order: ALPACA_BASE_URL host is "${host}", ` +
+      `Refusing to submit order: ALPACA_BASE_URL uses "${url.protocol}" — ` +
+        `HTTPS is required for broker traffic.`,
+    );
+  }
+  // Embedded credentials in the URL would leak into logs and Referer.
+  if (url.username || url.password) {
+    throw new Error('Refusing to submit order: ALPACA_BASE_URL must not embed credentials.');
+  }
+  // Non-default port on a broker host means someone is redirecting us.
+  if (url.port && url.port !== '443') {
+    throw new Error(`Refusing to submit order: unexpected port "${url.port}" on broker URL.`);
+  }
+
+  const expected = expectedAlpacaHost(mode);
+  if (url.host !== expected) {
+    throw new Error(
+      `Refusing to submit order: ALPACA_BASE_URL host is "${url.host}", ` +
         `but TRADING_MODE is "${mode}" (expected "${expected}"). ` +
         `Align the two env vars — never rely on just one.`,
     );
@@ -131,13 +150,29 @@ export function assertNotionalTypedConfirm(
 ): void {
   if (mode !== 'live') return;
   const threshold = liveTypedConfirmThresholdUsd();
-  if (!Number.isFinite(notionalUsd) || notionalUsd < threshold) return;
+
+  // FAIL CLOSED on an indeterminate notional. The pre-fix code returned
+  // early when !Number.isFinite(notionalUsd), which meant a market order
+  // (no limit_price → notional NaN/0/Infinity) skipped this gate entirely
+  // regardless of size. An unpriceable order is the LEAST safe kind to
+  // wave through, so it now hard-rejects with actionable guidance.
+  if (!Number.isFinite(notionalUsd)) {
+    throw new LiveOrderRejectedError(
+      'notional_indeterminate',
+      'Cannot determine this order\'s dollar value, so the large-order ' +
+        'confirmation gate cannot be applied. Submit it as a LIMIT order ' +
+        'so the notional is known before it reaches the market.',
+    );
+  }
+
+  if (notionalUsd < threshold) return;
   const expected = Math.round(notionalUsd).toString();
   if ((typedConfirm ?? '').trim() !== expected) {
     throw new LiveOrderRejectedError(
       'typed_confirm_required',
       `Order notional $${expected} ≥ $${threshold} in LIVE mode. ` +
         `Client must POST typedConfirm="${expected}" alongside the order.`,
+      { notionalUsd: Math.round(notionalUsd), thresholdUsd: threshold },
     );
   }
 }
@@ -154,11 +189,24 @@ export class LiveOrderRejectedError extends Error {
     | 'live_ack_expired'
     | 'live_ack_invalid'
     | 'typed_confirm_required'
+    | 'notional_indeterminate'
     | 'autopilot_live_disabled';
-  constructor(code: LiveOrderRejectedError['code'], message: string) {
+  /**
+   * Extra fields echoed to the client so the confirm dialog can render the
+   * exact dollar figure the SERVER computed — the client's own estimate can
+   * differ (market orders, stale quotes) and typing a mismatched number
+   * would loop forever.
+   */
+  readonly detail?: { notionalUsd?: number; thresholdUsd?: number };
+  constructor(
+    code: LiveOrderRejectedError['code'],
+    message: string,
+    detail?: LiveOrderRejectedError['detail'],
+  ) {
     super(message);
     this.name = 'LiveOrderRejectedError';
     this.code = code;
+    this.detail = detail;
   }
   /** HTTP status code to return to the client. */
   status(): number {
@@ -168,6 +216,7 @@ export class LiveOrderRejectedError extends Error {
       case 'live_ack_expired':        return 428;
       case 'live_ack_invalid':        return 403;
       case 'typed_confirm_required':  return 428;
+      case 'notional_indeterminate':  return 428;
       case 'autopilot_live_disabled': return 403;
     }
   }

@@ -49,10 +49,23 @@ export async function POST(req: NextRequest) {
   };
   if (parsed.limit_price !== undefined) order.limit_price = parsed.limit_price;
 
-  // Multi-leg options: notional ≈ Σ(leg_ratio) × limit_price × 100 (contract multiplier).
-  // For debit spreads this equals the net premium × 100 × total qty.
-  const totalRatio = parsed.legs.reduce((s, l) => s + (l.ratio_qty || 0), 0);
-  const notionalUsd = totalRatio * (parsed.limit_price ?? 0) * 100;
+  // Multi-leg notional.
+  //
+  // The pre-fix version used Σ(ratio) × NET limit_price × 100. That is not
+  // the order's economic exposure: for a credit spread the net price is
+  // negative or near-zero, so a structure with five-figure max loss scored
+  // as a sub-threshold order and skipped the typed-confirm gate.
+  //
+  // Without per-leg option prices we cannot compute true max loss here, so
+  // we take the conservative route: GROSS ratio × |net price| × 100, and
+  // fail closed (NaN) whenever there is no limit price at all. Anything
+  // whose exposure we can't bound gets rejected with notional_indeterminate
+  // rather than waved through.
+  const grossRatio = parsed.legs.reduce((s, l) => s + Math.abs(l.ratio_qty || 0), 0);
+  const netPrice = Math.abs(Number(parsed.limit_price ?? Number.NaN));
+  const notionalUsd = Number.isFinite(netPrice) && netPrice > 0
+    ? grossRatio * netPrice * 100
+    : Number.NaN;
 
   try {
     await assertLiveOrderAllowed({
