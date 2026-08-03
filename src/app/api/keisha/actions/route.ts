@@ -3,7 +3,9 @@ import { createServiceClient } from '@/lib/supabase';
 import { checkRateLimitDurable, getRateLimitIdentity } from '@/lib/rate-limit-durable';
 import { sanitizeSymbol } from '@/lib/sanitize';
 import { getQuote, getProfile } from '@/lib/fmp-client';
-import { assertPaperTrading, submitOrder, AlpacaError } from '@/lib/alpaca';
+import { submitOrder, AlpacaError } from '@/lib/alpaca';
+import { assertLiveOrderAllowed, formatLiveOrderRejection, resolveNotionalUsd } from '@/lib/live-order-safety';
+import { LiveOrderRejectedError } from '@/lib/trading-mode';
 import { consumePendingOrder } from '@/lib/keisha/pending-orders';
 import { alpacaOrderRequestSchema } from '@/lib/order-schemas';
 import { captureRouteError } from '@/lib/api-error';
@@ -155,16 +157,42 @@ export async function POST(req: NextRequest) {
           );
         }
 
-        // Defense-in-depth: hard-block any attempt to submit to a non-paper host.
+        // Live-mode safety: no-op in paper; in live requires mode/URL alignment,
+        // a valid x-live-ack header, and typedConfirm matching notional when
+        // notional ≥ threshold. Typed confirm arrives on the request body as
+        // `typedConfirm` (piped from Keisha's confirm modal).
+        const bodyExtras = body as unknown as { typedConfirm?: unknown };
+        const typedConfirm = typeof bodyExtras.typedConfirm === 'string'
+          ? bodyExtras.typedConfirm
+          : undefined;
+        // Live quote fallback for market orders — see resolveNotionalUsd.
+        const notionalUsd = await resolveNotionalUsd({
+          symbol: parsed.data.symbol,
+          qty: parsed.data.qty,
+          limitPrice: parsed.data.limit_price,
+          stopPrice: parsed.data.stop_price,
+        });
         try {
-          assertPaperTrading();
+          await assertLiveOrderAllowed({
+            request: req,
+            typedConfirm,
+            notionalUsd,
+            auditContext: {
+              route: 'keisha/actions:place_order',
+              symbol: parsed.data.symbol,
+              side: parsed.data.side,
+              qty: parsed.data.qty,
+            },
+          });
         } catch (lockErr) {
-          const msg = lockErr instanceof Error ? lockErr.message : 'paper-trading lock engaged';
-          log.error({ err: msg }, 'keisha place_order blocked by paper-trading lock');
-          return NextResponse.json(
-            { error: 'Paper-trading lock engaged' },
-            { status: 500 }
-          );
+          if (lockErr instanceof LiveOrderRejectedError) {
+            log.warn({ code: lockErr.code, msg: lockErr.message }, 'keisha place_order blocked by live-safety');
+            const [respBody, init] = formatLiveOrderRejection(lockErr);
+            return NextResponse.json(respBody, init);
+          }
+          const msg = lockErr instanceof Error ? lockErr.message : 'trading-mode guard engaged';
+          log.error({ err: msg }, 'keisha place_order blocked by trading-mode guard');
+          return NextResponse.json({ error: 'Order blocked by safety layer' }, { status: 500 });
         }
 
         // submitOrder now uses the hardened alpacaFetch (timeouts, typed

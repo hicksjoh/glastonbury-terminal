@@ -1,8 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { rateLimit } from '@/lib/rate-limit';
-import { ALPACA_BASE_URL, assertPaperTrading } from '@/lib/alpaca';
+import { ALPACA_BASE_URL } from '@/lib/alpaca';
 import { multiLegOrderSchema } from '@/lib/order-schemas';
 import { publicError, validationError, captureAndPublic } from '@/lib/api-error';
+import { assertLiveOrderAllowed, formatLiveOrderRejection } from '@/lib/live-order-safety';
+import { LiveOrderRejectedError } from '@/lib/trading-mode';
 
 const alpacaHeaders = {
   'APCA-API-KEY-ID': process.env.ALPACA_API_KEY!,
@@ -15,8 +17,15 @@ export async function POST(req: NextRequest) {
   if (!allowed) return publicError('RATE_LIMITED', 'Too many order requests');
 
   let parsed;
+  let typedConfirm: string | undefined;
   try {
     const raw = await req.json();
+    if (raw && typeof raw === 'object') {
+      typedConfirm = typeof (raw as { typedConfirm?: unknown }).typedConfirm === 'string'
+        ? (raw as { typedConfirm: string }).typedConfirm
+        : undefined;
+      delete (raw as { typedConfirm?: unknown }).typedConfirm;
+    }
     // P0-4: zod-validate the entire multi-leg shape — bounds leg count to
     // ≤4, asserts every leg's OCC symbol matches the regex, and caps total
     // ratio_qty so a malformed payload can't queue a 100M-contract trade.
@@ -40,10 +49,37 @@ export async function POST(req: NextRequest) {
   };
   if (parsed.limit_price !== undefined) order.limit_price = parsed.limit_price;
 
+  // Multi-leg notional.
+  //
+  // The pre-fix version used Σ(ratio) × NET limit_price × 100. That is not
+  // the order's economic exposure: for a credit spread the net price is
+  // negative or near-zero, so a structure with five-figure max loss scored
+  // as a sub-threshold order and skipped the typed-confirm gate.
+  //
+  // Without per-leg option prices we cannot compute true max loss here, so
+  // we take the conservative route: GROSS ratio × |net price| × 100, and
+  // fail closed (NaN) whenever there is no limit price at all. Anything
+  // whose exposure we can't bound gets rejected with notional_indeterminate
+  // rather than waved through.
+  const grossRatio = parsed.legs.reduce((s, l) => s + Math.abs(l.ratio_qty || 0), 0);
+  const netPrice = Math.abs(Number(parsed.limit_price ?? Number.NaN));
+  const notionalUsd = Number.isFinite(netPrice) && netPrice > 0
+    ? grossRatio * netPrice * 100
+    : Number.NaN;
+
   try {
-    assertPaperTrading();
+    await assertLiveOrderAllowed({
+      request: req,
+      typedConfirm,
+      notionalUsd,
+      auditContext: { route: 'options/multi-leg', legs: parsed.legs.length, type: parsed.type },
+    });
   } catch (lockErr) {
-    return captureAndPublic(lockErr, 'INTERNAL_ERROR', 'Paper-trading lock engaged');
+    if (lockErr instanceof LiveOrderRejectedError) {
+      const [body, init] = formatLiveOrderRejection(lockErr);
+      return NextResponse.json(body, init);
+    }
+    return captureAndPublic(lockErr, 'INTERNAL_ERROR', 'Order blocked by safety layer');
   }
 
   let res: Response;

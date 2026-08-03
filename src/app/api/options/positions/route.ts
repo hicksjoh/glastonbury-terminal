@@ -3,8 +3,8 @@ import { parseOCCSymbol, daysToExpiration } from '@/lib/options/symbols';
 import { calculateGreeks } from '@/lib/options/greeks';
 import { captureRouteError } from '@/lib/api-error';
 import { loggerFor } from '@/lib/request-id';
+import { ALPACA_BASE_URL } from '@/lib/alpaca';
 
-const ALPACA_BASE_URL = process.env.ALPACA_BASE_URL || 'https://paper-api.alpaca.markets';
 const ALPACA_DATA_URL = 'https://data.alpaca.markets';
 
 const alpacaHeaders = {
