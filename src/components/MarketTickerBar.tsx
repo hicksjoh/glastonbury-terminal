@@ -120,6 +120,7 @@ export default function MarketTickerBar() {
         overflowY: 'hidden',
         whiteSpace: 'nowrap',
         fontFamily: "'JetBrains Mono', monospace",
+        fontVariantNumeric: 'tabular-nums',
         fontSize: 12,
         scrollbarWidth: 'none',
       }}>

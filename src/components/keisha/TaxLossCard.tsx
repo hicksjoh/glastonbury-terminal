@@ -61,7 +61,7 @@ function ReplacementPill({ ticker, name, correlation, reason }: {
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => setHovered(false)}
     >
-      <span style={{ fontFamily: "'JetBrains Mono', monospace" }}>{ticker}</span>
+      <span style={{ fontFamily: "'JetBrains Mono', monospace", fontVariantNumeric: 'tabular-nums' }}>{ticker}</span>
       <span style={{ fontSize: 9, color: '#555' }}>{(correlation * 100).toFixed(0)}%</span>
     </span>
   );
@@ -96,7 +96,7 @@ function CandidateRow({ candidate, onHarvest }: {
           <div>
             <div style={{
               fontSize: 14, fontWeight: 700, color: '#e8e8e8',
-              fontFamily: "'JetBrains Mono', monospace",
+              fontFamily: "'JetBrains Mono', monospace", fontVariantNumeric: 'tabular-nums',
             }}>
               {candidate.ticker}
             </div>
@@ -109,7 +109,7 @@ function CandidateRow({ candidate, onHarvest }: {
           <div style={{ textAlign: 'right' }}>
             <div style={{
               fontSize: 13, fontWeight: 600, color: '#f87171',
-              fontFamily: "'JetBrains Mono', monospace",
+              fontFamily: "'JetBrains Mono', monospace", fontVariantNumeric: 'tabular-nums',
             }}>
               {fmtDollars(candidate.unrealizedLoss, true)}
             </div>
@@ -127,7 +127,7 @@ function CandidateRow({ candidate, onHarvest }: {
             <div style={{ fontSize: 10, color: '#4ade80', fontWeight: 600 }}>SAVINGS</div>
             <div style={{
               fontSize: 13, fontWeight: 700, color: '#4ade80',
-              fontFamily: "'JetBrains Mono', monospace",
+              fontFamily: "'JetBrains Mono', monospace", fontVariantNumeric: 'tabular-nums',
             }}>
               {fmtDollars(candidate.taxSavings)}
             </div>
@@ -200,13 +200,13 @@ function CandidateRow({ candidate, onHarvest }: {
           <div style={{ display: 'flex', gap: 16, marginBottom: 8 }}>
             <div>
               <span style={{ fontSize: 10, color: '#666' }}>Cost Basis: </span>
-              <span style={{ fontSize: 12, color: '#b0b0c0', fontFamily: "'JetBrains Mono', monospace" }}>
+              <span style={{ fontSize: 12, color: '#b0b0c0', fontFamily: "'JetBrains Mono', monospace", fontVariantNumeric: 'tabular-nums' }}>
                 ${candidate.costBasis.toFixed(2)}
               </span>
             </div>
             <div>
               <span style={{ fontSize: 10, color: '#666' }}>Current: </span>
-              <span style={{ fontSize: 12, color: '#b0b0c0', fontFamily: "'JetBrains Mono', monospace" }}>
+              <span style={{ fontSize: 12, color: '#b0b0c0', fontFamily: "'JetBrains Mono', monospace", fontVariantNumeric: 'tabular-nums' }}>
                 ${candidate.currentPrice.toFixed(2)}
               </span>
             </div>
@@ -279,7 +279,7 @@ function TaxLossCardInner({ data }: { data: TaxLossCardData }) {
           padding: '6px 10px', borderRadius: 8, background: 'rgba(0,0,0,0.2)', minWidth: 90,
         }}>
           <div style={{ fontSize: 10, color: '#8888a8', fontWeight: 600, textTransform: 'uppercase' }}>Unrealized Losses</div>
-          <div style={{ fontSize: 14, fontWeight: 700, color: '#f87171', fontFamily: "'JetBrains Mono', monospace" }}>
+          <div style={{ fontSize: 14, fontWeight: 700, color: '#f87171', fontFamily: "'JetBrains Mono', monospace", fontVariantNumeric: 'tabular-nums' }}>
             {fmtDollars(summary.totalUnrealizedLosses)}
           </div>
         </div>
@@ -287,7 +287,7 @@ function TaxLossCardInner({ data }: { data: TaxLossCardData }) {
           padding: '6px 10px', borderRadius: 8, background: 'rgba(0,0,0,0.2)', minWidth: 90,
         }}>
           <div style={{ fontSize: 10, color: '#8888a8', fontWeight: 600, textTransform: 'uppercase' }}>Tax Savings</div>
-          <div style={{ fontSize: 14, fontWeight: 700, color: '#4ade80', fontFamily: "'JetBrains Mono', monospace" }}>
+          <div style={{ fontSize: 14, fontWeight: 700, color: '#4ade80', fontFamily: "'JetBrains Mono', monospace", fontVariantNumeric: 'tabular-nums' }}>
             {fmtDollars(summary.totalPotentialSavings)}
           </div>
         </div>
@@ -296,7 +296,7 @@ function TaxLossCardInner({ data }: { data: TaxLossCardData }) {
         }}>
           <div style={{ fontSize: 10, color: '#8888a8', fontWeight: 600, textTransform: 'uppercase' }}>YTD Gains</div>
           <div style={{
-            fontSize: 14, fontWeight: 700, fontFamily: "'JetBrains Mono', monospace",
+            fontSize: 14, fontWeight: 700, fontFamily: "'JetBrains Mono', monospace", fontVariantNumeric: 'tabular-nums',
             color: summary.ytdRealizedGains >= 0 ? '#4ade80' : '#f87171',
           }}>
             {fmtDollars(summary.ytdRealizedGains, true)}

@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
+import { color, elevation, font, radius, size as sz, tracking, weight } from '@/lib/design-tokens';
 
 interface SearchResult {
   type: 'stock' | 'page';
@@ -188,38 +189,50 @@ export default function CommandBar() {
         zIndex: 9999,
         display: 'flex',
         justifyContent: 'center',
-        paddingTop: 120,
+        alignItems: 'flex-start',
+        paddingTop: '14vh',
       }}
     >
+      {/* Overlay \u2014 deep obsidian wash */}
       <div
         style={{
           position: 'absolute',
           inset: 0,
-          background: 'rgba(0, 0, 0, 0.7)',
-          backdropFilter: 'blur(4px)',
+          background: 'rgba(5, 5, 6, 0.72)',
+          backdropFilter: 'blur(6px)',
         }}
         onClick={() => { setIsOpen(false); setQuery(''); }}
       />
 
+      {/* Panel */}
       <div style={{
         position: 'relative',
         width: '100%',
-        maxWidth: 560,
-        background: '#1a1a2e',
-        borderRadius: 16,
-        border: '1px solid rgba(138, 92, 246, 0.3)',
-        boxShadow: '0 25px 50px rgba(0,0,0,0.5), 0 0 40px rgba(138, 92, 246, 0.1)',
+        maxWidth: 620,
+        background: color.surfaceHigh,
+        borderRadius: radius.panel,
+        ...elevation.modal,
         overflow: 'hidden',
         maxHeight: '70vh',
+        animation: 'paletteIn 200ms cubic-bezier(0.2, 0.8, 0.2, 1) both',
       }}>
+        {/* Prompt row */}
         <div style={{
           display: 'flex',
           alignItems: 'center',
           padding: '14px 16px',
-          borderBottom: '1px solid rgba(255,255,255,0.06)',
+          borderBottom: `1px solid ${color.borderFaint}`,
           gap: 10,
         }}>
-          <span style={{ color: '#8a5cf6', fontSize: 18, fontFamily: "'JetBrains Mono', monospace" }}>{'>'}</span>
+          <span aria-hidden="true" style={{
+            color: color.gold,
+            fontSize: sz.subhead.fontSize,
+            fontWeight: weight.semibold,
+            fontFamily: font.mono,
+            lineHeight: 1,
+          }}>
+            {'\u203a'}
+          </span>
           <input
             ref={inputRef}
             type="text"
@@ -231,26 +244,30 @@ export default function CommandBar() {
               flex: 1,
               background: 'none',
               border: 'none',
-              color: '#fff',
-              fontSize: 16,
+              color: color.text,
+              fontSize: sz.base.fontSize,
               outline: 'none',
-              fontFamily: 'inherit',
+              fontFamily: font.mono,
             }}
           />
           <kbd style={{
-            background: 'rgba(255,255,255,0.06)',
-            color: '#666',
-            padding: '2px 8px',
-            borderRadius: 4,
-            fontSize: 11,
+            background: color.glassMd,
+            border: `1px solid ${color.border}`,
+            color: color.textMuted,
+            padding: '2px 6px',
+            borderRadius: radius.chip,
+            fontSize: sz.micro.fontSize,
+            fontFamily: font.mono,
+            letterSpacing: tracking.loose,
           }}>
             ESC
           </kbd>
         </div>
 
+        {/* Results */}
         <div style={{ maxHeight: 400, overflowY: 'auto', padding: '4px 0' }}>
           {results.length === 0 ? (
-            <div style={{ padding: 24, textAlign: 'center', color: '#555', fontSize: 14 }}>
+            <div style={{ padding: 24, textAlign: 'center', color: color.textDim, fontSize: sz.bodyLg.fontSize }}>
               No results found
             </div>
           ) : (
@@ -259,63 +276,70 @@ export default function CommandBar() {
                 key={`${result.type}-${result.label}`}
                 onClick={() => handleSelect(result)}
                 style={{
-                  display: 'flex',
+                  display: 'grid',
+                  gridTemplateColumns: '52px minmax(0, 1fr) auto',
                   alignItems: 'center',
-                  gap: 12,
-                  padding: '10px 16px',
+                  columnGap: 12,
+                  padding: '9px 16px',
                   cursor: 'pointer',
-                  background: i === selectedIdx ? 'rgba(138, 92, 246, 0.12)' : 'transparent',
+                  background: i === selectedIdx ? color.goldSubtle : 'transparent',
                   transition: 'background 0.1s',
                 }}
                 onMouseEnter={() => setSelectedIdx(i)}
               >
+                {/* Kind eyebrow */}
                 <span style={{
-                  width: 28,
-                  height: 28,
-                  borderRadius: 6,
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  fontSize: 12,
-                  fontWeight: 700,
-                  background: result.type === 'stock'
-                    ? 'rgba(240, 198, 116, 0.15)'
-                    : 'rgba(138, 92, 246, 0.15)',
-                  color: result.type === 'stock' ? '#f0c674' : '#c4a6ff',
-                  fontFamily: "'JetBrains Mono', monospace",
-                }}>
-                  {result.type === 'stock' ? '$' : '\u2192'}
-                </span>
-                <div style={{ flex: 1 }}>
-                  <div style={{ color: '#e0e0e0', fontSize: 14, fontWeight: 500 }}>
-                    {result.label}
-                  </div>
-                  {result.sublabel && (
-                    <div style={{ color: '#666', fontSize: 12, marginTop: 1 }}>
-                      {result.sublabel}
-                    </div>
-                  )}
-                </div>
-                <span style={{
-                  color: '#555',
-                  fontSize: 10,
+                  color: color.textDim,
+                  fontSize: sz.micro.fontSize,
+                  fontFamily: font.mono,
+                  fontWeight: weight.medium,
                   textTransform: 'uppercase',
-                  letterSpacing: '0.05em',
+                  letterSpacing: tracking.eyebrow,
                 }}>
                   {result.type}
                 </span>
+                {/* Label */}
+                <span style={{
+                  color: color.text,
+                  fontSize: sz.base.fontSize,
+                  fontWeight: weight.medium,
+                  whiteSpace: 'nowrap',
+                  overflow: 'hidden',
+                  textOverflow: 'ellipsis',
+                }}>
+                  {result.label}
+                </span>
+                {/* Right metric / detail */}
+                {result.sublabel && (
+                  <span style={{
+                    color: color.textMuted,
+                    fontSize: sz.label.fontSize,
+                    fontFamily: font.mono,
+                    fontVariantNumeric: 'tabular-nums',
+                    textAlign: 'right',
+                    whiteSpace: 'nowrap',
+                    overflow: 'hidden',
+                    textOverflow: 'ellipsis',
+                    maxWidth: 220,
+                  }}>
+                    {result.sublabel}
+                  </span>
+                )}
               </div>
             ))
           )}
         </div>
 
+        {/* Footer hints */}
         <div style={{
           padding: '8px 16px',
-          borderTop: '1px solid rgba(255,255,255,0.06)',
+          borderTop: `1px solid ${color.borderFaint}`,
           display: 'flex',
           gap: 16,
-          fontSize: 11,
-          color: '#555',
+          fontSize: sz.micro.fontSize,
+          fontFamily: font.mono,
+          letterSpacing: tracking.loose,
+          color: color.textDim,
         }}>
           <span>{'\u2191\u2193'} Navigate</span>
           <span>{'\u21b5'} Select</span>

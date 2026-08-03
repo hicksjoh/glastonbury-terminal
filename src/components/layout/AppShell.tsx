@@ -5,6 +5,7 @@ import { Sidebar } from './Sidebar';
 import { TradingModeBanner } from './TradingModeBanner';
 import { NotificationBell } from '@/components/NotificationBell';
 import { RegimeBadge } from '@/components/RegimeBadge';
+import { MarketStatusChip } from '@/components/MarketStatusChip';
 import { ShortcutsHelp } from '@/components/ShortcutsHelp';
 import { useKeyboardShortcuts } from '@/hooks/useKeyboardShortcuts';
 
@@ -61,7 +62,8 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const sidebarWidth = compact ? SIDEBAR_COMPACT : SIDEBAR_FULL;
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', minHeight: '100vh', backgroundColor: '#08080d' }}>
+    // Transparent shell — the obsidian ground + dot grid live on <body> (globals.css)
+    <div style={{ display: 'flex', flexDirection: 'column', minHeight: '100vh', backgroundColor: 'transparent' }}>
       <TradingModeBanner />
       <MarketTickerBar />
       <div style={{ display: 'flex', flex: 1 }}>
@@ -98,6 +100,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             padding: isMobile ? '12px 16px 0' : '12px 40px 0', position: 'sticky', top: 0, zIndex: 50,
             paddingTop: isMobile ? 48 : undefined,
           }}>
+            <MarketStatusChip />
             <RegimeBadge />
             <NotificationBell />
           </div>
