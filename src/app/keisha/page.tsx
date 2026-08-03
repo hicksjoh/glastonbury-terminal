@@ -723,9 +723,29 @@ export default function KeishaPage() {
       });
       const data = await res.json();
       if (!res.ok && data.code === 'typed_confirm_required') {
+        // Prefer the SERVER's notional. Our local estimate is qty × limitPrice,
+        // which is 0 for a market order — the dialog would ask the user to type
+        // "0", the server would reject it against its own quote-derived figure,
+        // and the two would never agree.
+        const serverNotional = Number(data.notional_usd);
         const qty = Number(pendingOrder.params.qty ?? pendingOrder.params.quantity ?? pendingOrder.params.shares);
         const price = Number(pendingOrder.params.limitPrice ?? 0);
-        setNotionalConfirm({ notionalUsd: qty * price });
+        setNotionalConfirm({
+          notionalUsd: Number.isFinite(serverNotional) && serverNotional > 0
+            ? serverNotional
+            : qty * price,
+        });
+        return;
+      }
+      if (!res.ok && data.code === 'notional_indeterminate') {
+        // Server couldn't price the order (market order it can't quote), so the
+        // large-order gate can't be applied and it refused to guess.
+        setMessages(prev => [...prev, {
+          id: Date.now().toString(),
+          role: 'assistant',
+          content: "I couldn't determine this order's dollar value, so I can't run the large-order safety check on it. Resubmit it as a **limit order** and I'll price it before it goes to market.",
+          timestamp: new Date().toISOString(),
+        }]);
         return;
       }
       if (!res.ok && ['live_ack_required', 'live_ack_expired', 'live_ack_invalid'].includes(data.code)) {
