@@ -2,6 +2,8 @@
 
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { RefreshCw } from 'lucide-react';
+import { Card, PillBadge, type PillTone } from '@/components/ui';
+import { color, font, size as sz, weight, tracking, space, radius, motion } from '@/lib/design-tokens';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -52,25 +54,27 @@ function isStale(ts: string): boolean {
   return Date.now() - new Date(ts).getTime() > 12 * 60 * 60 * 1000;
 }
 
-const SENTIMENT_CONFIG: Record<string, { color: string; label: string }> = {
-  bullish: { color: '#4ade80', label: 'Bullish' },
-  bearish: { color: '#f87171', label: 'Bearish' },
-  neutral: { color: '#8888a8', label: 'Neutral' },
+const SENTIMENT_CONFIG: Record<string, { color: string; tone: PillTone; label: string }> = {
+  bullish: { color: color.positive,  tone: 'positive', label: 'Bullish' },
+  bearish: { color: color.negative,  tone: 'negative', label: 'Bearish' },
+  neutral: { color: color.textMuted, tone: 'neutral',  label: 'Neutral' },
 };
 
 // ─── Skeleton ───────────────────────────────────────────────────────────────
 
+const SHIMMER_BG = `linear-gradient(90deg, ${color.surfaceHigh} 25%, ${color.border} 50%, ${color.surfaceHigh} 75%)`;
+
 function NarrativeSkeleton() {
   return (
-    <div style={{ padding: 24, background: '#12122a', border: '1px solid #1a1a3a', borderRadius: 16 }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 16 }}>
-        <div style={{ width: 10, height: 10, borderRadius: '50%', background: '#2a2a3a' }} />
-        <div style={{ width: 120, height: 16, borderRadius: 4, background: 'linear-gradient(90deg, #1a1a3a 25%, #252545 50%, #1a1a3a 75%)', backgroundSize: '200px 100%', animation: 'shimmer 1.5s ease-in-out infinite' }} />
+    <Card tone="default" size="lg">
+      <div style={{ display: 'flex', alignItems: 'center', gap: space[2], marginBottom: space[4] }}>
+        <div style={{ width: 10, height: 10, borderRadius: radius.full, background: color.border }} />
+        <div style={{ width: 120, height: 16, borderRadius: radius.chip, background: SHIMMER_BG, backgroundSize: '200px 100%', animation: 'shimmer 1.5s ease-in-out infinite' }} />
       </div>
       {[0.9, 0.7, 0.5].map((w, i) => (
-        <div key={i} style={{ width: `${w * 100}%`, height: 14, borderRadius: 4, marginBottom: 8, background: 'linear-gradient(90deg, #1a1a3a 25%, #252545 50%, #1a1a3a 75%)', backgroundSize: '200px 100%', animation: 'shimmer 1.5s ease-in-out infinite' }} />
+        <div key={i} style={{ width: `${w * 100}%`, height: 14, borderRadius: radius.chip, marginBottom: space[2], background: SHIMMER_BG, backgroundSize: '200px 100%', animation: 'shimmer 1.5s ease-in-out infinite' }} />
       ))}
-    </div>
+    </Card>
   );
 }
 
@@ -118,12 +122,13 @@ function MarketNarrativeInner() {
 
   if (error && !data) {
     return (
-      <div style={{
-        padding: 20, background: '#12122a', border: '1px solid #1a1a3a', borderRadius: 16,
-        color: '#666', fontSize: 13, textAlign: 'center',
-      }}>
+      <Card
+        tone="default"
+        size="lg"
+        style={{ color: color.textDim, fontSize: sz.bodyLg.fontSize, textAlign: 'center' }}
+      >
         Market narrative unavailable
-      </div>
+      </Card>
     );
   }
 
@@ -133,46 +138,42 @@ function MarketNarrativeInner() {
   const marketClosed = !isMarketHours();
 
   return (
-    <div style={{
-      padding: 24,
-      background: '#12122a',
-      border: '1px solid #1a1a3a',
-      borderRadius: 16,
-      position: 'relative',
-      transition: 'transform 150ms ease, box-shadow 150ms ease',
-    }}>
+    <Card tone="default" size="lg" style={{ position: 'relative' }}>
       {/* Header */}
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: space[3] }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: space[2] }}>
           {/* Animated radio wave */}
           <div style={{ position: 'relative', width: 12, height: 12 }}>
             <div style={{
-              position: 'absolute', inset: 0, borderRadius: '50%',
+              position: 'absolute', inset: 0, borderRadius: radius.full,
               background: sentimentCfg.color,
               animation: isMarketHours() ? 'narrativePulse 2s ease-in-out infinite' : 'none',
               opacity: 0.6,
             }} />
             <div style={{
-              position: 'absolute', inset: 2, borderRadius: '50%',
+              position: 'absolute', inset: 2, borderRadius: radius.full,
               background: sentimentCfg.color,
             }} />
           </div>
-          <span style={{ fontSize: 13, fontWeight: 700, color: '#f0c674', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+          <span style={{
+            fontSize: sz.label.fontSize,
+            fontWeight: weight.semibold,
+            color: color.gold,
+            textTransform: 'uppercase',
+            letterSpacing: tracking.eyebrow,
+          }}>
             Market Pulse
           </span>
           {/* Sentiment badge */}
-          <span style={{
-            fontSize: 10, fontWeight: 600, padding: '2px 8px', borderRadius: 4,
-            background: `${sentimentCfg.color}18`,
-            color: sentimentCfg.color,
-          }}>
+          <PillBadge tone={sentimentCfg.tone} size="sm">
             {sentimentCfg.label}
-          </span>
+          </PillBadge>
           {/* Regime badge */}
           <span style={{
-            fontSize: 10, fontWeight: 500, padding: '2px 8px', borderRadius: 4,
-            background: 'rgba(138,92,246,0.1)', color: '#8a5cf6',
-            fontFamily: "'JetBrains Mono', monospace",
+            fontSize: sz.micro.fontSize, fontWeight: weight.medium,
+            padding: `${space[0.5]}px ${space[2]}px`, borderRadius: radius.chip,
+            background: color.glassMd, color: color.textMuted,
+            fontFamily: font.mono,
           }}>
             {data.regime.replace(/_/g, ' ')}
           </span>
@@ -182,13 +183,14 @@ function MarketNarrativeInner() {
           disabled={loading}
           aria-label="Refresh market narrative"
           style={{
-            padding: '4px 10px', borderRadius: 6, border: '1px solid #333',
-            background: 'transparent', color: '#888', fontSize: 11,
-            cursor: loading ? 'wait' : 'pointer', display: 'flex', alignItems: 'center', gap: 4,
-            transition: 'color 150ms ease',
+            padding: `${space[1]}px ${space[3]}px`, borderRadius: radius.button,
+            border: `1px solid ${color.border}`,
+            background: 'transparent', color: color.textMuted, fontSize: sz.label.fontSize,
+            cursor: loading ? 'wait' : 'pointer', display: 'flex', alignItems: 'center', gap: space[1],
+            transition: `color ${motion.duration.fast}ms ${motion.easing.default}, border-color ${motion.duration.fast}ms ${motion.easing.default}`,
           }}
-          onMouseEnter={e => { e.currentTarget.style.color = '#f0c674'; e.currentTarget.style.borderColor = '#f0c674'; }}
-          onMouseLeave={e => { e.currentTarget.style.color = '#888'; e.currentTarget.style.borderColor = '#333'; }}
+          onMouseEnter={e => { e.currentTarget.style.color = color.gold; e.currentTarget.style.borderColor = color.gold; }}
+          onMouseLeave={e => { e.currentTarget.style.color = color.textMuted; e.currentTarget.style.borderColor = color.border; }}
         >
           <RefreshCw size={11} style={{ animation: loading ? 'spin 1s linear infinite' : 'none' }} />
           Refresh
@@ -197,35 +199,36 @@ function MarketNarrativeInner() {
 
       {/* Market closed / stale note */}
       {marketClosed && !isStale(data.timestamp) && (
-        <div style={{ fontSize: 11, color: '#555', marginBottom: 8, fontStyle: 'italic' }}>
+        <div style={{ fontSize: sz.label.fontSize, color: color.textDim, marginBottom: space[2], fontStyle: 'italic' }}>
           Markets closed — showing last available narrative
         </div>
       )}
       {isStale(data.timestamp) && (
         <div style={{
-          fontSize: 11, color: '#f0c674', marginBottom: 8,
-          display: 'flex', alignItems: 'center', gap: 6,
+          fontSize: sz.label.fontSize, color: color.warning, marginBottom: space[2],
+          display: 'flex', alignItems: 'center', gap: space[1],
         }}>
-          <span>&#9888;</span>
+          <span>{'⚠'}</span>
           <span>Narrative is stale — last updated {timeAgo(data.timestamp)}. Hit refresh for the latest.</span>
         </div>
       )}
 
       {/* Narrative text */}
       <p style={{
-        fontSize: 15, lineHeight: 1.7, color: '#d4d4d4', margin: 0, marginBottom: 12,
+        fontSize: sz.base.fontSize, lineHeight: `${sz.base.lineHeight}px`, color: color.text,
+        margin: 0, marginBottom: space[3],
       }}>
         {data.narrative}
       </p>
 
       {/* Key Levels */}
       {data.keyLevels.length > 0 && (
-        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 10 }}>
+        <div style={{ display: 'flex', gap: space[2], flexWrap: 'wrap', marginBottom: space[2] }}>
           {data.keyLevels.map((kl, i) => (
             <span key={i} style={{
-              fontSize: 11, padding: '3px 10px', borderRadius: 6,
-              background: 'rgba(240,198,116,0.08)', border: '1px solid rgba(240,198,116,0.15)',
-              color: '#f0c674', fontFamily: "'JetBrains Mono', monospace",
+              fontSize: sz.label.fontSize, padding: `${space[0.5]}px ${space[2]}px`, borderRadius: radius.chip,
+              background: color.goldSubtle, border: `1px solid ${color.gold}30`,
+              color: color.gold, fontFamily: font.mono, fontVariantNumeric: 'tabular-nums',
             }}>
               {kl.symbol} ${kl.level.toLocaleString()} — {kl.significance}
             </span>
@@ -234,7 +237,7 @@ function MarketNarrativeInner() {
       )}
 
       {/* Timestamp */}
-      <div style={{ fontSize: 10, color: '#555', textAlign: 'right' }}>
+      <div style={{ fontSize: sz.micro.fontSize, color: color.textDim, textAlign: 'right' }}>
         {timeAgo(data.timestamp)}
         {data.cached && ' (cached)'}
       </div>
@@ -246,7 +249,7 @@ function MarketNarrativeInner() {
           50% { transform: scale(1.8); opacity: 0; }
         }
       `}</style>
-    </div>
+    </Card>
   );
 }
 
