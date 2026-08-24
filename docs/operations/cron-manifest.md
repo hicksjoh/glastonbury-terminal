@@ -16,8 +16,8 @@ column is the equivalent local time during DST (subtract 1h for EST winter).
 | `/api/portfolio/snapshot` | `0 22 * * 1-5` | 6:00 PM weekday | `portfolio-snapshot` | ✅ upsert by date | UPSERT portfolio_snapshots row |
 | `/api/cron/storm-watch` | `0 12 * * *` | 8:00 AM daily | `cron-storm-watch` | upsert by storm_id | NHC fetch · INSERT alert candidates |
 | `/api/cron/prediction-snapshot` | `0 13 * * *` | 9:00 AM daily | `cron-prediction-snapshot` | upsert by ticker+date | Kalshi + Polymarket fetch · INSERT snapshots |
-| `/api/cron/tax-harvest` | `0 0 * * 1` | 8:00 PM Sun | `cron-tax-harvest` | unique index per week | Tax harvest scan · INSERT suggestions · Resend email |
-| `/api/cron/coach-review` | `0 1 * * 1` | 9:00 PM Sun | `cron-coach-review` | unique per weekOf | Anthropic Opus call · INSERT review · Resend email |
+| `/api/cron/tax-harvest` | `0 0 * * 1` | 8:00 PM Sun | `cron-tax-harvest` | ✅ p1-4 (per-week) | Tax harvest scan · INSERT suggestions · Resend email |
+| `/api/cron/coach-review` | `0 1 * * 1` | 9:00 PM Sun | `cron-coach-review` | ✅ p1-4 (per-week) | Anthropic Opus call · INSERT review · Resend email |
 | `/api/cron/weekly-report` | `0 23 * * 0` | 7:00 PM Sun | `weekly-report` | ✅ p1-4 | INSERT snapshot · Resend email |
 | `/api/cron/slo-roundup` | `0 21 * * 5` | 5:00 PM Fri | `slo-roundup` | ✅ p1-4 (per-week) | Aggregate SLO counters · Resend email |
 | `/api/cron/migration-drift-check` | `0 13 * * 1` | 9:00 AM Mon | `migration-drift-check` | ✅ p1-4 (per-week) | Canary-check schema · Resend alert if drift |
@@ -58,10 +58,51 @@ isn't set, it silently no-ops. To activate:
   ~5 AM EDT; 8 AM gives time for any updates to land.
 - **Prediction snapshot at 9:00 AM ET**: pre-market read on macro/political
   prediction markets. Slight overlap with briefing on purpose.
-- **Tax harvest + coach review on Sun PM**: weekly cadence, run before
-  the weekly report (Sun 7 PM) so its email picks up fresh suggestions.
+- **Tax harvest + coach review on Sun PM**: weekly cadence. The intent was
+  that these run *before* the weekly report so its email picks up fresh
+  suggestions — but as scheduled they do not. See "Known scheduling gaps".
 - **Weekly report at Sun 7:00 PM ET**: end-of-week summary lands while
   Wes is most likely to read it.
+
+## Known scheduling gaps
+
+Open items from the 2026-08 digest QA pass. Both need a decision, not just
+a patch, so they are recorded here rather than silently changed.
+
+### 1. The Sunday chain runs in the wrong order
+
+| Job | UTC | ET (EDT) |
+|-----|-----|----------|
+| `weekly-report` | Sun 23:00 | **Sun 7:00 PM** |
+| `tax-harvest` | Mon 00:00 | **Sun 8:00 PM** |
+| `coach-review` | Mon 01:00 | **Sun 9:00 PM** |
+
+`0 0 * * 1` and `0 1 * * 1` read as "Monday" but land on Sunday evening ET,
+one and two hours *after* the report they are supposed to feed. So the
+weekly report has always summarised last week's harvest suggestions.
+
+Fix is to move the two feeders ahead of the report, e.g. `0 21 * * 0`
+(5 PM ET Sun) for tax-harvest and `0 22 * * 0` (6 PM ET Sun) for
+coach-review. **This is not a pure schedule change**: both engines derive
+their `week_of` key from the server's UTC weekday
+(`tax-harvest-engine.ts:weekOfISO`, `coach-engine.ts:persistCoachReview`),
+so moving the fire from UTC-Monday to UTC-Sunday shifts `week_of` back by
+seven days and orphans the existing rows the `/tax/harvest/weekly` and
+`/journal/coach` pages read. Anchor both helpers to ET *first*, then move
+the schedules.
+
+### 2. Every schedule drifts an hour with DST
+
+Vercel cron has no timezone support, so the UTC expressions here are fixed
+while ET is not. From the first Sunday in November to the second Sunday in
+March, everything fires an hour earlier than the ET column says: the
+morning push at 5:30 AM, the market-open briefing at 8:30 AM (an hour
+*before* the open it is meant to accompany), the EOD snapshot at 5:00 PM.
+
+`node scripts/qa-digests.mjs` prints the current and post-transition ET
+time for every job. There is no fix inside Vercel cron — the options are to
+accept the drift, or to have each handler no-op when it fires at the wrong
+ET hour and add a second UTC schedule for the other half of the year.
 
 ## Idempotency notes
 
@@ -77,6 +118,47 @@ When adding a new cron, the rule is: if it has fan-out side effects
 (email, push, network mutation), it MUST be idempotent. The
 `tryClaimCronRun(jobName, runKey)` + `markCronRunComplete()` pattern in
 `src/lib/cron-idempotency.ts` is the boilerplate.
+
+Two further rules, both learned the hard way in the 2026-08 QA pass:
+
+1. **Vercel cron dispatches GET.** A route whose work lives only in POST is
+   registered, listed in the Vercel dashboard, and never runs. If GET also
+   serves a human read path, gate the cron branch with
+   `cronIsAuthorized(req, { allowSessionCookie: false })` — otherwise an
+   ordinary logged-in browser request is indistinguishable from a cron.
+2. **Await every fan-out.** Vercel can freeze the function instance the
+   moment the response is returned, so an unawaited
+   `sendResendEmail(...).catch(() => {})` delivers non-deterministically.
+   Await it, check `.ok`, and ping Healthchecks `fail` when it isn't.
+
+`src/lib/__tests__/cron-contract-qa.test.ts` enforces all of the above
+statically against `vercel.json`, so a new cron that breaks one of these
+fails CI rather than going quiet in production.
+
+## Verifying that digests actually fire
+
+```bash
+node scripts/qa-digests.mjs            # static audit + next fire times (UTC and ET)
+node scripts/qa-digests.mjs --probe    # live: every cron answers 401 to a bad token
+CRON_SECRET=... node scripts/qa-digests.mjs --dry-run   # compose digests, send nothing
+```
+
+Evidence of past runs lives in two tables:
+
+```sql
+-- Did each weekly job claim and complete its slot?
+SELECT job_name, run_key, claimed_at, completed_at, result
+FROM cron_runs ORDER BY claimed_at DESC LIMIT 20;
+
+-- Did the email actually leave? ('failed' / 'rejected_*' rows are the
+-- interesting ones — those are digests that were composed but not delivered.)
+SELECT sent_at, to_addr, subject, outcome, error
+FROM email_send_log ORDER BY sent_at DESC LIMIT 20;
+```
+
+A `cron_runs` row with `completed_at IS NULL` is a run that started and then
+threw or failed to send. A missing row entirely means the cron never fired —
+check Vercel → Cron Jobs, then `CRON_SECRET`.
 
 ## Removing or rescheduling a cron
 

@@ -32,6 +32,21 @@ const ENV_VARS: EnvVar[] = [
   { name: 'OPENWEATHER_API_KEY', required: false, phase: 2, description: 'OpenWeatherMap weather data' },
   { name: 'NEWSAPI_KEY', required: false, phase: 2, description: 'NewsAPI headlines' },
   { name: 'GNEWS_API_KEY', required: false, phase: 2, description: 'GNews global news' },
+
+  // Digest delivery chain (2026-08 QA).
+  //
+  // D8: none of these were tracked, so /api/env-check reported a healthy
+  // environment while every scheduled digest was silently dropping. An unset
+  // RESEND_FROM_EMAIL makes sendResendEmail() return
+  // `{ ok: false, error: 'RESEND not configured' }` and no email ever leaves
+  // the building; an unset CRON_SECRET makes cronIsAuthorized() fail closed
+  // and 401 every single Vercel cron fire. Both are invisible without this.
+  { name: 'CRON_SECRET', required: true, phase: 0, description: 'Bearer token Vercel cron authenticates with — unset means EVERY cron 401s (fails closed)' },
+  { name: 'SESSION_SECRET', required: true, phase: 0, description: 'JWT signing secret for gt-auth sessions' },
+  { name: 'RESEND_API_KEY', required: false, phase: 1, description: 'Resend API key — unset silently disables all digest email' },
+  { name: 'RESEND_FROM_EMAIL', required: false, phase: 1, description: 'Digest sender address — unset silently disables all digest email' },
+  { name: 'RESEND_TO_EMAIL', required: false, phase: 1, description: 'Default digest recipient' },
+  { name: 'HEALTHCHECKS_PING_KEY', required: false, phase: 1, description: 'Healthchecks.io deadman pings — unset means a cron that stops firing never alerts' },
 ];
 
 export interface EnvCheckResult {

@@ -311,11 +311,19 @@ export async function persistAlertCandidates(candidates: StormAlertCandidate[]):
       },
     });
 
-    // Fire email (best-effort, no-op without RESEND_API_KEY).
-    sendResendEmail({
+    // Awaited, not fire-and-forget. D2 (2026-08 digest QA): this used to be
+    // `sendResendEmail({...}).catch(() => {})`, so on Vercel the instance
+    // could be frozen the moment the storm-watch cron returned, killing the
+    // in-flight send. Still best-effort (a no-op without RESEND_API_KEY, and
+    // a failure must not abort the remaining alerts) — but now the outcome
+    // is at least visible in the logs and the email_send_log table.
+    const emailResult = await sendResendEmail({
       subject: `Storm Watch — ${c.storm_name} ${c.threat_level.toUpperCase()}`,
       text: `NOAA NHC ${c.storm_name} (${c.category}) is now ${c.threat_level} on ${c.impacted_territory_ids.length} Seacoast FL territory(ies).\n\n${c.suggested_sizing_notes}\n\nTerritories: ${c.impacted_territory_ids.join(', ')}\nImpacted ZIPs: ${c.impacted_zips.length}\n\nLong basket: ${c.recommended_long_basket.join(', ')}\nShort basket: ${c.recommended_short_basket.join(', ')}`,
-    }).catch(() => {});
+    });
+    if (!emailResult.ok) {
+      console.error(`[storm-engine] alert email failed for ${c.storm_id}:`, emailResult.error);
+    }
   }
 
   return { created, unchanged };

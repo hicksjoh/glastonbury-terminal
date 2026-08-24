@@ -30,6 +30,15 @@ export interface CronAuthOptions {
    * this header (tax-harvest, coach-review).
    */
   allowInternalKey?: boolean;
+  /**
+   * Whether a valid `gt-auth` session JWT counts as cron authorization.
+   * Defaults to true (a logged-in Wes can hand-fire any cron from the
+   * browser). Set false on a route where the SAME verb serves both a cron
+   * and a human read path — /api/portfolio/snapshot GET — so that a normal
+   * browser request isn't misread as a cron trigger and made to perform
+   * the cron's side effects.
+   */
+  allowSessionCookie?: boolean;
 }
 
 export async function cronIsAuthorized(
@@ -60,7 +69,10 @@ export async function cronIsAuthorized(
   }
 
   // gt-auth cookie path — must be a valid signed JWT, not just present.
-  const cookie = req.cookies.get(SESSION_COOKIE_NAME);
+  // Opt-out for routes that multiplex a cron and a human GET on one verb.
+  const cookie = opts.allowSessionCookie === false
+    ? undefined
+    : req.cookies.get(SESSION_COOKIE_NAME);
   if (cookie?.value) {
     const payload = await verifySessionJwt(cookie.value);
     if (payload) return true;

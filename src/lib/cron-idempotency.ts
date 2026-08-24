@@ -55,18 +55,39 @@ export interface CronClaimOptions {
 }
 
 /**
- * Attempt to claim the run slot for (jobName, runKey).
- * Returns true exactly once per slot within the stale window.
+ * Why a claim attempt did not result in a run.
  *
- * Failure mode is configurable via `onRpcError`. Default 'open' preserves
- * the original behavior — better to risk a duplicate than to silently
- * miss the run.
+ * `already_claimed` and `rpc_error` are very different operationally and
+ * used to be indistinguishable to callers — both just returned `false`.
+ * That mattered: a fail-closed cron (weekly-report) whose claim RPC is
+ * missing — because `20260506_cron_run_idempotency.sql` was never applied
+ * — skips *every* week and reports `{ ok: true, skipped: ... }` while doing
+ * so. A digest that has silently never sent looks exactly like a digest
+ * that correctly deduped. Callers should treat `rpc_error` as a failure:
+ * ping Healthchecks 'fail' and log an error, don't return a cheerful 200.
  */
-export async function tryClaimCronRun(
+export type CronClaimReason = 'claimed' | 'already_claimed' | 'rpc_error';
+
+export interface CronClaimResult {
+  claimed: boolean;
+  reason: CronClaimReason;
+  /** Present when reason === 'rpc_error'. */
+  error?: string;
+}
+
+/**
+ * Attempt to claim the run slot for (jobName, runKey), reporting *why*
+ * when the claim doesn't succeed.
+ *
+ * Failure mode on RPC error is configurable via `onRpcError`. Default
+ * 'open' preserves the original behavior — better to risk a duplicate than
+ * to silently miss the run.
+ */
+export async function claimCronRun(
   jobName: string,
   runKey: string,
   opts: CronClaimOptions = {},
-): Promise<boolean> {
+): Promise<CronClaimResult> {
   const supabase = createServiceClient();
   const { data, error } = await supabase.rpc('try_claim_cron_run', {
     p_job_name: jobName,
@@ -79,9 +100,24 @@ export async function tryClaimCronRun(
       `[cron-idempotency] try_claim_cron_run failed for ${jobName}/${runKey}; failing ${mode.toUpperCase()}:`,
       error.message,
     );
-    return mode === 'open';
+    return { claimed: mode === 'open', reason: 'rpc_error', error: error.message };
   }
-  return data === true;
+  return data === true
+    ? { claimed: true, reason: 'claimed' }
+    : { claimed: false, reason: 'already_claimed' };
+}
+
+/**
+ * Boolean-only wrapper around {@link claimCronRun}. Prefer `claimCronRun`
+ * in any cron that fans out, so an unapplied migration can be reported as
+ * the failure it is rather than swallowed as a successful dedup.
+ */
+export async function tryClaimCronRun(
+  jobName: string,
+  runKey: string,
+  opts: CronClaimOptions = {},
+): Promise<boolean> {
+  return (await claimCronRun(jobName, runKey, opts)).claimed;
 }
 
 /**

@@ -4,15 +4,21 @@ import { createServiceClient } from '@/lib/supabase';
 import { pingHealthcheck } from '@/lib/healthchecks';
 import { verifySessionJwt, SESSION_COOKIE_NAME } from '@/lib/session';
 import { cronIsAuthorized } from '@/lib/cron-auth';
+import { todayKeyET } from '@/lib/cron-idempotency';
 
 const HC_SLUG = 'portfolio-snapshot';
 
-// ─── POST: Take a snapshot of current portfolio state ─────
-export async function POST(req: NextRequest) {
-  if (!(await cronIsAuthorized(req, { routeName: 'portfolio-snapshot' }))) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  }
-
+// ─── Take a snapshot of current portfolio state ───────────
+// Shared by POST (manual/external trigger) and by the cron branch of GET.
+//
+// D1 (2026-08 digest QA): this body used to live only in POST. vercel.json
+// registers `/api/portfolio/snapshot` on `0 22 * * 1-5`, but Vercel cron
+// dispatches **GET** — which landed on the session-gated read path below
+// and 401'd on every weekday fire. The cron had never taken a snapshot,
+// and because pingHealthcheck() was unreachable from GET the Healthchecks
+// check was never even created (`?create=1` fires on first ping), so the
+// deadman alarm that should have caught this never existed either.
+async function takeSnapshot(): Promise<NextResponse> {
   await pingHealthcheck(HC_SLUG, 'start');
 
   try {
@@ -53,7 +59,10 @@ export async function POST(req: NextRequest) {
     const cashReserves = assetsByClass['cash'] || 0;
     const netWorth = equity + cr3Value + rsuValue + propertyValue + cashReserves;
 
-    const today = new Date().toISOString().split('T')[0];
+    // ET, not UTC. The 22:00 UTC cron lands at 17:00/18:00 ET so both
+    // agree for scheduled runs, but a manual evening POST (after 00:00 UTC
+    // = 19:00/20:00 ET) used to be filed under the *next* day.
+    const today = todayKeyET();
 
     // Upsert (one snapshot per day)
     const { data, error } = await supabase
@@ -107,11 +116,36 @@ export async function POST(req: NextRequest) {
   }
 }
 
-// ─── GET: Retrieve historical snapshots for charting ──────
-// NOTE: This route is in PUBLIC_API_ROUTES so middleware can let cron POSTs
-// through (they auth via CRON_SECRET below). For human GET traffic we therefore
-// must verify the session JWT here ourselves — middleware never sees us.
+// ─── POST: manual / external snapshot trigger ─────────────
+export async function POST(req: NextRequest) {
+  if (!(await cronIsAuthorized(req, { routeName: 'portfolio-snapshot' }))) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  }
+  return takeSnapshot();
+}
+
+// ─── GET: cron trigger, or historical snapshots for charting ──
+//
+// This verb is multiplexed. Vercel cron GETs with `Authorization: Bearer
+// $CRON_SECRET` take a snapshot; everything else is the human read path.
+//
+// `allowSessionCookie: false` is load-bearing: cronIsAuthorized() normally
+// accepts a valid gt-auth JWT as proof, which would make every ordinary
+// browser fetch of the equity chart write a snapshot row instead of
+// returning one.
+//
+// NOTE: This route is in PUBLIC_ROUTES so middleware lets the cron through
+// (it has no session cookie). Middleware therefore never authenticates
+// human GETs either, so we verify the session JWT ourselves below.
 export async function GET(req: NextRequest) {
+  const isCron = await cronIsAuthorized(req, {
+    routeName: 'portfolio-snapshot',
+    allowSessionCookie: false,
+  });
+  if (isCron) {
+    return takeSnapshot();
+  }
+
   const authCookie = req.cookies.get(SESSION_COOKIE_NAME);
   const session = await verifySessionJwt(authCookie?.value);
   if (!session) {

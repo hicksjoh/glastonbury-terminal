@@ -6,7 +6,8 @@ import { sendResendEmail } from '@/lib/resend-client';
 import { pingHealthcheck } from '@/lib/healthchecks';
 import { createServiceClient } from '@/lib/supabase';
 import { cronIsAuthorized } from '@/lib/cron-auth';
-import { tryClaimCronRun, markCronRunComplete, thisWeekKeyET } from '@/lib/cron-idempotency';
+import { claimCronRun, markCronRunComplete, thisWeekKeyET } from '@/lib/cron-idempotency';
+import { captureRouteError } from '@/lib/api-error';
 import { loggerFor } from '@/lib/request-id';
 
 // F13 — Weekly Sunday 7 PM ET auto-email report.
@@ -166,9 +167,29 @@ async function handle(req: NextRequest): Promise<NextResponse> {
     // p6-9: fail-CLOSED on RPC error. If Supabase is down or the
     // cron_runs migration hasn't been applied, we'd rather miss this
     // week's email entirely than send it twice (Resend → real inbox).
-    const claimed = await tryClaimCronRun(JOB_NAME, runKey, { onRpcError: 'closed' });
-    if (!claimed) {
-      log.info({ run_key: runKey, outcome: 'skipped_idempotent_or_rpc_err' }, 'weekly report skipped — already ran or claim RPC failed');
+    const claim = await claimCronRun(JOB_NAME, runKey, { onRpcError: 'closed' });
+
+    // D4 (2026-08 digest QA): 'already ran' and 'the claim RPC is broken'
+    // both used to return `{ ok: true, skipped }`. Fail-closed + an
+    // unapplied 20260506_cron_run_idempotency.sql therefore skips the report
+    // EVERY week while reporting success — a digest that has silently never
+    // sent, indistinguishable from one that correctly deduped. Now the RPC
+    // error goes red on Healthchecks and returns 500.
+    if (claim.reason === 'rpc_error') {
+      await pingHealthcheck(HC_SLUG, 'fail');
+      const eventId = captureRouteError(
+        new Error(`weekly-report claim RPC failed: ${claim.error ?? 'unknown'}`),
+        { request_id, route: 'cron/weekly-report', run_key: runKey },
+      );
+      log.error({ run_key: runKey, err: claim.error ?? null, sentry_event_id: eventId }, 'weekly report claim RPC failed — skipping to avoid a double send');
+      return NextResponse.json(
+        { ok: false, error: 'cron claim RPC failed', sentry_event_id: eventId, runKey },
+        { status: 500, headers: { 'x-request-id': request_id } },
+      );
+    }
+
+    if (!claim.claimed) {
+      log.info({ run_key: runKey, outcome: 'skipped_idempotent' }, 'weekly report skipped — already ran this week');
       return NextResponse.json({ ok: true, skipped: 'already_ran_this_week', runKey }, { headers: { 'x-request-id': request_id } });
     }
   }
