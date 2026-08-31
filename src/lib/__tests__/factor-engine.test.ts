@@ -49,6 +49,31 @@ describe('analyzeFactorExposure — empty and degenerate input', () => {
   });
 });
 
+describe('analyzeFactorExposure — short positions', () => {
+  it('keeps a short position instead of dropping it', () => {
+    // /api/factors passes Alpaca's signed market_value straight through,
+    // so a short book has negative weights. Filtering them out reports
+    // the long leg as 100% of the portfolio — plausible and wrong.
+    const longOnly = analyzeFactorExposure([H({ weight: 10_000, beta: 1.5 })]);
+    const longShort = analyzeFactorExposure([
+      H({ symbol: 'A', weight: 10_000, beta: 1.5 }),
+      H({ symbol: 'B', weight: -4_000, beta: 2.0 }),
+    ]);
+    expect(longShort.exposures.market).not.toBe(longOnly.exposures.market);
+    expect(Number.isFinite(longShort.exposures.market)).toBe(true);
+  });
+
+  it('nets a short against a long the way it did before the finiteness fix', () => {
+    // net weight = 10000 - 4000 = 6000
+    // market = (10000/6000)*1.0 + (-4000/6000)*2.0 = 1.6667 - 1.3333 = 0.33
+    const r = analyzeFactorExposure([
+      H({ symbol: 'A', weight: 10_000, beta: 1.0 }),
+      H({ symbol: 'B', weight: -4_000, beta: 2.0 }),
+    ]);
+    expect(r.exposures.market).toBeCloseTo(0.33, 2);
+  });
+});
+
 describe('analyzeFactorExposure — weight normalisation', () => {
   it('normalises weights, so absolute scale does not matter', () => {
     const a = analyzeFactorExposure([H({ weight: 1, beta: 1.5 }), H({ weight: 1, beta: 0.5 })]);

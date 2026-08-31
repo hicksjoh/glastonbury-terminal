@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { equilibriumReturns, blackLitterman, efficientFrontier, View } from '@/lib/black-litterman';
-import { correlationMatrix } from '@/lib/correlation';
+import { correlationMatrix, isUsableReturnSeries } from '@/lib/correlation';
 import { anthropic, CLAUDE_MODEL_FALLBACK } from '@/lib/claude';
 import { tagAnthropicCall } from '@/lib/anthropic-cost';
 import { getHistoricalPrices } from '@/lib/fmp-client';
@@ -30,7 +30,11 @@ interface FMPHistoricalEntry {
 function calculateDailyReturns(prices: number[]): number[] {
   const returns: number[] = [];
   for (let i = 1; i < prices.length; i++) {
-    returns.push((prices[i] - prices[i - 1]) / prices[i - 1]);
+    // A zero or non-finite close would emit Infinity/NaN, which then
+    // poisons the covariance matrix, the Cholesky decomposition and
+    // every posterior weight downstream.
+    const ret = (prices[i] - prices[i - 1]) / prices[i - 1];
+    if (Number.isFinite(ret)) returns.push(ret);
   }
   return returns;
 }
@@ -227,9 +231,25 @@ export async function POST(request: NextRequest) {
     const allPrices = await Promise.all(pricePromises);
     const allReturns = allPrices.map((prices) => calculateDailyReturns(prices));
 
+    // Drop any symbol whose history we cannot use, rather than letting
+    // one bad series either throw out of correlationMatrix or be papered
+    // over as an uncorrelated zero.
+    const usableIdx = allReturns
+      .map((r, i) => (isUsableReturnSeries(r) && r.length > 1 ? i : -1))
+      .filter((i) => i >= 0);
+    if (usableIdx.length < 2) {
+      return NextResponse.json(
+        { error: 'Insufficient usable price history to optimize this portfolio' },
+        { status: 422 },
+      );
+    }
+    symbols = usableIdx.map((i) => symbols[i]);
+    marketWeights = usableIdx.map((i) => marketWeights[i]);
+    const usableReturns = usableIdx.map((i) => allReturns[i]);
+
     // Align return lengths (use minimum length across all assets)
-    const minLen = Math.min(...allReturns.map((r) => r.length));
-    const alignedReturns = allReturns.map((r) => r.slice(r.length - minLen));
+    const minLen = Math.min(...usableReturns.map((r) => r.length));
+    const alignedReturns = usableReturns.map((r) => r.slice(r.length - minLen));
 
     // 3-5. Calculate covariance matrix and equilibrium returns
     const dailyCov = calculateCovarianceMatrix(alignedReturns);

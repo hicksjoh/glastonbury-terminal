@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { pearsonCorrelation, correlationMatrix, diversificationScore, alignReturnSeries } from '@/lib/correlation';
+import { pearsonCorrelation, correlationMatrix, diversificationScore, alignReturnSeries, isUsableReturnSeries } from '@/lib/correlation';
 import { getHistoricalPrices } from '@/lib/fmp-client';
 
 const FMP_KEY = process.env.FMP_API_KEY;
@@ -36,12 +36,19 @@ export async function GET(req: NextRequest) {
       const prices = historical.reverse().map((d: { close: number }) => d.close);
       const returns: number[] = [];
       for (let j = 1; j < prices.length; j++) {
-        if (prices[j - 1] > 0) {
-          returns.push((prices[j] - prices[j - 1]) / prices[j - 1]);
+        // The previous check only tested prices[j - 1]. A NaN close at
+        // prices[j] produced a NaN return, which correlationMatrix used
+        // to paper over as a 0 — i.e. "uncorrelated" — inflating the
+        // diversification score from unusable data.
+        if (prices[j - 1] > 0 && Number.isFinite(prices[j])) {
+          const ret = (prices[j] - prices[j - 1]) / prices[j - 1];
+          if (Number.isFinite(ret)) returns.push(ret);
         }
       }
 
-      if (returns.length > 5) {
+      // A symbol whose history we cannot use is EXCLUDED from the
+      // matrix, not fabricated as uncorrelated with everything.
+      if (returns.length > 5 && isUsableReturnSeries(returns)) {
         allReturns.push(returns);
         validSymbols.push(symbols[i]);
       }
@@ -80,8 +87,9 @@ export async function GET(req: NextRequest) {
             const spyPrices = spyHist.reverse().map((d: { close: number }) => d.close);
             const spyReturns: number[] = [];
             for (let j = 1; j < spyPrices.length; j++) {
-              if (spyPrices[j - 1] > 0) {
-                spyReturns.push((spyPrices[j] - spyPrices[j - 1]) / spyPrices[j - 1]);
+              if (spyPrices[j - 1] > 0 && Number.isFinite(spyPrices[j])) {
+                const ret = (spyPrices[j] - spyPrices[j - 1]) / spyPrices[j - 1];
+                if (Number.isFinite(ret)) spyReturns.push(ret);
               }
             }
 

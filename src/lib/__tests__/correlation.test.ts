@@ -142,6 +142,14 @@ describe('correlationMatrix', () => {
     expect(m[0][1]).toBeCloseTo(1, 12);
   });
 
+  it('THROWS on a non-finite observation rather than substituting 0', () => {
+    // Returning 0 for an uncomputable pair reads downstream as "these two
+    // are uncorrelated", which INFLATES diversificationScore — a
+    // confident number manufactured from unusable data. The caller must
+    // drop the bad series, not be handed a fabricated correlation.
+    expect(() => correlationMatrix([[1, 2, Number.NaN, 4], [1, 2, 3, 4]])).toThrow(/finite/i);
+  });
+
   it('never emits NaN, even for zero-variance or single-observation series', () => {
     const m = correlationMatrix([[1, 1, 1, 1], [1, 2, 3, 4], [4, 3, 2, 1]]);
     for (const row of m) for (const v of row) expect(Number.isFinite(v)).toBe(true);

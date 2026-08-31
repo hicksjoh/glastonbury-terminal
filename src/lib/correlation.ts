@@ -26,6 +26,16 @@ export function alignReturnSeries(returns: number[][]): number[][] {
 }
 
 /**
+ * True when every observation in a return series is usable. Callers
+ * building a matrix from per-symbol histories should drop the symbols
+ * that fail this rather than letting one bad series either throw or —
+ * worse — be papered over with a fabricated zero correlation.
+ */
+export function isUsableReturnSeries(series: number[]): boolean {
+  return Array.isArray(series) && series.every(isFiniteNumber);
+}
+
+/**
  * Pearson correlation between two equal-length arrays of returns.
  *
  * @throws if the arrays differ in length (mismatched inputs cannot be
@@ -86,14 +96,13 @@ export function correlationMatrix(returns: number[][]): number[][] {
   for (let i = 0; i < n; i++) {
     matrix[i][i] = 1.0;
     for (let j = i + 1; j < n; j++) {
-      let corr: number;
-      try {
-        corr = pearsonCorrelation(aligned[i], aligned[j]);
-      } catch {
-        // A single bad series must not take down the whole matrix; an
-        // uncomputable pair is reported as "no known relationship".
-        corr = 0;
-      }
+      // Deliberately NOT wrapped in a try/catch. Substituting 0 for an
+      // uncomputable pair reads downstream as "these two are
+      // uncorrelated", which INFLATES diversificationScore — a confident
+      // number manufactured from unusable data. Callers must drop the
+      // bad series (see usableReturnSeries) rather than be handed a
+      // fabricated correlation.
+      const corr = pearsonCorrelation(aligned[i], aligned[j]);
       matrix[i][j] = corr;
       matrix[j][i] = corr;
     }

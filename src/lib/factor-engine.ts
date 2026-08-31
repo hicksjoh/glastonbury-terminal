@@ -40,11 +40,16 @@ export function analyzeFactorExposure(holdings: HoldingInput[]): FactorAnalysis 
     return emptyAnalysis('No holdings provided');
   }
 
-  // Drop holdings whose weight is not a usable number BEFORE summing.
+  // Drop holdings whose weight is not a usable NUMBER before summing.
   // `totalWeight < 0.01` is false when totalWeight is NaN, so a single
   // bad weight skipped the guard entirely and turned every exposure,
   // R-squared and tracking-error figure into NaN.
-  const usable = holdings.filter(h => Number.isFinite(h.weight) && h.weight > 0);
+  //
+  // Negative weights are KEPT: /api/factors passes Alpaca's signed
+  // market_value straight through, so a short position legitimately
+  // arrives negative and must net against the longs. Filtering on
+  // `> 0` would report the long leg as 100% of the book.
+  const usable = holdings.filter(h => Number.isFinite(h.weight));
   if (usable.length === 0) return emptyAnalysis('Holdings have zero weight');
 
   const totalWeight = usable.reduce((sum, h) => sum + h.weight, 0);

@@ -186,8 +186,21 @@ export function choleskyDecomposition(matrix: number[][]): number[][] {
         }
         L[i][j] = diag > 0 ? Math.sqrt(diag) : 0;
       } else if (L[j][j] === 0) {
-        // Rank-deficient column: the standard PSD convention is 0, not a
-        // division by (near) zero that explodes to +/-Infinity.
+        // A zero pivot is legitimate ONLY when the numerator vanishes too
+        // — that is genuine rank deficiency, and the standard PSD
+        // convention zeroes the column. A zero pivot with a NONZERO
+        // residual means the matrix is indefinite: silently zeroing it
+        // would discard that residual and return an L whose L*L^T is not
+        // the input at all. [[0,1],[1,1]] (determinant -1) is the
+        // smallest example.
+        const residual = matrix[i][j] - sum;
+        if (Math.abs(residual) > pivotTol) {
+          throw new NotPositiveDefiniteError(
+            `choleskyDecomposition: matrix is not positive-definite — zero pivot at index ${j} ` +
+              `with non-zero residual ${residual} at [${i}][${j}]. The decomposition would not ` +
+              'reconstruct the input, so every risk number derived from it would be meaningless.',
+          );
+        }
         L[i][j] = 0;
       } else {
         L[i][j] = (matrix[i][j] - sum) / L[j][j];

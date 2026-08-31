@@ -127,6 +127,27 @@ describe('choleskyDecomposition — REJECTS what it cannot decompose', () => {
     for (const row of L) for (const v of row) expect(Number.isFinite(v)).toBe(true);
   });
 
+  it('throws when a zero pivot has a NONZERO residual (indefinite, not merely rank-deficient)', () => {
+    // [[0,1],[1,1]] has determinant -1, so it is indefinite. The first
+    // pivot is 0; naively zeroing the rest of that column discards the
+    // residual 1 and returns [[0,0],[0,1]], whose L*L^T is NOT the input.
+    // Zeroing a column is only legitimate when the numerator is zero too.
+    expect(() => choleskyDecomposition([[0, 1], [1, 1]])).toThrow(NotPositiveDefiniteError);
+    expect(() => choleskyDecomposition([[0, 2], [2, 0]])).toThrow(NotPositiveDefiniteError);
+  });
+
+  it('every accepted matrix genuinely reconstructs (L * L^T === input)', () => {
+    // The real contract behind the PSD allowance.
+    const accepted = [
+      [[9]], [[0]], [[1, 0], [0, 1]], [[1, 1], [1, 1]], [[4, 2], [2, 3]],
+      [[0, 0], [0, 1]], [[1, 1, 1], [1, 1, 1], [1, 1, 1]],
+      [[25, 15, -5], [15, 18, 0], [-5, 0, 11]],
+    ];
+    for (const A of accepted) {
+      expectMatrixClose(reconstruct(choleskyDecomposition(A)), A, 10);
+    }
+  });
+
   it('never emits a non-finite value for any accepted matrix', () => {
     const accepted = [[[9]], [[1, 0], [0, 1]], [[1, 1], [1, 1]], [[4, 2], [2, 3]]];
     for (const A of accepted) {

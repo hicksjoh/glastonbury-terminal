@@ -93,10 +93,18 @@ export function bsPrice(
   if (K === 0) return type === 'call' ? S : 0;
 
   const { d1, d2 } = d1d2(S, K, T, r, sigma);
-  if (type === 'call') {
-    return S * normalCDF(d1) - K * Math.exp(-r * T) * normalCDF(d2);
+  const price = type === 'call'
+    ? S * normalCDF(d1) - K * Math.exp(-r * T) * normalCDF(d2)
+    : K * Math.exp(-r * T) * normalCDF(-d2) - S * normalCDF(-d1);
+
+  // Finite inputs can still overflow — e.g. r = -1000 makes e^(-rT)
+  // Infinity. An Infinite price is as useless to a caller as a NaN one.
+  if (!isFiniteNumber(price)) {
+    throw new Error(
+      `black-scholes: inputs produced a non-finite price (S=${S}, K=${K}, T=${T}, r=${r}, sigma=${sigma}).`,
+    );
   }
-  return K * Math.exp(-r * T) * normalCDF(-d2) - S * normalCDF(-d1);
+  return price;
 }
 
 /**
@@ -188,8 +196,13 @@ export function bsRho(
 // Implied volatility
 // ---------------------------------------------------------------------------
 
-/** Widest volatility the solver will search. 500% annualised. */
-const IV_MAX = 5;
+/**
+ * Widest volatility the solver will search: 1000% annualised, far beyond
+ * anything a real listed option trades at. It is deliberately wider than
+ * the 500% the old solver clamped to, because a strict endpoint
+ * rejection at the ceiling threw away exact roots that sat ON it.
+ */
+const IV_MAX = 10;
 /** Narrowest. Below this an option is priced at its forward intrinsic. */
 const IV_MIN = 1e-6;
 
@@ -240,7 +253,13 @@ export function impliedVolatility(
   let hi = IV_MAX;
   const priceLo = bsPrice(S, K, T, r, lo, type);
   const priceHi = bsPrice(S, K, T, r, hi, type);
-  if (marketPrice <= priceLo || marketPrice >= priceHi) return null;
+  // A price exactly AT an endpoint has that endpoint as its exact root,
+  // so accept it rather than rejecting the boundary. Outside the bracket
+  // the volatility is beyond the model range: report null, never a
+  // pinned bound dressed up as a solved value.
+  if (marketPrice < priceLo || marketPrice > priceHi) return null;
+  if (marketPrice === priceLo) return lo;
+  if (marketPrice === priceHi) return hi;
 
   // --- 4: safeguarded Newton -------------------------------------------
   let sigma = Math.min(hi, Math.max(lo, Math.sqrt((2 * Math.PI) / T) * (marketPrice / S)));

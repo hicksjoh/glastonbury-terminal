@@ -356,6 +356,9 @@ describe('black-scholes — degenerate inputs never leak NaN', () => {
     expect(() => bsPrice(100, 100, -1, 0.05, 0.2, 'call')).toThrow(/negative|positive/i);
     expect(() => bsPrice(100, 100, 1, 0.05, -0.2, 'call')).toThrow(/negative|positive/i);
     expect(() => bsGamma(Number.NaN, 100, 1, 0.05, 0.2)).toThrow(/finite/i);
+    // A finite input that overflows to a non-finite PRICE is just as
+    // useless to a caller as a NaN input.
+    expect(() => bsPrice(100, 100, 1, -1000, 0.2, 'put')).toThrow(/finite/i);
   });
 });
 
@@ -446,6 +449,25 @@ describe('impliedVolatility — a returned IV must reprice to the input price', 
         expect(Number.isFinite(iv)).toBe(true);
       }
     }
+  });
+
+  it('recovers a very high but legitimate volatility', () => {
+    // A strict `marketPrice >= priceHi` rejection at a 500% ceiling threw
+    // away exact roots AT the ceiling.
+    for (const sigma of [2, 3, 5]) {
+      const price = bsPrice(100, 100, 1, 0.05, sigma, 'call');
+      const iv = impliedVolatility(price, 100, 100, 1, 0.05, 'call');
+      expect(iv, `sigma=${sigma}`).not.toBeNull();
+      expect(iv!).toBeCloseTo(sigma, 4);
+    }
+  });
+
+  it('returns null above the model range rather than pinning to the ceiling', () => {
+    const price = bsPrice(100, 100, 1, 0.05, 20, 'call');
+    const iv = impliedVolatility(price, 100, 100, 1, 0.05, 'call');
+    // Either an accurate answer or an honest null — never a pinned bound
+    // reported as if it were solved.
+    if (iv !== null) expect(iv).toBeCloseTo(20, 2);
   });
 
   it('is monotone: a higher option price implies a higher IV', () => {
