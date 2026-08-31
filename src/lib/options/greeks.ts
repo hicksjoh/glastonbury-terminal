@@ -1,40 +1,20 @@
-// Black-Scholes Option Pricing & Greeks Calculations
-import type { GreeksResult } from './types';
-
-// Standard normal CDF approximation (Abramowitz & Stegun)
-function normCDF(x: number): number {
-  const a1 = 0.254829592;
-  const a2 = -0.284496736;
-  const a3 = 1.421413741;
-  const a4 = -1.453152027;
-  const a5 = 1.061405429;
-  const p = 0.3275911;
-
-  const sign = x < 0 ? -1 : 1;
-  x = Math.abs(x) / Math.SQRT2;
-
-  const t = 1.0 / (1.0 + p * x);
-  const y = 1.0 - ((((a5 * t + a4) * t + a3) * t + a2) * t + a1) * t * Math.exp(-x * x);
-
-  return 0.5 * (1.0 + sign * y);
-}
-
-// Standard normal PDF
-function normPDF(x: number): number {
-  return Math.exp(-0.5 * x * x) / Math.sqrt(2 * Math.PI);
-}
-
 /**
- * Calculate d1 and d2 for Black-Scholes
+ * Black-Scholes Option Pricing & Greeks — thin adapter over
+ * `src/lib/black-scholes.ts`.
+ *
+ * This file used to carry a SECOND, independent copy of the pricing
+ * model and every greek. The two agreed numerically, but duplicated
+ * math is a latent divergence: the NaN-gamma fix (raw sigma in the
+ * denominator while d1 used a clamped one) had to be applied twice, and
+ * the next fix would have been applied to only one of them.
+ *
+ * The public API here is unchanged — only the argument order differs
+ * from the canonical module, which is why the adapter exists at all.
  */
-function calcD1D2(S: number, K: number, T: number, r: number, sigma: number): [number, number] {
-  // Guard against zero volatility or zero time (division by zero)
-  const s = Math.max(sigma, 0.001);
-  const t = Math.max(T, 0.0001);
-  const d1 = (Math.log(S / K) + (r + 0.5 * s * s) * t) / (s * Math.sqrt(t));
-  const d2 = d1 - s * Math.sqrt(t);
-  return [d1, d2];
-}
+import type { GreeksResult } from './types';
+import {
+  bsPrice, bsDelta, bsGamma, bsTheta, bsVega, bsRho, impliedVolatility,
+} from '../black-scholes';
 
 /**
  * Black-Scholes option price
@@ -48,109 +28,43 @@ function calcD1D2(S: number, K: number, T: number, r: number, sigma: number): [n
 export function blackScholesPrice(
   S: number, K: number, T: number, r: number, sigma: number, type: 'call' | 'put'
 ): number {
-  if (T <= 0) {
-    // At or past expiration — intrinsic value only
-    return type === 'call' ? Math.max(S - K, 0) : Math.max(K - S, 0);
-  }
-
-  const [d1, d2] = calcD1D2(S, K, T, r, sigma);
-
-  if (type === 'call') {
-    return S * normCDF(d1) - K * Math.exp(-r * T) * normCDF(d2);
-  } else {
-    return K * Math.exp(-r * T) * normCDF(-d2) - S * normCDF(-d1);
-  }
+  return bsPrice(S, K, T, r, sigma, type);
 }
 
 /**
- * Calculate all Greeks for an option
+ * Calculate all Greeks for an option. Theta is per calendar day; vega
+ * and rho are per 1 percentage point.
  */
 export function calculateGreeks(
   S: number, K: number, T: number, r: number, sigma: number, type: 'call' | 'put'
 ): GreeksResult {
-  if (T <= 0) {
-    const intrinsic = type === 'call' ? Math.max(S - K, 0) : Math.max(K - S, 0);
-    const itm = type === 'call' ? S > K : S < K;
-    return {
-      price: intrinsic,
-      delta: itm ? (type === 'call' ? 1 : -1) : 0,
-      gamma: 0,
-      theta: 0,
-      vega: 0,
-      rho: 0,
-    };
-  }
-
-  const [d1, d2] = calcD1D2(S, K, T, r, sigma);
-  const sqrtT = Math.sqrt(T);
-  const nd1 = normPDF(d1);
-  const Nd1 = normCDF(d1);
-  const Nd2 = normCDF(d2);
-  const expRT = Math.exp(-r * T);
-
-  const price = blackScholesPrice(S, K, T, r, sigma, type);
-
-  let delta: number;
-  let theta: number;
-  let rho: number;
-
-  if (type === 'call') {
-    delta = Nd1;
-    theta = (-S * nd1 * sigma / (2 * sqrtT)) - r * K * expRT * Nd2;
-    rho = K * T * expRT * Nd2 / 100;
-  } else {
-    delta = Nd1 - 1;
-    theta = (-S * nd1 * sigma / (2 * sqrtT)) + r * K * expRT * normCDF(-d2);
-    rho = -K * T * expRT * normCDF(-d2) / 100;
-  }
-
-  const gamma = nd1 / (S * sigma * sqrtT);
-  const vega = S * nd1 * sqrtT / 100; // Per 1% change in IV
-
   return {
-    price,
-    delta,
-    gamma,
-    theta: theta / 365, // Daily theta
-    vega,
-    rho,
+    price: bsPrice(S, K, T, r, sigma, type),
+    delta: bsDelta(S, K, T, r, sigma, type),
+    gamma: bsGamma(S, K, T, r, sigma),
+    theta: bsTheta(S, K, T, r, sigma, type),
+    vega: bsVega(S, K, T, r, sigma),
+    rho: bsRho(S, K, T, r, sigma, type),
   };
 }
 
 /**
- * Solve for implied volatility using Newton-Raphson method
- * @param marketPrice - The observed market price of the option
- * @returns Implied volatility or null if no convergence
+ * Solve for implied volatility.
+ *
+ * @returns the implied volatility, or `null` when none exists (price
+ *   outside the no-arbitrage band) or cannot be determined. It never
+ *   returns a non-converged guess — see impliedVolatility().
  */
 export function solveIV(
   S: number, K: number, T: number, r: number, marketPrice: number, type: 'call' | 'put',
-  maxIterations = 100, tolerance = 0.0001
+  maxIterations = 100, tolerance = 1e-10
 ): number | null {
-  if (T <= 0 || marketPrice <= 0) return null;
-
-  // Initial guess based on Brenner-Subrahmanyam approximation
-  let sigma = Math.sqrt(2 * Math.PI / T) * (marketPrice / S);
-  if (sigma <= 0 || !isFinite(sigma)) sigma = 0.3;
-
-  for (let i = 0; i < maxIterations; i++) {
-    const price = blackScholesPrice(S, K, T, r, sigma, type);
-    const vega = calculateGreeks(S, K, T, r, sigma, type).vega * 100; // Undo the /100
-
-    if (Math.abs(vega) < 1e-10) break; // Vega too small to adjust
-
-    const diff = price - marketPrice;
-    if (Math.abs(diff) < tolerance) return sigma;
-
-    sigma -= diff / vega;
-    if (sigma <= 0) sigma = 0.001;
-    if (sigma > 5) sigma = 5; // Cap at 500% IV
-  }
-
-  return sigma; // Return best guess even without full convergence
+  return impliedVolatility(marketPrice, S, K, T, r, type, maxIterations, tolerance);
 }
 
 /**
- * Calculate payoff at expiration for a single option leg
+ * Calculate payoff at expiration for a single option leg, in dollars
+ * (100 shares per contract).
  */
 export function optionPayoff(
   type: 'call' | 'put',
@@ -160,15 +74,26 @@ export function optionPayoff(
   isLong: boolean,
   priceAtExpiry: number
 ): number {
-  let intrinsic: number;
-  if (type === 'call') {
-    intrinsic = Math.max(priceAtExpiry - strike, 0);
-  } else {
-    intrinsic = Math.max(strike - priceAtExpiry, 0);
-  }
+  const intrinsic = type === 'call'
+    ? Math.max(priceAtExpiry - strike, 0)
+    : Math.max(strike - priceAtExpiry, 0);
 
   const sign = isLong ? 1 : -1;
-  return (intrinsic * sign - premium * (isLong ? 1 : -1)) * quantity * 100;
+  return (intrinsic - premium) * sign * quantity * 100;
+}
+
+/**
+ * Evenly spaced sample prices spanning [low, high] INCLUSIVE.
+ *
+ * Indexed rather than accumulated: `for (p = low; p <= high; p += step)`
+ * accumulates floating-point error, so whether the top of the range is
+ * sampled at all depends on rounding.
+ */
+function priceLadder(currentPrice: number, range: number, points: number): number[] {
+  const low = currentPrice * (1 - range);
+  const high = currentPrice * (1 + range);
+  const n = Math.max(1, Math.floor(points));
+  return Array.from({ length: n + 1 }, (_, i) => low + ((high - low) * i) / n);
 }
 
 /**
@@ -187,21 +112,13 @@ export function multiLegPayoff(
   range = 0.3, // ±30% from current price
   points = 100
 ): { price: number; pnl: number }[] {
-  const low = currentPrice * (1 - range);
-  const high = currentPrice * (1 + range);
-  const step = (high - low) / points;
-
-  const results: { price: number; pnl: number }[] = [];
-
-  for (let p = low; p <= high; p += step) {
+  return priceLadder(currentPrice, range, points).map((p) => {
     let totalPnl = 0;
     for (const leg of legs) {
       totalPnl += optionPayoff(leg.type, leg.strike, leg.premium, leg.quantity, leg.isLong, p);
     }
-    results.push({ price: Math.round(p * 100) / 100, pnl: Math.round(totalPnl * 100) / 100 });
-  }
-
-  return results;
+    return { price: Math.round(p * 100) / 100, pnl: Math.round(totalPnl * 100) / 100 };
+  });
 }
 
 /**
@@ -222,24 +139,16 @@ export function multiLegCurrentValue(
   range = 0.3,
   points = 100
 ): { price: number; pnl: number }[] {
-  const low = currentPrice * (1 - range);
-  const high = currentPrice * (1 + range);
-  const step = (high - low) / points;
   const now = Date.now();
 
-  const results: { price: number; pnl: number }[] = [];
-
-  for (let p = low; p <= high; p += step) {
+  return priceLadder(currentPrice, range, points).map((p) => {
     let totalPnl = 0;
     for (const leg of legs) {
       const T = Math.max((new Date(leg.expiration).getTime() - now) / (365.25 * 24 * 3600 * 1000), 0);
       const theoreticalPrice = blackScholesPrice(p, leg.strike, T, r, sigma, leg.type);
       const sign = leg.isLong ? 1 : -1;
-      const pnl = (theoreticalPrice * sign - leg.premium * (leg.isLong ? 1 : -1)) * leg.quantity * 100;
-      totalPnl += pnl;
+      totalPnl += (theoreticalPrice - leg.premium) * sign * leg.quantity * 100;
     }
-    results.push({ price: Math.round(p * 100) / 100, pnl: Math.round(totalPnl * 100) / 100 });
-  }
-
-  return results;
+    return { price: Math.round(p * 100) / 100, pnl: Math.round(totalPnl * 100) / 100 };
+  });
 }

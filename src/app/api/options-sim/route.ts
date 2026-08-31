@@ -33,9 +33,41 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'At least one leg required' }, { status: 400 });
     }
 
-    const step = priceRange.step || 1;
-    const currentDte = dteRange.current || 30;
-    const simDays = dteRange.simDays || currentDte;
+    // Validate before pricing. The Black-Scholes module now THROWS on a
+    // non-finite or negative input rather than quietly returning NaN, so
+    // an unvalidated body would surface as a 500. Malformed client input
+    // is a 400, and the caller gets told which field is wrong.
+    for (let i = 0; i < legs.length; i++) {
+      const leg = legs[i];
+      if (!Number.isFinite(leg?.strike) || leg.strike < 0) {
+        return NextResponse.json({ error: `leg[${i}].strike must be a non-negative number` }, { status: 400 });
+      }
+      if (!Number.isFinite(leg?.quantity)) {
+        return NextResponse.json({ error: `leg[${i}].quantity must be a number` }, { status: 400 });
+      }
+      if (leg.premium !== undefined && !Number.isFinite(leg.premium)) {
+        return NextResponse.json({ error: `leg[${i}].premium must be a number` }, { status: 400 });
+      }
+      if (leg.iv !== undefined && !Number.isFinite(leg.iv)) {
+        return NextResponse.json({ error: `leg[${i}].iv must be a number` }, { status: 400 });
+      }
+      if (leg.type !== 'call' && leg.type !== 'put') {
+        return NextResponse.json({ error: `leg[${i}].type must be "call" or "put"` }, { status: 400 });
+      }
+    }
+    if (!priceRange || !Number.isFinite(priceRange.min) || !Number.isFinite(priceRange.max)
+        || priceRange.min < 0 || priceRange.max < priceRange.min) {
+      return NextResponse.json(
+        { error: 'priceRange.min/max must be finite, non-negative, and min <= max' }, { status: 400 });
+    }
+    if (!Number.isFinite(ivChange)) {
+      return NextResponse.json({ error: 'ivChange must be a number' }, { status: 400 });
+    }
+
+    // A zero/NaN/negative step would loop forever or emit no grid at all.
+    const step = Number.isFinite(priceRange.step) && priceRange.step > 0 ? priceRange.step : 1;
+    const currentDte = Number.isFinite(dteRange?.current) && dteRange.current >= 0 ? dteRange.current : 30;
+    const simDays = Number.isFinite(dteRange?.simDays) && dteRange.simDays >= 0 ? dteRange.simDays : currentDte;
 
     // Default IV if not provided
     const defaultIV = 0.30;
