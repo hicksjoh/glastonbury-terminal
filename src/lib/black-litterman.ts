@@ -1,5 +1,13 @@
 // Black-Litterman Portfolio Optimizer
 // Pure TypeScript — no external dependencies
+//
+// Failure policy: malformed input THROWS. The singularity guard in
+// matrixInverse is `if (maxVal < 1e-12)`, and `NaN < 1e-12` is false, so
+// a NaN matrix used to sail straight through and every downstream
+// weight, return and risk number came out NaN — with sharpeRatio
+// reported as a confident 0, because `NaN > 1e-12` is false too.
+
+import { isFiniteNumber } from './finite';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -40,7 +48,15 @@ export interface MarketContext {
 export function matrixMultiply(a: number[][], b: number[][]): number[][] {
   const m = a.length;
   const n = b.length;
+  if (m === 0 || n === 0) return [];
   const p = b[0].length;
+  for (let i = 0; i < m; i++) {
+    if (a[i].length !== n) {
+      throw new Error(
+        `matrixMultiply: dimension mismatch — a is ${m}x${a[i].length} but b has ${n} rows.`,
+      );
+    }
+  }
   const result: number[][] = Array.from({ length: m }, () => new Array(p).fill(0));
   for (let i = 0; i < m; i++) {
     for (let j = 0; j < p; j++) {
@@ -57,6 +73,7 @@ export function matrixMultiply(a: number[][], b: number[][]): number[][] {
 /** Transpose a matrix */
 export function transposeMatrix(m: number[][]): number[][] {
   const rows = m.length;
+  if (rows === 0) return [];
   const cols = m[0].length;
   const result: number[][] = Array.from({ length: cols }, () => new Array(rows).fill(0));
   for (let i = 0; i < rows; i++) {
@@ -70,6 +87,19 @@ export function transposeMatrix(m: number[][]): number[][] {
 /** Invert a square matrix using Gauss-Jordan elimination */
 export function matrixInverse(m: number[][]): number[][] {
   const n = m.length;
+  if (n === 0) throw new Error('matrixInverse: matrix is empty.');
+  for (let i = 0; i < n; i++) {
+    if (!Array.isArray(m[i]) || m[i].length !== n) {
+      throw new Error(`matrixInverse: matrix must be square (row ${i} has length ${m[i]?.length}, expected ${n}).`);
+    }
+    for (let j = 0; j < n; j++) {
+      if (!isFiniteNumber(m[i][j])) {
+        // Without this, the pivot guard below (`maxVal < 1e-12`) is false
+        // for NaN and the whole inverse comes back NaN.
+        throw new Error(`matrixInverse: non-finite entry at [${i}][${j}].`);
+      }
+    }
+  }
 
   // Build augmented matrix [M | I]
   const aug: number[][] = Array.from({ length: n }, (_, i) => {
@@ -206,6 +236,19 @@ export function blackLitterman(
   const n = equilibrium.length; // number of assets
   const k = views.length; // number of views
 
+  if (viewConfidence.length !== k) {
+    throw new Error(
+      `blackLitterman: viewConfidence length (${viewConfidence.length}) must match the number of ` +
+        `views (${k}). A mismatch made Omega the wrong shape and every subsequent multiply ` +
+        'silently produced NaN.',
+    );
+  }
+  for (const c of viewConfidence) {
+    if (!isFiniteNumber(c) || c <= 0) {
+      throw new Error(`blackLitterman: every view confidence must be a positive finite number (got ${c}).`);
+    }
+  }
+
   // Build P matrix (k x n) and Q vector (k x 1) from views
   const P: number[][] = views.map((v) => {
     // Pad or use the assets array directly — it must have length n
@@ -228,27 +271,28 @@ export function blackLitterman(
   // (tau * Sigma)^-1
   const tauSigmaInv: number[][] = matrixInverse(tauSigma);
 
-  // Omega^-1
-  const omegaInv: number[][] = matrixInverse(omega);
+  // Omega^-1. With no views there is nothing to invert and the posterior
+  // IS the prior, so short-circuit rather than inverting a 0x0 matrix.
+  const omegaInv: number[][] = k > 0 ? matrixInverse(omega) : [];
 
   // P' (n x k)
   const Pt: number[][] = transposeMatrix(P);
 
   // P' * Omega^-1 (n x k)
-  const PtOmegaInv: number[][] = matrixMultiply(Pt, omegaInv);
+  const PtOmegaInv: number[][] = k > 0 ? matrixMultiply(Pt, omegaInv) : [];
 
   // P' * Omega^-1 * P (n x n)
-  const PtOmegaInvP: number[][] = matrixMultiply(PtOmegaInv, P);
+  const PtOmegaInvP: number[][] = k > 0 ? matrixMultiply(PtOmegaInv, P) : [];
 
   // Posterior precision: (tau*Sigma)^-1 + P'*Omega^-1*P
-  const posteriorPrecision: number[][] = matAdd(tauSigmaInv, PtOmegaInvP);
+  const posteriorPrecision: number[][] = k > 0 ? matAdd(tauSigmaInv, PtOmegaInvP) : tauSigmaInv;
 
   // Posterior covariance: posteriorPrecision^-1
   const posteriorCov: number[][] = matrixInverse(posteriorPrecision);
 
   // Right-hand side:  (tau*Sigma)^-1 * pi  +  P' * Omega^-1 * Q
   const term1: number[] = matVecMul(tauSigmaInv, equilibrium);
-  const term2: number[] = matVecMul(PtOmegaInv, Q);
+  const term2: number[] = k > 0 ? matVecMul(PtOmegaInv, Q) : new Array(n).fill(0);
   const rhs: number[] = term1.map((v, i) => v + term2[i]);
 
   // Posterior returns
@@ -311,14 +355,19 @@ export function efficientFrontier(
   points: number = 20,
 ): FrontierPoint[] {
   const frontier: FrontierPoint[] = [];
+  if (!Number.isFinite(points) || points < 1) return frontier;
 
   // Sweep risk aversion from aggressive (0.1) to conservative (100)
   const lambdaMin = 0.1;
   const lambdaMax = 100;
 
   for (let i = 0; i < points; i++) {
-    // Log-space sweep gives better distribution of frontier points
-    const t = i / (points - 1);
+    // Log-space sweep gives better distribution of frontier points.
+    // points === 1 makes this 0/0 = NaN, which produced a NaN lambda, a
+    // NaN matrix that matrixInverse used to accept, and a frontier point
+    // reporting {risk: NaN, sharpe: 0}. One point means one portfolio:
+    // take the midpoint of the sweep.
+    const t = points === 1 ? 0.5 : i / (points - 1);
     const lambda = lambdaMin * Math.pow(lambdaMax / lambdaMin, t);
 
     const lambdaSigmaInv = matrixInverse(matScale(covMatrix, lambda));

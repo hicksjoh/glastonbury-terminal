@@ -3,10 +3,18 @@
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
+/**
+ * `halfLife` is `null` — NOT Infinity — when the spread shows no
+ * mean-reversion. Infinity survives in-process but JSON.stringify turns
+ * it into `null` on the wire, and both /pairs and /scanner typed the
+ * field as `number` and called `.toFixed(1)` on it, so an
+ * uncointegrated pair crashed the page. Making the absence explicit in
+ * the type forces callers to handle it.
+ */
 export interface CointegrationResult {
   isCointegrated: boolean;
   pValue: number;
-  halfLife: number;
+  halfLife: number | null;
   hedgeRatio: number;
 }
 
@@ -34,7 +42,7 @@ export interface PairCandidate {
   symbolB: string;
   correlation: number;
   cointegrationPValue: number;
-  halfLife: number;
+  halfLife: number | null;
   zScore: number;
   signal: PairsSignal;
   hedgeRatio: number;
@@ -130,13 +138,22 @@ function ols(y: number[], x: number[]): { alpha: number; beta: number; residuals
  * 4. Derive half-life from mean-reversion coefficient.
  */
 export function testCointegration(pricesA: number[], pricesB: number[]): CointegrationResult {
-  const n = Math.min(pricesA.length, pricesB.length);
-  if (n < 10) {
-    return { isCointegrated: false, pValue: 1, halfLife: Infinity, hedgeRatio: 0 };
-  }
+  /** Nothing usable: not cointegrated, no half-life, no hedge ratio. */
+  const inconclusive: CointegrationResult =
+    { isCointegrated: false, pValue: 1, halfLife: null, hedgeRatio: 0 };
 
-  const a = pricesA.slice(0, n);
-  const b = pricesB.slice(0, n);
+  // A single non-finite price poisons the OLS, the ADF statistic and the
+  // p-value. Reject up front rather than emitting NaN statistics.
+  if (!pricesA.every(Number.isFinite) || !pricesB.every(Number.isFinite)) return inconclusive;
+
+  const n = Math.min(pricesA.length, pricesB.length);
+  if (n < 10) return inconclusive;
+
+  // Align on the TAIL — the most recent common window. Front-truncation
+  // would regress the oldest bars of a long history against the whole of
+  // a short one, i.e. compare different calendar dates.
+  const a = pricesA.slice(pricesA.length - n);
+  const b = pricesB.slice(pricesB.length - n);
 
   // Step 1: OLS regression  pricesA = hedgeRatio * pricesB + residual
   const { beta: hedgeRatio, residuals: spread } = ols(a, b);
@@ -189,20 +206,27 @@ export function testCointegration(pricesA: number[], pricesB: number[]): Cointeg
     // Not stationary
     pValue = Math.min(1, 0.25 + (tStat + 1.94) * 0.5);
   }
-  pValue = Math.max(0.001, Math.min(1, pValue));
+  // Math.min(1, NaN) is NaN and Math.max(0.001, NaN) is NaN, so this
+  // clamp does not rescue a non-finite tStat on its own.
+  pValue = Number.isFinite(pValue) ? Math.max(0.001, Math.min(1, pValue)) : 1;
 
   // Half-life: halfLife = -ln(2) / ln(1 + gamma)
-  let halfLife: number;
-  if (gamma >= 0 || gamma <= -1) {
-    halfLife = Infinity; // no mean-reversion
+  let halfLife: number | null;
+  if (!Number.isFinite(gamma) || gamma >= 0 || gamma <= -1) {
+    halfLife = null; // no mean-reversion
   } else {
-    halfLife = -Math.LN2 / Math.log(1 + gamma);
-    if (halfLife < 0) halfLife = Infinity;
+    const h = -Math.LN2 / Math.log(1 + gamma);
+    halfLife = Number.isFinite(h) && h >= 0 ? h : null;
   }
 
   const isCointegrated = pValue < 0.05;
 
-  return { isCointegrated, pValue, halfLife, hedgeRatio };
+  return {
+    isCointegrated,
+    pValue,
+    halfLife,
+    hedgeRatio: Number.isFinite(hedgeRatio) ? hedgeRatio : 0,
+  };
 }
 
 /**

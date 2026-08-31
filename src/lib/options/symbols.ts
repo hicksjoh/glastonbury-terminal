@@ -60,6 +60,15 @@ export function buildOCCSymbol(
   const yy = year.slice(2);
   const typeChar = type === 'call' ? 'C' : 'P';
   const strikeInt = Math.round(strike * 1000);
+  // A non-positive strike cannot be encoded: String(-4000).padStart(8,'0')
+  // yields "0000-4000", a symbol the broker will reject and no parser
+  // will round-trip. Fail loudly rather than emitting a bad contract.
+  if (!Number.isFinite(strikeInt) || strikeInt <= 0) {
+    throw new Error(`buildOCCSymbol: strike must be a positive number (got ${strike}).`);
+  }
+  if (strikeInt > 99_999_999) {
+    throw new Error(`buildOCCSymbol: strike ${strike} exceeds the 8-digit OCC strike field.`);
+  }
   const strikePadded = String(strikeInt).padStart(8, '0');
 
   return `${underlying.toUpperCase()}${yy}${month}${day}${typeChar}${strikePadded}`;

@@ -54,8 +54,12 @@ export function getDataSourceHealth(): DataSourceHealth[] {
     const errors = recentLogs.filter(l => l.status === 'error').length;
     const total = recentLogs.length;
     const errorRate = total > 0 ? Math.round((errors / total) * 100) : 0;
-    const avgLatency = total > 0
-      ? Math.round(recentLogs.reduce((sum, l) => sum + l.latencyMs, 0) / total)
+    // One malformed latencyMs would make the reported average NaN — a
+    // number the health payload promises. (errorRate above is safe: both
+    // operands are .length values.)
+    const latencies = recentLogs.map(l => l.latencyMs).filter(Number.isFinite);
+    const avgLatency = latencies.length > 0
+      ? Math.round(latencies.reduce((sum, v) => sum + v, 0) / latencies.length)
       : 0;
 
     const lastSuccess = apiLogs.find(l => l.status === 'success')?.timestamp ?? null;

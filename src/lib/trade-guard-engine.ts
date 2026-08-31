@@ -170,7 +170,6 @@ export async function runTradeGuard(req: TradeGuardRequest): Promise<TradeGuardR
 
   // 2. KELLY CRITERION SIZING
   const kellyInput: KellyInput = {
-    expectedReturn: req.avgWin ? req.avgWin * (req.winRate || 0.5) - (req.avgLoss || 0.05) * (1 - (req.winRate || 0.5)) : 0.03,
     winRate: req.winRate || 0.55,
     avgWin: req.avgWin || 0.08,
     avgLoss: req.avgLoss || 0.05,
@@ -185,7 +184,7 @@ export async function runTradeGuard(req: TradeGuardRequest): Promise<TradeGuardR
   let sizingVerdict: 'undersized' | 'optimal' | 'oversized' | 'way_oversized';
   if (proposedPct <= kelly.quarterKelly * 100) sizingVerdict = 'undersized';
   else if (proposedPct <= kelly.halfKelly * 100 * 1.2) sizingVerdict = 'optimal';
-  else if (proposedPct <= kelly.fullKelly * 100) sizingVerdict = 'oversized';
+  else if (proposedPct <= kelly.cappedKelly * 100) sizingVerdict = 'oversized';
   else sizingVerdict = 'way_oversized';
 
   // 3. REGIME DETECTION
@@ -225,7 +224,7 @@ export async function runTradeGuard(req: TradeGuardRequest): Promise<TradeGuardR
       proposedPct: proposedPct.toFixed(1),
       kelly: {
         recommendation: kelly.recommendation,
-        fullKellyPct: (kelly.fullKelly * 100).toFixed(1),
+        fullKellyPct: (kelly.cappedKelly * 100).toFixed(1),
         halfKellyPct: (kelly.halfKelly * 100).toFixed(1),
         halfKellyDollars: Math.round(kellyDollars),
         halfKellyShares: kellyShares,
@@ -238,7 +237,7 @@ export async function runTradeGuard(req: TradeGuardRequest): Promise<TradeGuardR
         undersized: 'Position is smaller than quarter-Kelly. Room to size up if thesis is strong.',
         optimal: 'Position is in the half-Kelly sweet spot. Solid risk management.',
         oversized: 'Between half and full Kelly. Aggressive but manageable.',
-        way_oversized: `Exceeds full Kelly (${(kelly.fullKelly * 100).toFixed(1)}%). Consider reducing to ${adjustedKellyShares} shares ($${Math.round(adjustedKellyDollars).toLocaleString()}).`,
+        way_oversized: `Exceeds full Kelly (${(kelly.cappedKelly * 100).toFixed(1)}%). Consider reducing to ${adjustedKellyShares} shares ($${Math.round(adjustedKellyDollars).toLocaleString()}).`,
       }[sizingVerdict],
     },
     regime: { state: regime.regime, label: regimeLabel, confidence: regime.confidence, advice: regimeAdvice, vix, regimeMultiplier },

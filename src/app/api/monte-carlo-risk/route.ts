@@ -123,9 +123,13 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // Re-normalize weights after filtering
+    // Re-normalize weights after filtering. A zero (or non-finite) sum
+    // would make every normalized weight Infinity/NaN and poison the
+    // whole simulation, so fall back to equal weighting.
     const weightSum = validWeights.reduce((s, w) => s + w, 0);
-    const normalizedWeights = validWeights.map((w) => w / weightSum);
+    const normalizedWeights = Number.isFinite(weightSum) && weightSum > 0
+      ? validWeights.map((w) => (Number.isFinite(w) ? w / weightSum : 0))
+      : validWeights.map(() => 1 / validWeights.length);
 
     // ---------------------------------------------------------------
     // 3. Build MCPosition array
@@ -217,6 +221,17 @@ export async function POST(req: NextRequest) {
     });
   } catch (error) {
     console.error('Monte Carlo risk error:', error);
+    // The engine now THROWS on data it cannot legitimately simulate
+    // (non-positive-definite covariance, too few observations, non-finite
+    // returns) rather than emitting a plausible-looking wrong number.
+    // That is a bad-input condition, not a server fault — report it as
+    // 422 with the reason so the caller can see WHY there is no answer.
+    if (error instanceof Error && /positive-definite|observations|non-finite|must be/i.test(error.message)) {
+      return NextResponse.json(
+        { error: 'Monte Carlo simulation could not run on this data', detail: error.message },
+        { status: 422 }
+      );
+    }
     return NextResponse.json(
       { error: 'Monte Carlo simulation failed' },
       { status: 500 }

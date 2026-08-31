@@ -40,18 +40,36 @@ export function analyzeFactorExposure(holdings: HoldingInput[]): FactorAnalysis 
     return emptyAnalysis('No holdings provided');
   }
 
-  const totalWeight = holdings.reduce((sum, h) => sum + h.weight, 0);
-  if (totalWeight < 0.01) return emptyAnalysis('Holdings have zero weight');
+  // Drop holdings whose weight is not a usable NUMBER before summing.
+  // `totalWeight < 0.01` is false when totalWeight is NaN, so a single
+  // bad weight skipped the guard entirely and turned every exposure,
+  // R-squared and tracking-error figure into NaN.
+  //
+  // Negative weights are KEPT: /api/factors passes Alpaca's signed
+  // market_value straight through, so a short position legitimately
+  // arrives negative and must net against the longs. Filtering on
+  // `> 0` would report the long leg as 100% of the book.
+  const usable = holdings.filter(h => Number.isFinite(h.weight));
+  if (usable.length === 0) return emptyAnalysis('Holdings have zero weight');
+
+  const totalWeight = usable.reduce((sum, h) => sum + h.weight, 0);
+  if (!Number.isFinite(totalWeight) || totalWeight < 0.01) {
+    return emptyAnalysis('Holdings have zero weight');
+  }
 
   // Normalize weights
-  const normalized = holdings.map(h => ({ ...h, weight: h.weight / totalWeight }));
+  const normalized = usable.map(h => ({ ...h, weight: h.weight / totalWeight }));
+
+  /** Fall back to the documented default when a factor input is unusable. */
+  const or = (v: number | undefined, fallback: number): number =>
+    typeof v === 'number' && Number.isFinite(v) ? v : fallback;
 
   // Market exposure (weighted beta)
-  const market = normalized.reduce((sum, h) => sum + h.weight * (h.beta ?? 1.0), 0);
+  const market = normalized.reduce((sum, h) => sum + h.weight * or(h.beta, 1.0), 0);
 
   // Size factor: small cap tilt (lower market cap = higher exposure)
   const size = normalized.reduce((sum, h) => {
-    const cap = h.marketCap ?? 50; // default mid-cap
+    const cap = or(h.marketCap, 50); // default mid-cap
     if (cap < 2) return sum + h.weight * 0.8;      // micro cap
     if (cap < 10) return sum + h.weight * 0.4;      // small cap
     if (cap < 50) return sum + h.weight * 0.0;      // mid cap
@@ -61,7 +79,7 @@ export function analyzeFactorExposure(holdings: HoldingInput[]): FactorAnalysis 
 
   // Value factor: low P/E = value, high P/E = growth
   const value = normalized.reduce((sum, h) => {
-    const pe = h.peRatio ?? 20;
+    const pe = or(h.peRatio, 20);
     if (pe < 0) return sum;                          // negative earnings
     if (pe < 10) return sum + h.weight * 0.8;        // deep value
     if (pe < 15) return sum + h.weight * 0.4;        // value
@@ -72,13 +90,13 @@ export function analyzeFactorExposure(holdings: HoldingInput[]): FactorAnalysis 
 
   // Momentum factor: recent performance
   const momentum = normalized.reduce((sum, h) => {
-    const mom = h.momentum1Y ?? 0;
+    const mom = or(h.momentum1Y, 0);
     return sum + h.weight * Math.max(-1, Math.min(1, mom / 50)); // normalize to [-1, 1]
   }, 0);
 
   // Quality factor: profitability
   const quality = normalized.reduce((sum, h) => {
-    const roe = h.roe ?? 15;
+    const roe = or(h.roe, 15);
     if (roe > 30) return sum + h.weight * 0.8;
     if (roe > 20) return sum + h.weight * 0.4;
     if (roe > 10) return sum + h.weight * 0.0;
@@ -87,7 +105,7 @@ export function analyzeFactorExposure(holdings: HoldingInput[]): FactorAnalysis 
 
   // Volatility factor
   const volatility = normalized.reduce((sum, h) => {
-    const vol = h.volatility ?? 25;
+    const vol = or(h.volatility, 25);
     if (vol < 15) return sum + h.weight * -0.6;     // low vol
     if (vol < 25) return sum + h.weight * 0.0;      // normal vol
     if (vol < 40) return sum + h.weight * 0.4;      // high vol
@@ -162,6 +180,7 @@ function emptyAnalysis(reason: string): FactorAnalysis {
 }
 
 function round(n: number, d: number): number {
+  if (!Number.isFinite(n)) return 0;
   const f = Math.pow(10, d);
   return Math.round(n * f) / f;
 }

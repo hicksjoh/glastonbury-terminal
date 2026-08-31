@@ -20,6 +20,9 @@ import { assertNotionalTypedConfirm, getServerTradingMode, LiveOrderRejectedErro
 import { verifyLiveAckToken } from '@/lib/live-ack';
 import { getRateLimitIdentity } from '@/lib/rate-limit-durable';
 
+/** OCC contract symbol: ROOT(1-6) + YYMMDD + C|P + 8-digit strike. */
+const OCC_SYMBOL_RE = /^[A-Z]{1,6}\d{6}[CP]\d{8}$/;
+
 /**
  * Resolve the dollar value of an order so the typed-confirm gate can be
  * applied to it.
@@ -51,6 +54,13 @@ export async function resolveNotionalUsd(args: {
   const mult = args.multiplier ?? 1;
   const qty = Number(args.qty);
   if (!Number.isFinite(qty) || qty <= 0) return Number.NaN;
+
+  // Defence in depth against a 100x under-report. An OCC contract priced
+  // at the equity multiplier reports 1/100th of its true exposure, which
+  // is exactly how a five-figure order slips under the typed-confirm
+  // threshold. The equity order schema already rejects OCC symbols; this
+  // makes the mistake impossible for any future caller too.
+  if (OCC_SYMBOL_RE.test(args.symbol) && mult !== 100) return Number.NaN;
 
   const bounded = Number(args.limitPrice ?? args.stopPrice ?? Number.NaN);
   if (Number.isFinite(bounded) && bounded > 0) return qty * bounded * mult;

@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { equilibriumReturns, blackLitterman, efficientFrontier, View } from '@/lib/black-litterman';
-import { correlationMatrix } from '@/lib/correlation';
+import { correlationMatrix, isUsableReturnSeries } from '@/lib/correlation';
 import { anthropic, CLAUDE_MODEL_FALLBACK } from '@/lib/claude';
 import { tagAnthropicCall } from '@/lib/anthropic-cost';
 import { getHistoricalPrices } from '@/lib/fmp-client';
@@ -30,7 +30,11 @@ interface FMPHistoricalEntry {
 function calculateDailyReturns(prices: number[]): number[] {
   const returns: number[] = [];
   for (let i = 1; i < prices.length; i++) {
-    returns.push((prices[i] - prices[i - 1]) / prices[i - 1]);
+    // A zero or non-finite close would emit Infinity/NaN, which then
+    // poisons the covariance matrix, the Cholesky decomposition and
+    // every posterior weight downstream.
+    const ret = (prices[i] - prices[i - 1]) / prices[i - 1];
+    if (Number.isFinite(ret)) returns.push(ret);
   }
   return returns;
 }
@@ -139,26 +143,36 @@ Respond ONLY with a JSON array, no other text.`;
     const viewConfidences: number[] = [];
     const aiViewDetails: Array<{ symbol: string; view: string; confidence: number; reasoning: string }> = [];
 
-    for (const item of parsed) {
-      const idx = symbols.indexOf(item.symbol);
+    for (const item of Array.isArray(parsed) ? parsed : []) {
+      const idx = symbols.indexOf(item?.symbol);
       if (idx === -1) continue;
 
-      // Absolute view: asset i expected return = item.expectedReturn
+      // These two numbers come straight out of a language model and feed
+      // the Black-Litterman posterior. A string, a null or a missing
+      // field would make Q non-numeric and turn every posterior return,
+      // weight and risk figure into NaN, so a malformed view is dropped
+      // rather than propagated.
+      const expectedReturn = Number(item?.expectedReturn);
+      if (!Number.isFinite(expectedReturn)) {
+        console.warn(`optimize: dropping AI view for ${item?.symbol} — non-numeric expectedReturn`);
+        continue;
+      }
+      const rawConfidence = Number(item?.confidence);
+      const confidence = Number.isFinite(rawConfidence) && rawConfidence > 0 ? rawConfidence : 0.5;
+
+      // Absolute view: asset i expected return = expectedReturn
       const P = Array(symbols.length).fill(0);
       P[idx] = 1;
 
-      views.push({
-        assets: P,
-        expectedReturn: item.expectedReturn,
-      });
-      viewConfidences.push(item.confidence || 0.5);
+      views.push({ assets: P, expectedReturn });
+      viewConfidences.push(confidence);
 
-      const direction = item.expectedReturn > eqReturns[idx] ? 'bullish' : 'bearish';
+      const direction = expectedReturn > eqReturns[idx] ? 'bullish' : 'bearish';
       aiViewDetails.push({
         symbol: item.symbol,
-        view: `${direction} - expected ${(item.expectedReturn * 100).toFixed(2)}% annual return`,
-        confidence: item.confidence,
-        reasoning: item.reasoning,
+        view: `${direction} - expected ${(expectedReturn * 100).toFixed(2)}% annual return`,
+        confidence,
+        reasoning: typeof item?.reasoning === 'string' ? item.reasoning : '',
       });
     }
 
@@ -217,9 +231,34 @@ export async function POST(request: NextRequest) {
     const allPrices = await Promise.all(pricePromises);
     const allReturns = allPrices.map((prices) => calculateDailyReturns(prices));
 
+    // Drop any symbol whose history we cannot use, rather than letting
+    // one bad series either throw out of correlationMatrix or be papered
+    // over as an uncorrelated zero.
+    const usableIdx = allReturns
+      .map((r, i) => (isUsableReturnSeries(r) && r.length > 1 ? i : -1))
+      .filter((i) => i >= 0);
+    if (usableIdx.length < 2) {
+      return NextResponse.json(
+        { error: 'Insufficient usable price history to optimize this portfolio' },
+        { status: 422 },
+      );
+    }
+    symbols = usableIdx.map((i) => symbols[i]);
+    const usableReturns = usableIdx.map((i) => allReturns[i]);
+
+    // equilibriumReturns() assumes market-cap weights that SUM TO 1
+    // (pi = delta * Sigma * w). Subsetting them without renormalising
+    // leaves the sum below 1, which understates every equilibrium return
+    // and makes the reported current allocation total less than 100%.
+    const keptWeights = usableIdx.map((i) => marketWeights[i]);
+    const keptSum = keptWeights.reduce((a, b) => a + b, 0);
+    marketWeights = Number.isFinite(keptSum) && keptSum > 0
+      ? keptWeights.map((w) => w / keptSum)
+      : keptWeights.map(() => 1 / keptWeights.length);
+
     // Align return lengths (use minimum length across all assets)
-    const minLen = Math.min(...allReturns.map((r) => r.length));
-    const alignedReturns = allReturns.map((r) => r.slice(r.length - minLen));
+    const minLen = Math.min(...usableReturns.map((r) => r.length));
+    const alignedReturns = usableReturns.map((r) => r.slice(r.length - minLen));
 
     // 3-5. Calculate covariance matrix and equilibrium returns
     const dailyCov = calculateCovarianceMatrix(alignedReturns);

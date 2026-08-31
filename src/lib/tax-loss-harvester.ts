@@ -445,11 +445,20 @@ export function scanForHarvestCandidates(
   const ytdRealizedGains = calcYTDRealizedGains(trades);
 
   // Build summary
-  totalUnrealizedLosses = Math.round(totalUnrealizedLosses * 100) / 100;
-  totalPotentialSavings = Math.round(totalPotentialSavings * 100) / 100;
+  totalUnrealizedLosses = Number.isFinite(totalUnrealizedLosses)
+    ? Math.round(totalUnrealizedLosses * 100) / 100 : 0;
+  totalPotentialSavings = Number.isFinite(totalPotentialSavings)
+    ? Math.round(totalPotentialSavings * 100) / 100 : 0;
 
   let netTaxPosition: string;
-  if (ytdRealizedGains > 0 && totalUnrealizedLosses < 0) {
+  if (!Number.isFinite(ytdRealizedGains)) {
+    // Every comparison against NaN is false, so this used to fall
+    // through to "No YTD realized gains or losses yet" — a confident and
+    // possibly false statement about Wes's tax position.
+    netTaxPosition =
+      'Could not compute your YTD realized gains from the available trade history. ' +
+      'Treat the harvest figures below as indicative only until the trade data is complete.';
+  } else if (ytdRealizedGains > 0 && totalUnrealizedLosses < 0) {
     const offsetable = Math.min(ytdRealizedGains, Math.abs(totalUnrealizedLosses));
     netTaxPosition = `You have $${ytdRealizedGains.toLocaleString()} in YTD realized gains. Harvesting ${candidates.length} loss position${candidates.length !== 1 ? 's' : ''} could offset $${offsetable.toLocaleString()} of those gains.`;
   } else if (ytdRealizedGains > 0) {

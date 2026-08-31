@@ -25,7 +25,8 @@ interface PairResult {
   zscore: number;
   signal: string;
   correlation: number;
-  halfLife: number;
+  /** null when the spread shows no mean-reversion. */
+  halfLife: number | null;
   sharpe: number;
 }
 
@@ -242,7 +243,7 @@ export default function ScannerPage() {
                   <span style={{
                     padding: '2px 8px', borderRadius: 4, fontSize: 10, fontWeight: 500,
                     background: 'rgba(240,198,116,0.1)', color: '#f0c674',
-                  }}>half-life {p.halfLife.toFixed(1)}d</span>
+                  }}>half-life {p.halfLife != null ? `${p.halfLife.toFixed(1)}d` : '—'}</span>
                 </div>
 
                 <div style={{ color: '#8888a8', fontSize: 13, lineHeight: 1.5 }}>

@@ -1,3 +1,5 @@
+import { finiteOr } from './finite';
+
 /**
  * Market Regime Detection — 4-state HMM-inspired model
  * States: bull_low_vol, bull_high_vol, bear_low_vol, bear_high_vol
@@ -30,10 +32,16 @@ export function detectRegime(
   yieldSpread: number | null, // 2s10s
   momentum: number | null, // SPY % change
 ): RegimeResult {
-  const v = vix ?? 20;
-  const m = momentum ?? 0;
-  const ratio = vixRatio ?? 1.0;
-  const spread = yieldSpread ?? 0.5;
+  // `??` only catches null/undefined. A NaN from a failed upstream parse
+  // would survive it, and since every comparison against NaN is false,
+  // each scoring chain below fell through to its final `else` — three of
+  // which add to bear_high_vol. Garbage data therefore produced a
+  // confident maximum-fear regime, which the trade guard turns into a
+  // 0.4x position-size multiplier.
+  const v = finiteOr(vix, 20);
+  const m = finiteOr(momentum, 0);
+  const ratio = finiteOr(vixRatio, 1.0);
+  const spread = finiteOr(yieldSpread, 0.5);
 
   // Score each regime based on observed data
   const scores: Record<RegimeState, number> = {

@@ -209,9 +209,17 @@ export interface GEXResult {
 export function calculateGEX(chain: OptionsChainItem[], spotPrice: number): GEXResult {
   const byStrike = new Map<number, number>();
 
+  // Chain rows come from Alpaca via `snap?.greeks?.gamma ?? 0`, and `??`
+  // only catches null/undefined — a NaN or a missing numeric field
+  // reached the arithmetic, made every level NaN, and JSON.stringify
+  // then rendered the whole GEX payload as nulls.
+  const num = (v: unknown): number => (typeof v === 'number' && Number.isFinite(v) ? v : 0);
+  const spot = num(spotPrice);
+
   for (const item of chain) {
-    const callGEX = item.callOI * 100 * item.callGamma * spotPrice * spotPrice * 0.01;
-    const putGEX = item.putOI * 100 * item.putGamma * spotPrice * spotPrice * 0.01;
+    if (!Number.isFinite(item?.strike)) continue;
+    const callGEX = num(item.callOI) * 100 * num(item.callGamma) * spot * spot * 0.01;
+    const putGEX = num(item.putOI) * 100 * num(item.putGamma) * spot * spot * 0.01;
     const netStrikeGEX = callGEX - putGEX;
     byStrike.set(item.strike, (byStrike.get(item.strike) ?? 0) + netStrikeGEX);
   }
@@ -242,8 +250,10 @@ export function findGEXLevels(gexByStrike: Map<number, number>, chain: OptionsCh
 
   const oiByStrike = new Map<number, number>();
   for (const item of chain) {
-    const totalOI = item.callOI + item.putOI;
-    oiByStrike.set(item.strike, (oiByStrike.get(item.strike) ?? 0) + totalOI);
+    if (!Number.isFinite(item?.strike)) continue;
+    const callOI = Number.isFinite(item.callOI) ? item.callOI : 0;
+    const putOI = Number.isFinite(item.putOI) ? item.putOI : 0;
+    oiByStrike.set(item.strike, (oiByStrike.get(item.strike) ?? 0) + callOI + putOI);
   }
 
   let hvl = 0;

@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { pearsonCorrelation, correlationMatrix, diversificationScore } from '@/lib/correlation';
+import { pearsonCorrelation, correlationMatrix, diversificationScore, alignReturnSeries, isUsableReturnSeries } from '@/lib/correlation';
 import { getHistoricalPrices } from '@/lib/fmp-client';
 
 const FMP_KEY = process.env.FMP_API_KEY;
@@ -36,12 +36,19 @@ export async function GET(req: NextRequest) {
       const prices = historical.reverse().map((d: { close: number }) => d.close);
       const returns: number[] = [];
       for (let j = 1; j < prices.length; j++) {
-        if (prices[j - 1] > 0) {
-          returns.push((prices[j] - prices[j - 1]) / prices[j - 1]);
+        // The previous check only tested prices[j - 1]. A NaN close at
+        // prices[j] produced a NaN return, which correlationMatrix used
+        // to paper over as a 0 — i.e. "uncorrelated" — inflating the
+        // diversification score from unusable data.
+        if (prices[j - 1] > 0 && Number.isFinite(prices[j])) {
+          const ret = (prices[j] - prices[j - 1]) / prices[j - 1];
+          if (Number.isFinite(ret)) returns.push(ret);
         }
       }
 
-      if (returns.length > 5) {
+      // A symbol whose history we cannot use is EXCLUDED from the
+      // matrix, not fabricated as uncorrelated with everything.
+      if (returns.length > 5 && isUsableReturnSeries(returns)) {
         allReturns.push(returns);
         validSymbols.push(symbols[i]);
       }
@@ -80,20 +87,30 @@ export async function GET(req: NextRequest) {
             const spyPrices = spyHist.reverse().map((d: { close: number }) => d.close);
             const spyReturns: number[] = [];
             for (let j = 1; j < spyPrices.length; j++) {
-              if (spyPrices[j - 1] > 0) {
-                spyReturns.push((spyPrices[j] - spyPrices[j - 1]) / spyPrices[j - 1]);
+              if (spyPrices[j - 1] > 0 && Number.isFinite(spyPrices[j])) {
+                const ret = (spyPrices[j] - spyPrices[j - 1]) / spyPrices[j - 1];
+                if (Number.isFinite(ret)) spyReturns.push(ret);
               }
             }
 
-            // Portfolio beta = avg beta of all symbols
+            // Portfolio beta = EQUAL-WEIGHTED avg beta of all symbols.
+            // (Position sizes aren't available on this route, so this is a
+            // per-symbol average, not a capital-weighted portfolio beta.)
+            //
+            // Series are aligned on their TAIL — the most recent common
+            // window — so the correlation compares like-for-like calendar
+            // dates. Front-truncation would pair the oldest bars of a long
+            // history against the whole of a short one. The std devs are
+            // taken over the SAME aligned window as the correlation, so
+            // beta = corr * sigma_ret / sigma_spy is internally consistent.
             let totalBeta = 0;
             for (const ret of allReturns) {
-              const minLen = Math.min(ret.length, spyReturns.length);
-              const corr = pearsonCorrelation(ret.slice(0, minLen), spyReturns.slice(0, minLen));
-              const stdRet = std(ret);
-              const stdSpy = std(spyReturns);
+              const [alignedRet, alignedSpy] = alignReturnSeries([ret, spyReturns]);
+              const corr = pearsonCorrelation(alignedRet, alignedSpy);
+              const stdRet = std(alignedRet);
+              const stdSpy = std(alignedSpy);
               const beta = stdSpy > 0 ? (corr * stdRet / stdSpy) : 1;
-              totalBeta += beta;
+              totalBeta += Number.isFinite(beta) ? beta : 1;
             }
             portfolioBeta = Math.round((totalBeta / allReturns.length) * 1000) / 1000;
           }

@@ -12,7 +12,8 @@ interface PairScanResult {
   symbolB: string;
   correlation: number;
   cointegrationPValue: number;
-  halfLife: number;
+  /** null when the spread shows no mean-reversion. */
+  halfLife: number | null;
   zScore: number;
   signal: { action: string };
   hedgeRatio: number;
@@ -29,7 +30,8 @@ interface PairDetail {
   symbolA: string;
   symbolB: string;
   hedgeRatio: number;
-  halfLife: number;
+  /** null when the spread shows no mean-reversion. */
+  halfLife: number | null;
   spread: { current: number; mean: number; zScore: number; history: SpreadPoint[] };
   signal: { action: string; entry?: number; exit?: number; stop?: number };
   backtest: { trades: number; winRate: number; sharpe: number; maxDrawdown: number; pnl: number; equityCurve: number[] };
@@ -208,7 +210,7 @@ function DetailPanel({ detail }: { detail: PairDetail }) {
       {/* top stats row */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: 10, marginBottom: 20 }}>
         <StatCard label="Hedge Ratio" value={hedgeRatio.toFixed(3)} color={C.cyan} />
-        <StatCard label="Half-Life" value={`${halfLife.toFixed(1)}d`} color={C.purple} />
+        <StatCard label="Half-Life" value={halfLife != null ? `${halfLife.toFixed(1)}d` : "—"} color={C.purple} />
         <StatCard label="Spread Z" value={spread.zScore.toFixed(2)} color={zScoreColor(spread.zScore)} />
         <StatCard label="Coint. p-val" value={cointegration.pValue.toFixed(4)} color={cointegration.pValue < 0.05 ? C.green : C.red} />
       </div>
@@ -472,7 +474,7 @@ export default function PairsPage() {
                       }}>
                         {p.cointegrationPValue.toFixed(4)}
                       </td>
-                      <td style={{ padding: '14px 12px', fontFamily: C.mono, fontSize: 13, color: C.text }}>{p.halfLife.toFixed(1)}d</td>
+                      <td style={{ padding: '14px 12px', fontFamily: C.mono, fontSize: 13, color: C.text }}>{p.halfLife != null ? `${p.halfLife.toFixed(1)}d` : '—'}</td>
                       <td style={{ padding: '14px 12px', fontFamily: C.mono, fontSize: 13, color: zScoreColor(p.zScore), fontWeight: 700 }}>
                         {p.zScore >= 0 ? '+' : ''}{p.zScore.toFixed(2)}
                       </td>
