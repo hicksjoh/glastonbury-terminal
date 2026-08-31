@@ -38,15 +38,42 @@ test.describe('@smoke D1 — FMP sector performance', () => {
       expect(Number.isFinite(pct)).toBe(true);
     }
 
-    // At least one sector should be non-zero on any normal trading day.
-    // If everything is 0.00, the fallback kicked in and we're not actually
-    // reading FMP sector data — that's the regression this test guards against.
+    // At least one sector should be non-zero — if everything is 0.00 the
+    // fallback kicked in and we are not actually reading FMP sector data.
+    //
+    // But all-zero is also the CORRECT answer when no session has traded yet:
+    // on a weekend, and on a weekday before the 09:30 ET open. The nightly
+    // smoke runs at 07:00 ET, so asserting non-zero unconditionally would fail
+    // this every single weekday morning and train everyone to ignore the alarm.
+    // Only demand movement once the session has actually been underway.
     const nonZero = body.sectors.filter((s: { changesPercentage: string | number }) => {
       const pct = typeof s.changesPercentage === 'number'
         ? s.changesPercentage
         : parseFloat(s.changesPercentage);
       return Math.abs(pct) > 0.0001;
     });
-    expect(nonZero.length).toBeGreaterThan(0);
+
+    const et = new Intl.DateTimeFormat('en-US', {
+      timeZone: 'America/New_York',
+      weekday: 'short',
+      hour: 'numeric',
+      minute: 'numeric',
+      hourCycle: 'h23',
+    }).formatToParts(new Date());
+    const part = (t: Intl.DateTimeFormatPartTypes) => et.find(p => p.type === t)?.value ?? '';
+    const isWeekend = part('weekday') === 'Sat' || part('weekday') === 'Sun';
+    const etMinutes = parseInt(part('hour'), 10) * 60 + parseInt(part('minute'), 10);
+    // 09:45 ET — 15 minutes past the open, so prints have definitely landed.
+    // Caveat: NYSE holidays are not modelled, so a manual afternoon run on
+    // Thanksgiving or Christmas will still fail here. The scheduled nightly
+    // runs at 07:00 ET and always takes the skip branch, so the dead-man
+    // switch is unaffected.
+    const sessionUnderway = !isWeekend && etMinutes >= 9 * 60 + 45;
+
+    if (sessionUnderway) {
+      expect(nonZero.length).toBeGreaterThan(0);
+    } else {
+      console.log(`[D1] Outside a traded session (ET ${part('weekday')} ${part('hour')}:${part('minute')}) — skipping the non-zero movement check.`);
+    }
   });
 });

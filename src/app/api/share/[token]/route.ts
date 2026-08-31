@@ -3,6 +3,11 @@ import { consumeShareToken } from '@/lib/share/tokens';
 import { loadWealthSnapshot } from '@/lib/hedge/rsu-analyzer';
 import { rateLimit } from '@/lib/rate-limit';
 
+// This handler never reads the request, so without this Next statically
+// optimizes it and Vercel serves the first 200 forever — a revoked or expired
+// token kept returning its payload. Revocation has to hit the database.
+export const dynamic = 'force-dynamic';
+
 // F17 — Public read endpoint for tokenized shared dashboards.
 //
 // This is the ONE route in the entire app that does NOT require gt-auth.

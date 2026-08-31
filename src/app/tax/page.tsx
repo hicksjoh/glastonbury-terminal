@@ -157,7 +157,9 @@ function SectionSkeleton({ rows = 3 }: { rows?: number }) {
       {Array.from({ length: rows }).map((_, i) => (
         <div key={i} style={{
           height: 16, borderRadius: 4, background: 'rgba(255,255,255,0.03)',
-          marginBottom: 8, width: `${70 + Math.random() * 30}%`,
+          // Deterministic ragged edge. Math.random() here rendered a different
+          // width on the server than on the client and broke hydration.
+          marginBottom: 8, width: `${70 + ((i * 37) % 30)}%`,
           animation: 'pulse 1.5s ease infinite',
         }} />
       ))}

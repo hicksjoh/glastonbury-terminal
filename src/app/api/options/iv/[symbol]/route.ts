@@ -2,6 +2,9 @@ import { NextRequest, NextResponse } from 'next/server';
 import { validateEquitySymbol } from '@/lib/sanitize';
 import type { IVData } from '@/lib/options/types';
 
+// Live implied-vol data — never serve a build-time snapshot.
+export const dynamic = 'force-dynamic';
+
 const ALPACA_DATA_URL = 'https://data.alpaca.markets';
 const ALPACA_TRADING_URL = process.env.ALPACA_BASE_URL || 'https://paper-api.alpaca.markets';
 const FMP_BASE_URL = 'https://financialmodelingprep.com/stable';

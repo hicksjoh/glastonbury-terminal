@@ -3,6 +3,9 @@ import { analyzeFactorExposure } from '@/lib/factor-engine';
 import { buildMeta } from '@/lib/api-meta';
 import { ALPACA_BASE_URL } from '@/lib/alpaca';
 
+// Live portfolio factor exposure — never serve a build-time snapshot.
+export const dynamic = 'force-dynamic';
+
 export async function GET(req: NextRequest) {
   try {
     // Get portfolio positions from Alpaca (mode-aware URL — respects TRADING_MODE)

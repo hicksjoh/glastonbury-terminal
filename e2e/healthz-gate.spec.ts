@@ -9,7 +9,10 @@ import { test, expect, request as playwrightRequest } from '@playwright/test';
 test.describe('@smoke P0-3 — Health endpoint split', () => {
   test('GET /api/healthz is public and emits only { status, timestamp }', async ({ baseURL }) => {
     // Use a fresh, cookie-less request context so this really is "anonymous".
-    const ctx = await playwrightRequest.newContext({ baseURL });
+    // storageState: undefined is load-bearing. Inside the runner this context
+    // otherwise inherits the logged-in state from playwright.config `use`, so
+    // the "anonymous" probe silently arrives authenticated and gets a 200.
+    const ctx = await playwrightRequest.newContext({ baseURL, storageState: undefined });
     const res = await ctx.get('/api/healthz');
     expect(res.status()).toBe(200);
 
@@ -26,7 +29,10 @@ test.describe('@smoke P0-3 — Health endpoint split', () => {
   });
 
   test('GET /api/health requires authentication', async ({ baseURL }) => {
-    const ctx = await playwrightRequest.newContext({ baseURL });
+    // storageState: undefined is load-bearing. Inside the runner this context
+    // otherwise inherits the logged-in state from playwright.config `use`, so
+    // the "anonymous" probe silently arrives authenticated and gets a 200.
+    const ctx = await playwrightRequest.newContext({ baseURL, storageState: undefined });
     const res = await ctx.get('/api/health');
     // Middleware returns 401 JSON for protected /api/* routes.
     expect(res.status()).toBe(401);

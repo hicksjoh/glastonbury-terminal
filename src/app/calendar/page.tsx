@@ -5,6 +5,7 @@ import { AppShell } from '@/components/layout/AppShell';
 import { ErrorBoundary } from '@/components/ErrorBoundary';
 import { LoadingState } from '@/components/LoadingState';
 import { ChevronLeft, ChevronRight, Check } from 'lucide-react';
+import { getEtToday, getEtDateParts } from '@/lib/et-clock';
 
 interface CalendarEvent {
   title: string;
@@ -61,7 +62,10 @@ export default function CalendarPage() {
     economic: true, earnings: true, options: true, personal: true, keisha: true,
   });
   const [viewMode, setViewMode] = useState<ViewMode>('month');
-  const [currentDate, setCurrentDate] = useState(new Date());
+  // ET-pinned: `new Date()` here is evaluated on a UTC server and again in an
+  // ET browser, which land on different months around a month boundary and
+  // break hydration (the whole grid re-renders differently).
+  const [currentDate, setCurrentDate] = useState(() => getEtToday());
   const [loading, setLoading] = useState(false);
 
   // Fetch economic calendar events from API
@@ -198,8 +202,8 @@ export default function CalendarPage() {
                 {Array.from({ length: daysInMonth }, (_, i) => {
                   const day = i + 1;
                   const dayEvents = eventsForDay(day);
-                  const today = new Date();
-                  const isToday = day === today.getDate() && month === today.getMonth() && year === today.getFullYear();
+                  const today = getEtDateParts();
+                  const isToday = day === today.day && month === today.month && year === today.year;
 
                   return (
                     <div key={day} style={{

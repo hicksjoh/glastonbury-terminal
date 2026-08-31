@@ -16,6 +16,7 @@ import { color, font, size as sz, space, weight, tracking, radius } from '@/lib/
 import { getRegimeUIConfig, mapApiRegime } from '@/lib/ui-regime-adapter';
 import type { RegimeUIConfig } from '@/lib/ui-regime-adapter';
 import { formatCurrency, formatPL } from '@/lib/format';
+import { getGreeting, getLongDateLabel } from '@/lib/et-clock';
 import { AuditLogEntry } from '@/types';
 
 // ─── Count-up hook (ease-out cubic) ─────────────────────────────
@@ -309,9 +310,13 @@ export default function DashboardPage() {
   }, [fetchDashboardData, fetchRegime]);
 
   // ─── Greeting + progress ─────────────────────────────────────
-  const hour = new Date().getHours();
-  const greeting = hour < 12 ? 'Good morning' : hour < 17 ? 'Good afternoon' : 'Good evening';
-  const dateStr = new Date().toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
+  // Pinned to ET: the server renders in UTC and the browser hydrates in local
+  // time, so an ambient-timezone clock here mismatches on every load (React #425).
+  // One instant for both, so a render straddling ET midnight can't pair
+  // yesterday's greeting with today's date.
+  const renderedAt = new Date();
+  const greeting = getGreeting(renderedAt);
+  const dateStr = getLongDateLabel(renderedAt);
   const fiftyMPct = (totalNetWorth / 50000000) * 100;
 
   // VIX tone
