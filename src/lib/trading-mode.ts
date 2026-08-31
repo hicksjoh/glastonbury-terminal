@@ -165,6 +165,17 @@ export function assertNotionalTypedConfirm(
     );
   }
 
+  // A negative notional is nonsense, and `notionalUsd < threshold` would
+  // wave it through as "small" no matter how large the true exposure. The
+  // only safe reading of a number we cannot explain is "block it".
+  if (notionalUsd < 0) {
+    throw new LiveOrderRejectedError(
+      'notional_indeterminate',
+      `Computed a negative order notional ($${notionalUsd}). Refusing to ` +
+        'apply the large-order gate to a value that cannot be right.',
+    );
+  }
+
   if (notionalUsd < threshold) return;
   const expected = Math.round(notionalUsd).toString();
   if ((typedConfirm ?? '').trim() !== expected) {
