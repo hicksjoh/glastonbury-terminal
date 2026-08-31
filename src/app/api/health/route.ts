@@ -9,10 +9,6 @@ import { getDurable } from '@/lib/durable-cache';
 // frozen at build time — a health check that never changes is worse than none.
 export const dynamic = 'force-dynamic';
 
-// Without this, Next static-optimizes the route and Vercel serves a payload
-// frozen at build time — a health check that never changes is worse than none.
-export const dynamic = 'force-dynamic';
-
 type ServiceStatus = 'ok' | 'error' | 'unconfigured' | 'degraded';
 
 // The health endpoint is called from the dashboard's Connections widget on
