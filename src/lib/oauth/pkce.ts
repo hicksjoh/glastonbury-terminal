@@ -18,10 +18,21 @@ function base64UrlEncode(bytes: ArrayBuffer): string {
     .replace(/=+$/, '');
 }
 
+// RFC 7636 §4.1 — code_verifier MUST be:
+//   - 43 to 128 characters long
+//   - composed of unreserved characters: [A-Z] / [a-z] / [0-9] / "-" / "." / "_" / "~"
+// P1-1: previously only length was enforced. A verifier with control chars,
+// non-ASCII, or NUL bytes would still hash and (if the client used the same
+// bytes for the challenge) match — widening attack surface for log-injection
+// and breaking the unguessable-entropy guarantee tied to the character set.
+const VERIFIER_RE = /^[A-Za-z0-9\-._~]{43,128}$/;
+
 /**
  * Returns true iff SHA256(verifier) base64url-encoded === challenge.
  * Edge-runtime compatible (uses Web Crypto). Constant-time compare on
  * matching-length strings; falls through to mismatch on length difference.
+ *
+ * Enforces RFC 7636 §4.1 verifier character set in addition to length.
  */
 export async function verifyS256(
   codeVerifier: string,
@@ -30,8 +41,7 @@ export async function verifyS256(
   if (
     typeof codeVerifier !== 'string' ||
     typeof codeChallenge !== 'string' ||
-    codeVerifier.length < 43 ||
-    codeVerifier.length > 128
+    !VERIFIER_RE.test(codeVerifier)
   ) {
     return false;
   }
@@ -45,4 +55,14 @@ export async function verifyS256(
     diff |= computed.charCodeAt(i) ^ codeChallenge.charCodeAt(i);
   }
   return diff === 0;
+}
+
+/**
+ * Validate a code_verifier WITHOUT comparing it to a challenge. Used by
+ * /api/oauth/token to short-circuit a malformed verifier BEFORE it burns
+ * the (single-use) authorization code via consumeCode(). Returns true if
+ * the verifier matches the RFC 7636 §4.1 shape.
+ */
+export function isWellFormedVerifier(s: unknown): boolean {
+  return typeof s === 'string' && VERIFIER_RE.test(s);
 }

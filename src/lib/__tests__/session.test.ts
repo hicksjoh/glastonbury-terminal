@@ -85,4 +85,37 @@ describe('session JWT', () => {
   it('exports the legacy cookie name for drop-in compat', () => {
     expect(SESSION_COOKIE_NAME).toBe('gt-auth');
   });
+
+  // P0-1: an OAuth access token (which carries an `aud` claim) must NOT
+  // verify as a session cookie. Without this guard, a stolen 1h-TTL OAuth
+  // token planted in the gt-auth cookie would grant 1h of session-grade
+  // access — including the OAuth consent screen, which lets the attacker
+  // authorize new clients and chain a long-lived foothold.
+  it('rejects a JWT with an aud claim (cross-replay defense)', async () => {
+    const { SignJWT } = await import('jose');
+    const secretBytes = new TextEncoder().encode(process.env.SESSION_SECRET!);
+    const oauthLikeToken = await new SignJWT({ sub: 'wes' })
+      .setProtectedHeader({ alg: 'HS256' })
+      .setIssuedAt()
+      .setAudience('https://terminal.johnwesleyhicks.com/api/mcp')
+      .setExpirationTime('1h')
+      .sign(secretBytes);
+
+    const verified = await verifySessionJwt(oauthLikeToken);
+    expect(verified).toBeNull();
+  });
+
+  it('rejects a JWT with the legacy terminal-mcp aud claim', async () => {
+    const { SignJWT } = await import('jose');
+    const secretBytes = new TextEncoder().encode(process.env.SESSION_SECRET!);
+    const legacyOauthToken = await new SignJWT({ sub: 'wes' })
+      .setProtectedHeader({ alg: 'HS256' })
+      .setIssuedAt()
+      .setAudience('terminal-mcp')
+      .setExpirationTime('1h')
+      .sign(secretBytes);
+
+    const verified = await verifySessionJwt(legacyOauthToken);
+    expect(verified).toBeNull();
+  });
 });

@@ -70,7 +70,7 @@ export async function POST(req: NextRequest) {
     return new NextResponse('Consent transaction unknown or expired. Restart authorization.', { status: 400 });
   }
 
-  const { client_id, redirect_uri, code_challenge, scope, state, subject } = transaction;
+  const { client_id, redirect_uri, code_challenge, scope, state, subject, resource } = transaction;
 
   // Defense-in-depth: even though authorize already validated, re-check
   // the client + redirect at finalize time. Catches the rare case where
@@ -103,6 +103,7 @@ export async function POST(req: NextRequest) {
       // app — but trust the session value here since it's the live identity.
       subject: session.sub || subject,
       state,
+      resource,
     });
   } catch (err) {
     const eventId = captureRouteError(err, { request_id, route: 'oauth/finalize', client_id });

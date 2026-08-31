@@ -4,6 +4,7 @@ import { findClient } from '@/lib/oauth/clients';
 import { verifySessionJwt, SESSION_COOKIE_NAME } from '@/lib/session';
 import { checkRateLimitDurable, getRateLimitIdentity } from '@/lib/rate-limit-durable';
 import { mintConsentTransaction } from '@/lib/oauth/consent-tx';
+import { getIssuer } from '@/lib/oauth/metadata';
 import { captureRouteError } from '@/lib/api-error';
 import { loggerFor } from '@/lib/request-id';
 
@@ -66,6 +67,11 @@ export async function GET(req: NextRequest) {
   const code_challenge_method = searchParams.get('code_challenge_method');
   const scope = searchParams.get('scope') ?? 'mcp';
   const state = searchParams.get('state');
+  // P0-2 / RFC 8707: the `resource` parameter binds the access token to a
+  // specific protected resource URL. Claude.app already sends this. We
+  // accept the multi-valued form per the RFC (a client MAY include it
+  // more than once) but for our single-resource server we only need one.
+  const resource = searchParams.get('resource');
 
   // Pre-redirect validation: when client_id or redirect_uri are missing or
   // invalid we MUST NOT redirect to the (untrusted) redirect_uri — that's an
@@ -117,6 +123,30 @@ export async function GET(req: NextRequest) {
     });
   }
 
+  // P0-2 / RFC 8707: validate the resource indicator. We accept exactly
+  // one value: the canonical MCP URL for this issuer. If the client omits
+  // `resource`, we still allow the request (RFC 8707 §2 says omitting is
+  // valid for servers that don't require it) BUT we'll bind the token to
+  // the default resource so the audience claim is always meaningful.
+  const issuer = getIssuer(req);
+  const expectedResource = `${issuer}/api/mcp`;
+  let boundResource: string;
+  if (resource === null) {
+    // Client omitted resource — bind to the default. Strict clients send it;
+    // lenient ones don't; either way the issued token's `aud` will be the
+    // canonical resource URL.
+    boundResource = expectedResource;
+  } else if (resource === expectedResource) {
+    boundResource = resource;
+  } else {
+    log.warn({ client_id, resource, expected: expectedResource }, 'authorize: resource mismatch');
+    return redirectWithError(redirect_uri, {
+      error: 'invalid_target',
+      error_description: 'resource parameter does not match this server',
+      state,
+    });
+  }
+
   // Auth check — must have valid gt-auth session to consent. If not,
   // bounce to /login with a `next` that lands them back on this exact
   // /api/oauth/authorize URL after login. The consent page itself also
@@ -143,6 +173,7 @@ export async function GET(req: NextRequest) {
       scope,
       subject: session.sub,
       state: state ?? null,
+      resource: boundResource,
     });
   } catch (err) {
     const eventId = captureRouteError(err, { request_id, route: 'oauth/authorize', client_id });
