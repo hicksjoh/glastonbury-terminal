@@ -15,11 +15,11 @@
       "schedule": "30 13 * * 1-5"
     },
     {
-      "path": "/api/cron/prediction-snapshot?job=narrative",
+      "path": "/api/cron/prediction-snapshot",
       "schedule": "30 13 * * 1-5"
     },
     {
-      "path": "/api/cron/prediction-snapshot?job=narrative",
+      "path": "/api/cron/prediction-snapshot",
       "schedule": "0 18 * * 1-5"
     },
     {

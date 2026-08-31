@@ -5,26 +5,10 @@ import { AppShell } from '@/components/layout/AppShell';
 import { ErrorBoundary } from '@/components/ErrorBoundary';
 import { LoadingState } from '@/components/LoadingState';
 import { Activity, RefreshCw, ArrowUpRight, ArrowDownRight } from 'lucide-react';
+import { z } from 'zod';
+import { fetchParsed, flowResponseSchema } from '@/lib/api-schemas';
 
-interface Flow {
-  symbol: string;
-  contractType: string;
-  strike: number;
-  expiration: string;
-  premium: number;
-  volume: number;
-  openInterest: number;
-  volOiRatio: number;
-  sentiment: string;
-  flowType: 'sweep' | 'block' | 'unusual';
-  direction: 'bullish' | 'bearish';
-  timestamp: string;
-}
-
-interface FlowData {
-  flows: Flow[];
-  summary: { totalFlows: number; bullishPct: number; bearishPct: number; topSymbols: string[] };
-}
+type FlowData = z.infer<typeof flowResponseSchema>;
 
 export default function FlowPage() {
   const [data, setData] = useState<FlowData | null>(null);
@@ -41,8 +25,8 @@ export default function FlowPage() {
         minVolOI: String(minVolOI),
       });
       if (typeFilter) params.set('type', typeFilter);
-      const res = await fetch(`/api/flow?${params}`);
-      if (res.ok) setData(await res.json());
+      const parsed = await fetchParsed(`/api/flow?${params}`, flowResponseSchema);
+      if (parsed) setData(parsed);
     } catch (err) {
       console.error('Flow fetch error:', err);
     } finally {
@@ -185,20 +169,20 @@ export default function FlowPage() {
                 {data.flows.map((f, i) => (
                   <tr
                     key={i}
-                    onClick={() => window.location.href = `/trading?symbol=${f.symbol}&tab=options`}
+                    onClick={() => window.location.href = `/trading?symbol=${f.underlying}&tab=options`}
                     style={{
                       borderBottom: '1px solid rgba(30,30,53,0.5)', cursor: 'pointer',
                       background: f.direction === 'bullish' ? 'rgba(74,222,128,0.02)' : 'rgba(248,113,113,0.02)',
                     }}
                   >
-                    <td style={{ padding: '10px', color: '#e8e8f0', fontWeight: 700, fontSize: 13, fontFamily: "'JetBrains Mono', monospace" }}>{f.symbol}</td>
+                    <td style={{ padding: '10px', color: '#e8e8f0', fontWeight: 700, fontSize: 13, fontFamily: "'JetBrains Mono', monospace" }}>{f.underlying}</td>
                     <td style={{ padding: '10px' }}>
                       <FlowBadge type={f.flowType} />
                     </td>
-                    <td style={{ padding: '10px', color: f.contractType === 'call' ? '#4ade80' : '#f87171', fontSize: 12, textTransform: 'uppercase', fontWeight: 600 }}>{f.contractType}</td>
+                    <td style={{ padding: '10px', color: f.type === 'call' ? '#4ade80' : '#f87171', fontSize: 12, textTransform: 'uppercase', fontWeight: 600 }}>{f.type}</td>
                     <td style={{ padding: '10px', fontFamily: "'JetBrains Mono', monospace", fontSize: 12, color: '#ccc' }}>${f.strike}</td>
                     <td style={{ padding: '10px', fontSize: 12, color: '#888' }}>{f.expiration}</td>
-                    <td style={{ padding: '10px', fontFamily: "'JetBrains Mono', monospace", fontSize: 12, color: '#f0c674', fontWeight: 600 }}>{formatPremium(f.premium)}</td>
+                    <td style={{ padding: '10px', fontFamily: "'JetBrains Mono', monospace", fontSize: 12, color: '#f0c674', fontWeight: 600 }}>{formatPremium(f.premiumUSD)}</td>
                     <td style={{ padding: '10px', fontFamily: "'JetBrains Mono', monospace", fontSize: 12, color: f.volOiRatio > 5 ? '#f0c674' : '#ccc' }}>{f.volOiRatio.toFixed(1)}x</td>
                     <td style={{ padding: '10px' }}>
                       <FlowBadge type={f.flowType} />
@@ -215,9 +199,9 @@ export default function FlowPage() {
                     <td style={{ padding: '10px' }}>
                       <span style={{
                         padding: '2px 8px', borderRadius: 4, fontSize: 10,
-                        background: f.sentiment === 'positive' ? 'rgba(74,222,128,0.1)' : f.sentiment === 'negative' ? 'rgba(248,113,113,0.1)' : 'rgba(255,255,255,0.05)',
-                        color: f.sentiment === 'positive' ? '#4ade80' : f.sentiment === 'negative' ? '#f87171' : '#888',
-                      }}>{f.sentiment}</span>
+                        background: f.direction === 'bullish' ? 'rgba(74,222,128,0.1)' : 'rgba(248,113,113,0.1)',
+                        color: f.direction === 'bullish' ? '#4ade80' : '#f87171',
+                      }}>{f.direction === 'bullish' ? 'positive' : 'negative'}</span>
                     </td>
                   </tr>
                 ))}

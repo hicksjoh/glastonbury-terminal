@@ -11,7 +11,7 @@ import { test, expect } from '@playwright/test';
 test.describe('@smoke F11 — debate gate', () => {
   test('small order (< $5K notional) does not trigger the debate', async ({ request }) => {
     const res = await request.post('/api/alpaca/orders', {
-      data: { symbol: 'AAPL', side: 'buy', qty: 1, limit_price: 250, mode: 'preview' },
+      data: { symbol: 'AAPL', side: 'buy', qty: 1, type: 'limit', limit_price: 250, mode: 'preview' },
     });
     expect(res.status()).toBe(200);
     const body = await res.json();
@@ -22,7 +22,7 @@ test.describe('@smoke F11 — debate gate', () => {
 
   test('large order (>= $5K) triggers the debate', async ({ request }) => {
     const res = await request.post('/api/alpaca/orders', {
-      data: { symbol: 'AAPL', side: 'buy', qty: 50, limit_price: 250, mode: 'preview' },
+      data: { symbol: 'AAPL', side: 'buy', qty: 50, type: 'limit', limit_price: 250, mode: 'preview' },
     });
     expect(res.status()).toBe(200);
     const body = await res.json();

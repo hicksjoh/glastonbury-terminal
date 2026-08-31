@@ -55,6 +55,29 @@ export async function setDurable<T>(key: string, value: T, ttlMs: number | null)
 }
 
 /**
+ * Atomically prepend an entry to a jsonb-array key, keeping the newest `cap`
+ * entries. Concurrent writers cannot lose each other's entries (the trim +
+ * prepend happen in one statement via kv_append_capped()).
+ */
+export async function appendDurableCapped(key: string, entry: unknown, cap: number): Promise<boolean> {
+  try {
+    const supabase = createServiceClient();
+    const { error } = await supabase.rpc('kv_append_capped', { entry_key: key, entry, cap });
+    if (error) {
+      console.error('[durable-cache] append failed', key, error.message);
+      return false;
+    }
+    // The memory layer for this key is now stale on this instance; drop it so
+    // the next getDurable re-reads the merged list.
+    setCache(`durable:${key}`, null as unknown, 1);
+    return true;
+  } catch (err) {
+    console.error('[durable-cache] append threw', key, err instanceof Error ? err.message : err);
+    return false;
+  }
+}
+
+/**
  * Atomic distributed lock lease via kv_try_lock(). Returns true when this
  * caller acquired the lease. Fails OPEN on infrastructure errors: for our
  * uses (regeneration cooldowns) doing the work twice beats wedging it, and

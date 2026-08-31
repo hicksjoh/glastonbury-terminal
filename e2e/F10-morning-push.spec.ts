@@ -17,7 +17,9 @@ test.describe('@smoke F10 — 6:30 AM morning push', () => {
   test('rejects unauthenticated POST with 401', async ({ request }) => {
     const res = await request.post('/api/briefing/morning-push', {
       data: {},
-      headers: { Authorization: '' },
+      // The shared request context has a valid gt-auth cookie, which cron
+      // routes intentionally accept. Clear it to exercise the public edge.
+      headers: { Authorization: '', Cookie: '' },
     });
     expect(res.status()).toBe(401);
   });

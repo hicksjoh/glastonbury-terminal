@@ -3,6 +3,7 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { RefreshCw } from 'lucide-react';
 import { Card, PillBadge, type PillTone } from '@/components/ui';
+import { DataAge } from '@/components/ui/DataAge';
 import { color, font, size as sz, weight, tracking, space, radius, motion } from '@/lib/design-tokens';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
@@ -33,21 +34,6 @@ function isMarketHours(): boolean {
   const hour = et.getHours();
   const day = et.getDay();
   return day >= 1 && day <= 5 && hour >= 4 && hour < 20;
-}
-
-function timeAgo(ts: string): string {
-  const diff = Date.now() - new Date(ts).getTime();
-  const mins = Math.floor(diff / 60000);
-  if (mins < 1) return 'just now';
-  if (mins < 60) return `${mins}m ago`;
-  const hrs = Math.floor(mins / 60);
-  if (hrs < 24) return `${hrs}h ago`;
-  // After 24h, show an absolute timestamp — "48h ago" reads like a bug,
-  // "Fri, Apr 17, 4:05 PM" reads like the last market close.
-  return new Date(ts).toLocaleString('en-US', {
-    weekday: 'short', month: 'short', day: 'numeric',
-    hour: 'numeric', minute: '2-digit',
-  });
 }
 
 function isStale(ts: string): boolean {
@@ -209,7 +195,7 @@ function MarketNarrativeInner() {
           display: 'flex', alignItems: 'center', gap: space[1],
         }}>
           <span>{'⚠'}</span>
-          <span>Narrative is stale — last updated {timeAgo(data.timestamp)}. Hit refresh for the latest.</span>
+          <span>Narrative is stale. Hit refresh for the latest.</span>
         </div>
       )}
 
@@ -237,9 +223,11 @@ function MarketNarrativeInner() {
       )}
 
       {/* Timestamp */}
-      <div style={{ fontSize: sz.micro.fontSize, color: color.textDim, textAlign: 'right' }}>
-        {timeAgo(data.timestamp)}
-        {data.cached && ' (cached)'}
+      <div style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'center', gap: space[1] }}>
+        {data.cached && (
+          <span style={{ fontSize: sz.micro.fontSize, color: color.textDim }}>Cached</span>
+        )}
+        <DataAge ts={data.timestamp} />
       </div>
 
       {/* Keyframes injection */}

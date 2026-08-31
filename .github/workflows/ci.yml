@@ -33,6 +33,12 @@ jobs:
       - name: Typecheck
         run: npx tsc --noEmit
 
+      - name: Static-cache guard
+        # A parameterless GET() route with no `dynamic` export gets frozen at
+        # build time on Vercel (bit us on /api/health + /api/narrative,
+        # 2026-08-30). Fails the build if the pattern reappears.
+        run: node scripts/check-route-dynamic.mjs
+
       - name: Unit tests (vitest)
         run: npm test
         env:

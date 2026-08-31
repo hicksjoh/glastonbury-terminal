@@ -27,8 +27,19 @@ async function handle(req: NextRequest): Promise<NextResponse> {
   }
 
   // Reuse this middleware-allowlisted, self-authenticated cron endpoint for
-  // the narrative schedule. The query flag prevents extra prediction writes.
-  if (req.nextUrl.searchParams.get('job') === 'narrative') {
+  // the narrative schedule (a new cron route would require editing the
+  // untouchable middleware allowlist). Vercel's blessed way to share one
+  // path across schedules is the x-vercel-cron-schedule header — query
+  // strings in cron paths are undocumented and may be stripped, which would
+  // silently run a prediction snapshot instead. ?job=narrative is kept for
+  // manual/curl invocations. Keep NARRATIVE_SCHEDULES in sync with
+  // vercel.json.
+  const NARRATIVE_SCHEDULES = ['30 13 * * 1-5', '0 18 * * 1-5'];
+  const cronSchedule = req.headers.get('x-vercel-cron-schedule');
+  const isNarrativeJob =
+    req.nextUrl.searchParams.get('job') === 'narrative' ||
+    (cronSchedule !== null && NARRATIVE_SCHEDULES.includes(cronSchedule));
+  if (isNarrativeJob) {
     const narrativeReq = new Request(new URL('/api/narrative?refresh=true', req.url));
     const response = await refreshNarrative(narrativeReq);
     if (!response.ok) {

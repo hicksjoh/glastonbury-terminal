@@ -5,24 +5,11 @@ import { AppShell } from '@/components/layout/AppShell';
 import { ErrorBoundary } from '@/components/ErrorBoundary';
 import { LoadingState } from '@/components/LoadingState';
 import { CalendarDays, TrendingUp, Zap, ChevronRight } from 'lucide-react';
+import { z } from 'zod';
+import { earningsResponseSchema, fetchParsed } from '@/lib/api-schemas';
 
-interface EarningsEntry {
-  symbol: string;
-  company: string;
-  date: string;
-  time: 'bmo' | 'amc';
-  epsEstimate: number;
-  revenueEstimate: number;
-  surpriseHistory: { beatRate: number | null; avgSurprise: number | null; avgMoveOnEarnings: number | null } | null;
-  ivAnalysis: { currentIV: number | null; avgPostEarningsIV: number | null; crushEstimate: number | null; straddle_price: number | null } | null;
-  playRecommendation: string;
-}
-
-interface EarningsData {
-  upcoming: EarningsEntry[];
-  thisWeek: number;
-  highImpact: EarningsEntry[];
-}
+type EarningsData = z.infer<typeof earningsResponseSchema>;
+type EarningsEntry = EarningsData['upcoming'][number];
 
 export default function EarningsPage() {
   const [data, setData] = useState<EarningsData | null>(null);
@@ -32,10 +19,8 @@ export default function EarningsPage() {
 
   useEffect(() => {
     setLoading(true);
-    fetch(`/api/earnings?range=${range}`)
-      .then(r => r.json())
-      .then(d => { if (!d.error) setData(d); })
-      .catch(() => {})
+    fetchParsed(`/api/earnings?range=${range}`, earningsResponseSchema)
+      .then(d => { if (d) setData(d); })
       .finally(() => setLoading(false));
   }, [range]);
 
