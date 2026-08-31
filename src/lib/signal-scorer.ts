@@ -97,7 +97,6 @@ export function scoreSignal(input: SignalInput, portfolioSize: number = 100000, 
   let kellySizing = null;
   if (score >= 40 && input.winRate && input.avgWin && input.avgLoss) {
     const kelly = calculateKelly({
-      expectedReturn: input.avgWin * input.winRate - input.avgLoss * (1 - input.winRate),
       winRate: input.winRate,
       avgWin: input.avgWin,
       avgLoss: input.avgLoss,

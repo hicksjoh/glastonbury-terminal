@@ -166,12 +166,14 @@ async function handleScan(): Promise<NextResponse> {
         try {
           const { calculateKelly } = await import('@/lib/kelly-sizer');
           const kellyResult = calculateKelly({
-            expectedReturn: 0.05,
             winRate: Math.min(0.9, signal.score / 100),
             avgWin: 0.08,
             avgLoss: 0.04,
           });
-          kellySize = kellyResult?.dollarsAtRisk ?? null;
+          // calculateKelly fails closed to 0 on bad input, but `?? null`
+          // would have let a NaN through (?? only tests null/undefined),
+          // and JSON.stringify renders NaN as null on the wire.
+          kellySize = Number.isFinite(kellyResult?.dollarsAtRisk) ? kellyResult.dollarsAtRisk : null;
         } catch {
           // If Kelly sizer not available, use null
           kellySize = null;

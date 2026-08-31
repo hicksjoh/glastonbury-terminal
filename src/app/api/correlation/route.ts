@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { pearsonCorrelation, correlationMatrix, diversificationScore } from '@/lib/correlation';
+import { pearsonCorrelation, correlationMatrix, diversificationScore, alignReturnSeries } from '@/lib/correlation';
 import { getHistoricalPrices } from '@/lib/fmp-client';
 
 const FMP_KEY = process.env.FMP_API_KEY;
@@ -85,15 +85,24 @@ export async function GET(req: NextRequest) {
               }
             }
 
-            // Portfolio beta = avg beta of all symbols
+            // Portfolio beta = EQUAL-WEIGHTED avg beta of all symbols.
+            // (Position sizes aren't available on this route, so this is a
+            // per-symbol average, not a capital-weighted portfolio beta.)
+            //
+            // Series are aligned on their TAIL — the most recent common
+            // window — so the correlation compares like-for-like calendar
+            // dates. Front-truncation would pair the oldest bars of a long
+            // history against the whole of a short one. The std devs are
+            // taken over the SAME aligned window as the correlation, so
+            // beta = corr * sigma_ret / sigma_spy is internally consistent.
             let totalBeta = 0;
             for (const ret of allReturns) {
-              const minLen = Math.min(ret.length, spyReturns.length);
-              const corr = pearsonCorrelation(ret.slice(0, minLen), spyReturns.slice(0, minLen));
-              const stdRet = std(ret);
-              const stdSpy = std(spyReturns);
+              const [alignedRet, alignedSpy] = alignReturnSeries([ret, spyReturns]);
+              const corr = pearsonCorrelation(alignedRet, alignedSpy);
+              const stdRet = std(alignedRet);
+              const stdSpy = std(alignedSpy);
               const beta = stdSpy > 0 ? (corr * stdRet / stdSpy) : 1;
-              totalBeta += beta;
+              totalBeta += Number.isFinite(beta) ? beta : 1;
             }
             portfolioBeta = Math.round((totalBeta / allReturns.length) * 1000) / 1000;
           }

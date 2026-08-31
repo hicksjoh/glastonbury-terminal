@@ -4,7 +4,26 @@
  * Pure TypeScript implementation — no external dependencies.
  * Provides Value-at-Risk, Conditional VaR, and stress testing
  * for portfolio risk analysis via Monte Carlo simulation.
+ *
+ * FAILURE POLICY
+ * --------------
+ * This engine THROWS on input it cannot decompose or simulate, matching
+ * `matrixInverse` in black-litterman.ts. It used to clamp a negative
+ * Cholesky pivot to 1e-10 and carry on, which meant an invalid
+ * correlation structure produced plausible-looking, wrong VaR numbers
+ * with no signal that anything was wrong. A risk number that is quietly
+ * wrong is more dangerous than a risk number that is missing.
  */
+
+import { isFiniteNumber } from './finite';
+
+/** Thrown when a matrix cannot be Cholesky-decomposed. */
+export class NotPositiveDefiniteError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'NotPositiveDefiniteError';
+  }
+}
 
 // ---------------------------------------------------------------------------
 // Types
@@ -100,11 +119,53 @@ class SeededRNG {
 // ---------------------------------------------------------------------------
 
 /**
- * Cholesky decomposition of a symmetric positive-definite matrix.
- * Returns lower-triangular matrix L such that A = L * L^T.
+ * Cholesky decomposition of a symmetric positive-semi-definite matrix.
+ * Returns lower-triangular L such that A = L * L^T.
+ *
+ * Positive-SEMI-definite input is accepted: two perfectly correlated
+ * assets make a singular but perfectly legitimate covariance matrix, and
+ * the standard convention is to zero that column. A pivot that is
+ * genuinely negative — beyond floating-point noise — means the matrix is
+ * not a valid covariance/correlation structure at all, and throws.
+ *
+ * @throws NotPositiveDefiniteError when a pivot is materially negative
+ * @throws Error when the matrix is empty, non-square, asymmetric, or
+ *   contains a non-finite entry
  */
 export function choleskyDecomposition(matrix: number[][]): number[][] {
   const n = matrix.length;
+  if (n === 0) throw new Error('choleskyDecomposition: matrix is empty.');
+
+  let maxAbsDiag = 0;
+  for (let i = 0; i < n; i++) {
+    if (!Array.isArray(matrix[i]) || matrix[i].length !== n) {
+      throw new Error(`choleskyDecomposition: matrix must be square (row ${i} has length ${matrix[i]?.length}, expected ${n}).`);
+    }
+    for (let j = 0; j < n; j++) {
+      if (!isFiniteNumber(matrix[i][j])) {
+        throw new Error(`choleskyDecomposition: non-finite entry at [${i}][${j}].`);
+      }
+    }
+    maxAbsDiag = Math.max(maxAbsDiag, Math.abs(matrix[i][i]));
+  }
+
+  // Symmetry, checked relative to the matrix scale so a 1e-4-magnitude
+  // covariance matrix isn't held to an absolute 1e-12 bar.
+  const symTol = 1e-9 * Math.max(1, maxAbsDiag);
+  for (let i = 0; i < n; i++) {
+    for (let j = i + 1; j < n; j++) {
+      if (Math.abs(matrix[i][j] - matrix[j][i]) > symTol) {
+        throw new Error(
+          `choleskyDecomposition: matrix must be symmetric ([${i}][${j}]=${matrix[i][j]} vs [${j}][${i}]=${matrix[j][i]}).`,
+        );
+      }
+    }
+  }
+
+  // A pivot below -pivotTol is a real violation; one within +/-pivotTol
+  // is rank deficiency (PSD) and gets a zero column.
+  const pivotTol = 1e-12 * Math.max(1, maxAbsDiag);
+
   const L: number[][] = Array.from({ length: n }, () => new Array(n).fill(0));
 
   for (let i = 0; i < n; i++) {
@@ -116,13 +177,18 @@ export function choleskyDecomposition(matrix: number[][]): number[][] {
 
       if (i === j) {
         const diag = matrix[i][i] - sum;
-        if (diag <= 0) {
-          // Matrix is not positive-definite; clamp to a tiny positive value
-          // to keep the decomposition numerically stable.
-          L[i][j] = Math.sqrt(Math.max(diag, 1e-10));
-        } else {
-          L[i][j] = Math.sqrt(diag);
+        if (diag < -pivotTol) {
+          throw new NotPositiveDefiniteError(
+            `choleskyDecomposition: matrix is not positive-definite — pivot ${diag} at index ${i}. ` +
+              'This is not a valid covariance or correlation structure; the risk numbers derived ' +
+              'from it would be meaningless.',
+          );
         }
+        L[i][j] = diag > 0 ? Math.sqrt(diag) : 0;
+      } else if (L[j][j] === 0) {
+        // Rank-deficient column: the standard PSD convention is 0, not a
+        // division by (near) zero that explodes to +/-Infinity.
+        L[i][j] = 0;
       } else {
         L[i][j] = (matrix[i][j] - sum) / L[j][j];
       }
@@ -133,15 +199,55 @@ export function choleskyDecomposition(matrix: number[][]): number[][] {
 }
 
 /**
+ * Trim return series to their most recent common window. Series arrive
+ * oldest-first, so tail-alignment pairs like-for-like calendar dates.
+ * Front-truncation would correlate the oldest bars of a long history
+ * against the whole of a short one.
+ */
+function alignSeries(returns: number[][]): number[][] {
+  if (returns.length === 0) return [];
+  const minLen = Math.min(...returns.map((r) => r.length));
+  return returns.map((r) => (r.length === minLen ? r : r.slice(r.length - minLen)));
+}
+
+function assertUsableSeries(returns: number[][]): number[][] {
+  const aligned = alignSeries(returns);
+  if (aligned.length === 0) return aligned;
+  const T = aligned[0].length;
+  if (T < 2) {
+    throw new Error(
+      `covariance requires at least 2 observations per series (shortest series has ${T}).`,
+    );
+  }
+  for (let i = 0; i < aligned.length; i++) {
+    for (let t = 0; t < T; t++) {
+      if (!isFiniteNumber(aligned[i][t])) {
+        throw new Error(`non-finite return observation at series ${i}, index ${t}.`);
+      }
+    }
+  }
+  return aligned;
+}
+
+/**
  * Compute the covariance matrix from a 2-D array of return series.
  * `returns[i]` is the array of daily returns for asset i.
+ *
+ * Ragged input is tail-aligned. Uses the sample (n-1) denominator.
+ *
+ * @throws when any series has fewer than two observations, or holds a
+ *   non-finite value (both used to yield a NaN matrix that then poisoned
+ *   every downstream risk figure).
  */
 export function covarianceMatrix(returns: number[][]): number[][] {
   const n = returns.length;
-  const T = Math.min(...returns.map((r) => r.length));
+  if (n === 0) return [];
+
+  const aligned = assertUsableSeries(returns);
+  const T = aligned[0].length;
 
   // Means
-  const means: number[] = returns.map((r) => {
+  const means: number[] = aligned.map((r) => {
     let s = 0;
     for (let t = 0; t < T; t++) s += r[t];
     return s / T;
@@ -154,7 +260,7 @@ export function covarianceMatrix(returns: number[][]): number[][] {
     for (let j = i; j < n; j++) {
       let s = 0;
       for (let t = 0; t < T; t++) {
-        s += (returns[i][t] - means[i]) * (returns[j][t] - means[j]);
+        s += (aligned[i][t] - means[i]) * (aligned[j][t] - means[j]);
       }
       cov[i][j] = s / (T - 1);
       cov[j][i] = cov[i][j];
@@ -199,11 +305,32 @@ export function runMonteCarlo(
 ): MonteCarloRiskResult {
   const { simulations, horizon } = config;
   const n = positions.length;
+
+  // --- Validate before simulating -------------------------------------
+  // Everything below turns upstream broker/market data into a dollar risk
+  // figure Wes reads off a dashboard. A NaN that survives to the output
+  // renders as a confident-looking blank, so reject at the door.
+  if (n === 0) throw new Error('runMonteCarlo: at least one position is required.');
+  if (!isFiniteNumber(portfolioValue)) {
+    throw new Error('runMonteCarlo: portfolioValue must be a finite number.');
+  }
+  if (!Number.isInteger(simulations) || simulations < 1) {
+    throw new Error(`runMonteCarlo: simulations must be a positive integer (got ${simulations}).`);
+  }
+  if (!Number.isInteger(horizon) || horizon < 1) {
+    throw new Error(`runMonteCarlo: horizon must be a positive integer (got ${horizon}).`);
+  }
+  for (const p of positions) {
+    if (!isFiniteNumber(p.weight)) {
+      throw new Error(`runMonteCarlo: non-finite weight for ${p.symbol}.`);
+    }
+  }
+
   const rng = new SeededRNG(12345);
 
   // --- Compute mean daily returns and covariance matrix ----
-  const allReturns = positions.map((p) => p.returns);
-  const T = Math.min(...allReturns.map((r) => r.length));
+  const allReturns = assertUsableSeries(positions.map((p) => p.returns));
+  const T = allReturns[0].length;
 
   const meanReturns: number[] = allReturns.map((r) => {
     let s = 0;
