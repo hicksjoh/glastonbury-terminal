@@ -139,26 +139,36 @@ Respond ONLY with a JSON array, no other text.`;
     const viewConfidences: number[] = [];
     const aiViewDetails: Array<{ symbol: string; view: string; confidence: number; reasoning: string }> = [];
 
-    for (const item of parsed) {
-      const idx = symbols.indexOf(item.symbol);
+    for (const item of Array.isArray(parsed) ? parsed : []) {
+      const idx = symbols.indexOf(item?.symbol);
       if (idx === -1) continue;
 
-      // Absolute view: asset i expected return = item.expectedReturn
+      // These two numbers come straight out of a language model and feed
+      // the Black-Litterman posterior. A string, a null or a missing
+      // field would make Q non-numeric and turn every posterior return,
+      // weight and risk figure into NaN, so a malformed view is dropped
+      // rather than propagated.
+      const expectedReturn = Number(item?.expectedReturn);
+      if (!Number.isFinite(expectedReturn)) {
+        console.warn(`optimize: dropping AI view for ${item?.symbol} — non-numeric expectedReturn`);
+        continue;
+      }
+      const rawConfidence = Number(item?.confidence);
+      const confidence = Number.isFinite(rawConfidence) && rawConfidence > 0 ? rawConfidence : 0.5;
+
+      // Absolute view: asset i expected return = expectedReturn
       const P = Array(symbols.length).fill(0);
       P[idx] = 1;
 
-      views.push({
-        assets: P,
-        expectedReturn: item.expectedReturn,
-      });
-      viewConfidences.push(item.confidence || 0.5);
+      views.push({ assets: P, expectedReturn });
+      viewConfidences.push(confidence);
 
-      const direction = item.expectedReturn > eqReturns[idx] ? 'bullish' : 'bearish';
+      const direction = expectedReturn > eqReturns[idx] ? 'bullish' : 'bearish';
       aiViewDetails.push({
         symbol: item.symbol,
-        view: `${direction} - expected ${(item.expectedReturn * 100).toFixed(2)}% annual return`,
-        confidence: item.confidence,
-        reasoning: item.reasoning,
+        view: `${direction} - expected ${(expectedReturn * 100).toFixed(2)}% annual return`,
+        confidence,
+        reasoning: typeof item?.reasoning === 'string' ? item.reasoning : '',
       });
     }
 
