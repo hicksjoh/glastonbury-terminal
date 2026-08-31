@@ -2,6 +2,9 @@ import { NextResponse } from 'next/server';
 import { getAgentStatuses } from '@/lib/agents/orchestrator';
 import { buildMeta } from '@/lib/api-meta';
 
+// Live-data endpoint — never let Next static-optimize this at build time
+export const dynamic = 'force-dynamic';
+
 export async function GET() {
   const agents = getAgentStatuses();
 

@@ -1,6 +1,9 @@
 import { NextResponse } from 'next/server';
 import { getCached, setCache, TTL } from '@/lib/server-cache';
 
+// Live-data endpoint — never let Next static-optimize this at build time
+export const dynamic = 'force-dynamic';
+
 const FMP_BASE = 'https://financialmodelingprep.com/stable';
 const FMP_KEY = process.env.FMP_API_KEY || '';
 

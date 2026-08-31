@@ -444,7 +444,7 @@ export default function AlertsPage() {
                       </button>
                     </div>
                     <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 6 }}>
-                      {alert.conditions.map((c, i) => (
+                      {(alert.conditions ?? []).map((c, i) => (
                         <span key={i} style={{
                           fontSize: 11, padding: '3px 10px', borderRadius: 4,
                           background: 'rgba(138, 92, 246, 0.08)',

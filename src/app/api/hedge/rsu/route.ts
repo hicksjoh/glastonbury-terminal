@@ -3,6 +3,9 @@ import { analyzeRsuHedge, loadWealthSnapshot } from '@/lib/hedge/rsu-analyzer';
 import { getCached, setCache } from '@/lib/server-cache';
 import { checkRateLimitDurable } from '@/lib/rate-limit-durable';
 
+// Live-data endpoint — never let Next static-optimize this at build time
+export const dynamic = 'force-dynamic';
+
 // F2 — RSU concentration hedge agent (Agent Team).
 //
 // GET /api/hedge/rsu                - cached read of the latest analysis

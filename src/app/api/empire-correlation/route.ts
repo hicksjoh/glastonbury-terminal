@@ -3,6 +3,9 @@ import { createServiceClient } from '@/lib/supabase';
 import { loadWealthSnapshot } from '@/lib/hedge/rsu-analyzer';
 import { getCached, setCache } from '@/lib/server-cache';
 
+// Live-data endpoint — never let Next static-optimize this at build time
+export const dynamic = 'force-dynamic';
+
 // F3 — Empire ⇄ Markets correlation view.
 //
 // Aggregates Wes's CR3 franchise footprint, market regime, active storm

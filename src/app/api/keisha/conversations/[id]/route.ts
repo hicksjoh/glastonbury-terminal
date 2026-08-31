@@ -53,7 +53,8 @@ export async function PUT(
     }
 
     if (body.title !== undefined) {
-      updates.title = body.title;
+      const title = typeof body.title === 'string' ? body.title.trim() : '';
+      updates.title = title && !title.toLowerCase().startsWith('undefined') ? title : null;
     }
 
     const { data, error } = await supabase

@@ -5,6 +5,9 @@ import { ALPACA_BASE_URL, assertOrderSubmissionAllowed } from '@/lib/alpaca';
 import { getServerTradingMode, LiveOrderRejectedError } from '@/lib/trading-mode';
 import * as Sentry from '@sentry/nextjs';
 
+// Live-data endpoint — never let Next static-optimize this at build time
+export const dynamic = 'force-dynamic';
+
 const ALPACA_HEADERS = {
   'APCA-API-KEY-ID': process.env.ALPACA_API_KEY!,
   'APCA-API-SECRET-KEY': process.env.ALPACA_SECRET_KEY!,
