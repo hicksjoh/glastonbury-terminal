@@ -38,7 +38,8 @@ export interface PortfolioContext {
 }
 
 /**
- * Panic Detection: >3 sell orders within 5 minutes during VIX spike
+ * Panic Detection: 3 OR MORE sell orders within 5 minutes while VIX is
+ * at or above 25. (Both boundaries are inclusive — see the tests.)
  */
 function checkPanicSelling(trade: TradeContext): BehavioralAlert | null {
   if (trade.action !== 'sell') return null;
@@ -56,7 +57,8 @@ function checkPanicSelling(trade: TradeContext): BehavioralAlert | null {
 }
 
 /**
- * Performance Chasing: Buying a stock up >20% in last 5 days without prior watchlist
+ * Performance Chasing: buying a stock up 20% OR MORE over the last 5
+ * days that was not already on the watchlist. (Inclusive boundary.)
  */
 function checkPerformanceChasing(trade: TradeContext): BehavioralAlert | null {
   if (trade.action !== 'buy') return null;
@@ -74,7 +76,8 @@ function checkPerformanceChasing(trade: TradeContext): BehavioralAlert | null {
 }
 
 /**
- * Disposition Effect: Holding winners too long while cutting losers
+ * Disposition Effect: selling a position down 10% or more while holding
+ * at least one position up more than 20%.
  */
 function checkDispositionEffect(trade: TradeContext, portfolio: PortfolioContext): BehavioralAlert | null {
   if (trade.action !== 'sell') return null;

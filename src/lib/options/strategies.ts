@@ -223,14 +223,34 @@ export const STRATEGY_TEMPLATES: StrategyTemplate[] = [
   },
 ];
 
+/** Standard listed strike increment for a given price band. */
+function strikeIncrement(price: number): number {
+  if (price < 25) return 0.5;
+  if (price < 100) return 1;
+  if (price < 250) return 2.5;
+  return 5;
+}
+
 /**
  * Round to nearest standard strike (e.g., $1, $2.50, $5, $10 increments)
  */
 function roundToStrike(price: number): number {
-  if (price < 25) return Math.round(price * 2) / 2;    // $0.50 increments
-  if (price < 100) return Math.round(price);             // $1 increments
-  if (price < 250) return Math.round(price / 2.5) * 2.5; // $2.50 increments
-  return Math.round(price / 5) * 5;                      // $5 increments
+  const inc = strikeIncrement(price);
+  return Math.round(price / inc) * inc;
+}
+
+/**
+ * `strikeOffset` is an ABSOLUTE dollar offset from ATM (see
+ * StrategyLegTemplate in ./types). On a low-priced underlying a wide
+ * offset can push the strike to zero or below: a $6 stock with an iron
+ * condor's -$10 put wing builds strike -4, and buildOCCSymbol renders
+ * that as "...P0000-4000" — a malformed contract symbol that would be
+ * sent to the broker. Clamp to the smallest listed strike instead.
+ */
+function offsetStrike(atmStrike: number, offset: number): number {
+  const raw = roundToStrike(atmStrike + offset);
+  if (raw > 0) return raw;
+  return strikeIncrement(atmStrike);
 }
 
 /**
@@ -256,7 +276,7 @@ export function buildStrategy(
       };
     }
 
-    const strike = roundToStrike(atmStrike + legTemplate.strikeOffset);
+    const strike = offsetStrike(atmStrike, legTemplate.strikeOffset);
     const legExp = legTemplate.expirationOffset
       ? addDays(expiration, legTemplate.expirationOffset)
       : expiration;
