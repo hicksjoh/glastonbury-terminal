@@ -154,7 +154,8 @@ async function buildContext(userId: string) {
       .eq('user_id', userId).eq('status', 'completed').order('created_at', { ascending: false }).limit(3),
     // P5: latest deep-research memo topic
     supabase.from('deep_research_memos').select('ticker, topic, memo_word_count, created_at')
-      .eq('user_id', userId).eq('status', 'completed').order('created_at', { ascending: false }).limit(1),
+      .eq('user_id', userId).eq('status', 'completed').gt('memo_word_count', 200)
+      .order('created_at', { ascending: false }).limit(1),
     // P4: most recent earnings memo
     supabase.from('earnings_memos').select('session_id, guidance_delta, created_at')
       .order('created_at', { ascending: false }).limit(1),
@@ -254,7 +255,9 @@ async function buildContext(userId: string) {
     })),
     latest_research_memo: (() => {
       const row = (latestResearchRes?.data as unknown as Array<{ ticker: string | null; topic: string; memo_word_count: number | null; created_at: string }>)?.[0];
-      return row ? { ticker: row.ticker, topic: row.topic, word_count: row.memo_word_count, created_at: row.created_at } : null;
+      return row && Number(row.memo_word_count) > 200
+        ? { ticker: row.ticker, topic: row.topic, word_count: row.memo_word_count, created_at: row.created_at }
+        : null;
     })(),
     latest_earnings_guidance: (() => {
       const row = (latestEarningsMemoRes?.data as unknown as Array<{ session_id: string; guidance_delta: string; created_at: string }>)?.[0];

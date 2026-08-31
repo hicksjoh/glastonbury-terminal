@@ -4,6 +4,8 @@ import { useState, useEffect } from 'react';
 import { AppShell } from '@/components/layout/AppShell';
 import { ErrorBoundary } from '@/components/ErrorBoundary';
 import { Layers, RefreshCw } from 'lucide-react';
+import { z } from 'zod';
+import { fetchParsed, volSurfaceResponseSchema } from '@/lib/api-schemas';
 
 /* ── colour palette ──────────────────────────────────────────── */
 const C = {
@@ -21,55 +23,7 @@ const C = {
 
 const MONO = "'JetBrains Mono', 'Fira Code', monospace";
 
-/* ── types ───────────────────────────────────────────────────── */
-interface GridPoint {
-  strike: number;
-  expiry: string;
-  iv: number;
-  delta?: number;
-}
-
-interface SkewAnalysis {
-  skewType: string;
-  putSkew25d: number;
-  callSkew25d: number;
-  riskReversal: number;
-  butterfly: number;
-  skewSlope: number;
-  interpretation: string;
-}
-
-interface TermPoint {
-  expiry: string;
-  iv: number;
-}
-
-interface Mispricing {
-  strike: number;
-  expiry: string;
-  type: string;
-  currentIV: number;
-  expectedIV: number;
-  edge: number;
-  direction: string;
-}
-
-interface VolSurfaceData {
-  symbol: string;
-  spotPrice: number;
-  surface: {
-    grid: GridPoint[];
-    strikes: number[];
-    expirations: string[];
-  };
-  skewAnalysis: SkewAnalysis | SkewAnalysis[] | null;
-  termStructure: {
-    points: TermPoint[];
-    shape: string;
-  };
-  mispricings: Mispricing[];
-  lastUpdated: string;
-}
+type VolSurfaceData = z.infer<typeof volSurfaceResponseSchema>;
 
 /* ── symbols ─────────────────────────────────────────────────── */
 const SYMBOLS = ['AAPL', 'MSFT', 'NVDA', 'TSLA', 'AMZN', 'GOOGL', 'META', 'SPY'];
@@ -170,10 +124,8 @@ export default function VolSurfacePage() {
     async function fetchData() {
       setLoading(true);
       try {
-        const res = await fetch(`/api/vol-surface?symbol=${symbol}`);
-        if (res.ok && !cancelled) {
-          setData(await res.json());
-        }
+        const parsed = await fetchParsed(`/api/vol-surface?symbol=${symbol}`, volSurfaceResponseSchema);
+        if (parsed && !cancelled) setData(parsed);
       } catch (err) {
         console.error('Vol surface fetch error:', err);
       } finally {

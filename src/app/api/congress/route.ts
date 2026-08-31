@@ -3,6 +3,7 @@ import { createServiceClient } from '@/lib/supabase';
 import { rateLimit } from '@/lib/rate-limit';
 import { getCached, setCache, TTL } from '@/lib/server-cache';
 import { buildMeta } from '@/lib/api-meta';
+import { getQuiverCongressTrades } from '@/lib/quiver';
 
 const FMP_BASE = 'https://financialmodelingprep.com/stable';
 
@@ -86,32 +87,53 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     return NextResponse.json({ error: 'Rate limit exceeded' }, { status: 429 });
   }
 
-  const cacheKey = 'congress-trades';
-  const cached = getCached<CongressTrade[]>(cacheKey);
+  const quiverConfigured = Boolean(process.env.QUIVER_API_KEY);
+  const cacheKey = `congress-trades:${quiverConfigured ? 'quiver' : 'fallback'}`;
+  const cached = getCached<{ trades: CongressTrade[]; source: string }>(cacheKey);
 
   let trades: CongressTrade[];
-  let dataSource = 'fmp';
+  let dataSource = quiverConfigured ? 'quiver' : 'fmp';
+  let wasCached = false;
   if (cached) {
-    trades = cached;
-    dataSource = 'cache';
+    trades = cached.trades;
+    dataSource = cached.source;
+    wasCached = true;
   } else {
-    // Try Supabase first
     const supabase = createServiceClient();
-    const { data: dbTrades } = await supabase
-      .from('congress_trades')
-      .select('*')
-      .order('date_traded', { ascending: false })
-      .limit(200);
+    trades = [];
 
-    if (dbTrades && dbTrades.length > 0) {
-      trades = dbTrades as CongressTrade[];
-      dataSource = 'supabase';
-    } else {
-      // Fallback: fetch from FMP
-      trades = await fetchFromFMP();
+    if (quiverConfigured) {
+      try {
+        const result = await getQuiverCongressTrades();
+        trades = result.data.slice(0, 200).map((trade, index) => ({
+          id: `quiver-${trade.representative}-${trade.transactionDate}-${trade.ticker}-${index}`,
+          politician: trade.representative,
+          party: trade.party || null,
+          state: trade.state || null,
+          ticker: trade.ticker,
+          transaction_type: trade.transactionType,
+          amount_range: trade.amount || null,
+          date_filed: trade.disclosureDate || null,
+          date_traded: trade.transactionDate || null,
+          filing_url: trade.filingUrl || null,
+          source: trade.chamber || 'quiver',
+        }));
+      } catch { /* fall through to persisted/FMP data */ }
+    }
 
-      // Try to store in Supabase for next time
-      if (trades.length > 0) {
+    if (trades.length === 0) {
+      const { data: dbTrades } = await supabase
+        .from('congress_trades').select('*').order('date_traded', { ascending: false }).limit(200);
+      if (dbTrades && dbTrades.length > 0) {
+        trades = dbTrades as CongressTrade[];
+        dataSource = 'supabase';
+      } else {
+        trades = await fetchFromFMP();
+        dataSource = 'fmp';
+      }
+    }
+
+    if (trades.length > 0 && dataSource !== 'supabase') {
         try {
           await supabase.from('congress_trades').upsert(
             trades.map(t => ({
@@ -129,10 +151,9 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
             { onConflict: 'politician,ticker,date_traded,transaction_type', ignoreDuplicates: true }
           );
         } catch { /* non-critical */ }
-      }
     }
 
-    setCache(cacheKey, trades, TTL.LONG);
+    setCache(cacheKey, { trades, source: dataSource }, TTL.LONG);
   }
 
   // Apply filters from query params
@@ -152,7 +173,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     _meta: buildMeta({
       source: dataSource,
       live: trades.length > 0,
-      cached: dataSource === 'cache',
+      cached: wasCached,
     }),
   });
 }

@@ -10,7 +10,7 @@ import { test, expect } from '@playwright/test';
 test.describe('@smoke F12 — order guards', () => {
   test('preview returns guard verdict shape', async ({ request }) => {
     const res = await request.post('/api/alpaca/orders', {
-      data: { symbol: 'AAPL', side: 'buy', qty: 1, mode: 'preview' },
+      data: { symbol: 'AAPL', side: 'buy', qty: 1, type: 'market', mode: 'preview' },
     });
     expect(res.status()).toBe(200);
     const body = await res.json();

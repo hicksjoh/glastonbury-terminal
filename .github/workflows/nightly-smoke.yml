@@ -1,0 +1,82 @@
+name: Nightly Prod Smoke
+
+# Dead-man switch for the live terminal. Runs the @smoke e2e suite plus
+# freshness assertions against production every weekday morning before the
+# open, and after every deploy to main. When it fails it opens (or updates)
+# a pinned GitHub issue with the failure list — a silent regression on prod
+# should never again sit unnoticed for weeks.
+#
+# Secrets used (repo settings → Actions secrets):
+#   E2E_PASSWORD — terminal APP_PASSWORD, used by e2e/global-setup.ts
+
+on:
+  schedule:
+    - cron: '0 11 * * 1-5' # 7:00 AM ET (11:00 UTC) weekdays, pre-open
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  smoke:
+    # For workflow_run triggers, only bother when CI on main succeeded
+    # (a deploy will follow); scheduled + manual runs always proceed.
+    if: ${{ github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success' }}
+    timeout-minutes: 15
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install Playwright Browsers
+        run: npx playwright install --with-deps chromium
+
+      - name: Wait out the Vercel deploy
+        # After a merge to main, Vercel needs a few minutes to build and
+        # promote. Scheduled runs skip straight through.
+        if: ${{ github.event_name == 'workflow_run' }}
+        run: sleep 240
+
+      - name: Smoke + freshness against production
+        run: npx playwright test --grep "@smoke|@freshness"
+        env:
+          E2E_BASE_URL: https://terminal.johnwesleyhicks.com
+          E2E_PASSWORD: ${{ secrets.E2E_PASSWORD }}
+
+      - uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() }}
+        with:
+          name: smoke-report
+          path: playwright-report/
+          retention-days: 14
+
+      - name: File / update the alarm issue
+        if: ${{ failure() }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TITLE="🚨 Nightly prod smoke is failing"
+          BODY="The production smoke run failed on $(date -u '+%Y-%m-%d %H:%M UTC').
+
+          Run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          Trigger: ${{ github.event_name }}
+
+          Download the smoke-report artifact on the run page for per-test detail. This issue auto-closes is NOT wired — close it manually once prod is verified green."
+          EXISTING=$(gh issue list --state open --search "$TITLE in:title" --json number -q '.[0].number')
+          if [ -n "$EXISTING" ]; then
+            gh issue comment "$EXISTING" --body "$BODY"
+          else
+            gh issue create --title "$TITLE" --body "$BODY"
+          fi

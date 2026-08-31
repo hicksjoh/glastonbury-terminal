@@ -9,7 +9,11 @@ import { test, expect } from '@playwright/test';
  */
 test.describe('@smoke F13 — Sunday weekly report', () => {
   test('rejects unauthenticated requests', async ({ request }) => {
-    const res = await request.get('/api/cron/weekly-report?mode=dry-run');
+    // Clear the storage-state cookie: cron auth intentionally accepts a
+    // valid signed user session in addition to CRON_SECRET.
+    const res = await request.get('/api/cron/weekly-report?mode=dry-run', {
+      headers: { Cookie: '' },
+    });
     expect(res.status()).toBe(401);
   });
 

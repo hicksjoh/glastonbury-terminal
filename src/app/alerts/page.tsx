@@ -6,6 +6,8 @@ import { ErrorBoundary } from '@/components/ErrorBoundary';
 import { LoadingState } from '@/components/LoadingState';
 import { useNotifications } from '@/contexts/NotificationProvider';
 import { Bell, Plus, Trash2, Zap, Eye, MessageSquare, Volume2, VolumeX } from 'lucide-react';
+import { z } from 'zod';
+import { alertsResponseSchema, fetchParsed } from '@/lib/api-schemas';
 
 interface AlertCondition {
   symbol: string;
@@ -14,16 +16,7 @@ interface AlertCondition {
   value: number;
 }
 
-interface Alert {
-  id: string;
-  name: string;
-  conditions: AlertCondition[];
-  logic: string;
-  action: string;
-  is_active: boolean;
-  last_triggered: string | null;
-  created_at: string;
-}
+type Alert = z.infer<typeof alertsResponseSchema>['alerts'][number];
 
 const METRICS = [
   { value: 'price', label: 'Price' },
@@ -107,11 +100,8 @@ export default function AlertsPage() {
   useEffect(() => {
     const fetchAlerts = async () => {
       try {
-        const res = await fetch('/api/alerts');
-        if (res.ok) {
-          const data = await res.json();
-          setAlerts(data.alerts || []);
-        }
+        const data = await fetchParsed('/api/alerts', alertsResponseSchema);
+        if (data) setAlerts(data.alerts);
       } catch {
         // Use empty
       } finally {

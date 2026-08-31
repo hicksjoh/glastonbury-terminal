@@ -3,6 +3,7 @@ import { getAllRateLimitStats } from '@/lib/rate-limiter';
 import { getAllCircuitStats } from '@/lib/circuit-breaker';
 import { checkEnvironment } from '@/lib/env-check';
 import { getCached, setCache } from '@/lib/server-cache';
+import { getDurable } from '@/lib/durable-cache';
 
 // Without this, Next static-optimizes the route and Vercel serves a payload
 // frozen at build time — a health check that never changes is worse than none.
@@ -111,6 +112,12 @@ export async function GET() {
 
   const envCheck = checkEnvironment();
   const rateLimits = getAllRateLimitStats();
+  const clientErrorRecords = await getDurable<Array<{ ts: string }>>('client-errors:recent') || [];
+  const clientErrorCutoff = Date.now() - 24 * 60 * 60 * 1000;
+  const clientErrors = {
+    count24h: clientErrorRecords.filter(error => new Date(error.ts).getTime() >= clientErrorCutoff).length,
+    latest: clientErrorRecords[0] || null,
+  };
 
   const okCount = Object.values(checks).filter(v => v === 'ok').length;
   const errorCount = Object.values(checks).filter(v => v === 'error').length;
@@ -139,6 +146,7 @@ export async function GET() {
       configured: totalChecked,
     },
     rateLimits,
+    clientErrors,
     circuits,
     environment: {
       valid: envCheck.valid,

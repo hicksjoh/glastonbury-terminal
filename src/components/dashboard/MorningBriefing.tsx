@@ -4,6 +4,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import { MessageSquare, X } from 'lucide-react';
 import { Card, EditorialProse } from '@/components/ui';
+import { DataAge } from '@/components/ui/DataAge';
 import { color, size as sz, weight, tracking, space, radius, motion } from '@/lib/design-tokens';
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
@@ -34,6 +35,10 @@ function MorningBriefingInner() {
   const router = useRouter();
   const [dismissed, setDismissed] = useState(true); // default hidden until checked
   const [briefing, setBriefing] = useState<string | null>(null);
+  const [briefingMeta, setBriefingMeta] = useState<{ cached: boolean; createdAt: string | null }>({
+    cached: false,
+    createdAt: null,
+  });
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -54,6 +59,10 @@ function MorningBriefingInner() {
           const data = await res.json();
           if (data.briefing) {
             setBriefing(data.briefing);
+            setBriefingMeta({
+              cached: data.cached === true,
+              createdAt: typeof data.created_at === 'string' ? data.created_at : null,
+            });
           }
         }
       } catch { /* silent */ }
@@ -85,6 +94,14 @@ function MorningBriefingInner() {
           <div style={{ fontSize: sz.body.fontSize, color: color.textDim, marginTop: space[0.5] }}>
             {formatGreetingDate()}
           </div>
+          {briefingMeta.createdAt && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: space[1], marginTop: space[1] }}>
+              {briefingMeta.cached && (
+                <span style={{ fontSize: sz.micro.fontSize, color: color.textDim }}>Cached</span>
+              )}
+              <DataAge ts={briefingMeta.createdAt} />
+            </div>
+          )}
         </div>
         <button
           onClick={handleDismiss}
