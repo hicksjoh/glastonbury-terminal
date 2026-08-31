@@ -10,6 +10,9 @@ import {
 } from '@/lib/fmp-client';
 import { buildMeta, type ApiMeta } from '@/lib/api-meta';
 
+// Live macro regime data — never serve a build-time snapshot.
+export const dynamic = 'force-dynamic';
+
 // Hardcoded defaults — always tagged as fallback via _meta
 const DEFAULTS: MacroIndicators = {
   yield10Y: 4.25,

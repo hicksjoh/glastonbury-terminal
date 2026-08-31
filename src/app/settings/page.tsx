@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { AppShell } from '@/components/layout/AppShell';
 import { ErrorBoundary } from '@/components/ErrorBoundary';
 import { CheckCircle, XCircle, RefreshCw, Shield, Sliders, Bell, Zap, Info } from 'lucide-react';
+import { APP_TIME_ZONE } from '@/lib/et-clock';
 
 interface ConnectionStatus {
   name: string;
@@ -189,10 +190,20 @@ export default function SettingsPage() {
     </div>
   );
 
-  const buildTimestamp = new Date().toLocaleString('en-US', {
-    month: 'short', day: 'numeric', year: 'numeric',
-    hour: '2-digit', minute: '2-digit', timeZoneName: 'short',
-  });
+  // Mount-gated on purpose. Rendering a live clock during SSR emitted the
+  // server's UTC zone ("... UTC") and then the browser's ("... EDT"), which is
+  // a guaranteed hydration mismatch on every single load; pinning the timezone
+  // alone would still mismatch whenever SSR and hydration straddle a minute.
+  const [buildTimestamp, setBuildTimestamp] = useState<string | null>(null);
+  useEffect(() => {
+    setBuildTimestamp(
+      new Date().toLocaleString('en-US', {
+        month: 'short', day: 'numeric', year: 'numeric',
+        hour: '2-digit', minute: '2-digit', timeZoneName: 'short',
+        timeZone: APP_TIME_ZONE,
+      }),
+    );
+  }, []);
 
   return (
     <AppShell>
@@ -354,7 +365,7 @@ export default function SettingsPage() {
             </div>
             <div style={{ padding: '10px 14px', borderRadius: 8, background: 'rgba(255,255,255,0.02)', border: '1px solid #1e1e35', gridColumn: 'span 2' }}>
               <div style={{ color: '#555570', fontSize: 10, marginBottom: 2 }}>LAST BUILD</div>
-              <div style={{ color: '#e8e8f0', fontSize: 13, fontFamily: "'JetBrains Mono', monospace" }}>{buildTimestamp}</div>
+              <div style={{ color: '#e8e8f0', fontSize: 13, fontFamily: "'JetBrains Mono', monospace" }}>{buildTimestamp ?? '—'}</div>
             </div>
           </div>
 

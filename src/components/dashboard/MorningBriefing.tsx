@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation';
 import { MessageSquare, X } from 'lucide-react';
 import { Card, EditorialProse } from '@/components/ui';
 import { DataAge } from '@/components/ui/DataAge';
+import { getEtDayKey } from '@/lib/et-clock';
 import { color, size as sz, weight, tracking, space, radius, motion } from '@/lib/design-tokens';
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
@@ -16,8 +17,11 @@ function isBeforeFourPM(): boolean {
 }
 
 function getDismissKey(): string {
-  const d = new Date();
-  return `briefing-dismissed-${d.getFullYear()}-${d.getMonth() + 1}-${d.getDate()}`;
+  // Keyed to the ET day, not the viewer's local day. The briefing itself is an
+  // ET product (see isBeforeFourPM / formatGreetingDate), so on the west coast
+  // an ambient-timezone key would file an ET-Monday dismissal under Sunday and
+  // the card would come back.
+  return `briefing-dismissed-${getEtDayKey()}`;
 }
 
 function formatGreetingDate(): string {

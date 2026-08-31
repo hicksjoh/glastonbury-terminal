@@ -80,6 +80,8 @@ function runMonteCarlo(params: MonteCarloParams, portfolio: PortfolioData) {
   return { chartData, targetProb, median };
 }
 
+type MonteCarloResult = ReturnType<typeof runMonteCarlo>;
+
 const DEFAULT_PARAMS: MonteCarloParams = {
   cr3Factor: 1.0,
   ipoValuation: 40,
@@ -98,14 +100,11 @@ export default function MonteCarloPage() {
     totalNetWorth: 1482000,
     loading: true,
   });
-  const [result, setResult] = useState(() => runMonteCarlo(DEFAULT_PARAMS, {
-    cr3Value: 720000,
-    anthropicRSUs: 82000,
-    investmentPortfolio: 100000,
-    propertyValue: 580000,
-    totalNetWorth: 1482000,
-    loading: true,
-  }));
+  // Null on the first render on purpose. runMonteCarlo() is Math.random()-driven,
+  // so seeding it during render makes the server and the browser roll different
+  // numbers and React aborts hydration (#425 / #422). The first simulation runs
+  // on mount instead, which is a client-only pass.
+  const [result, setResult] = useState<MonteCarloResult | null>(null);
 
   // Fetch real portfolio data on mount
   useEffect(() => {
@@ -138,11 +137,10 @@ export default function MonteCarloPage() {
     fetchPortfolio();
   }, []);
 
-  // Re-run simulation when params or portfolio data change
+  // Runs once on mount with the seeded placeholder portfolio, then again each
+  // time the params or the fetched portfolio change.
   useEffect(() => {
-    if (!portfolioData.loading) {
-      setResult(runMonteCarlo(params, portfolioData));
-    }
+    setResult(runMonteCarlo(params, portfolioData));
   }, [params, portfolioData]);
 
   const sliders = [
@@ -234,13 +232,13 @@ export default function MonteCarloPage() {
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 20, marginBottom: 24 }}>
         <div className="terminal-card" style={{ border: '1px solid rgba(201,168,76,0.3)', textAlign: 'center' }}>
           <div style={{ fontSize: 48, fontWeight: 800, color: '#c9a84c' }}>
-            {result.targetProb.toFixed(0)}%
+            {result ? `${result.targetProb.toFixed(0)}%` : '—'}
           </div>
           <div style={{ fontSize: 13, color: '#6b6b80' }}>Probability of reaching $50M by 2032</div>
         </div>
         <div className="terminal-card" style={{ textAlign: 'center' }}>
           <div style={{ fontSize: 32, fontWeight: 800, color: '#22c55e' }}>
-            ${(result.median / 1_000_000).toFixed(1)}M
+            {result ? `$${(result.median / 1_000_000).toFixed(1)}M` : '—'}
           </div>
           <div style={{ fontSize: 13, color: '#6b6b80' }}>Median 2032 Outcome</div>
         </div>
@@ -255,7 +253,11 @@ export default function MonteCarloPage() {
         <div style={{ fontSize: 12, color: '#6b6b80', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 16 }}>
           Probability Fan &mdash; Wealth Trajectory 2026&ndash;2032
         </div>
-        <MonteCarloChart data={result.chartData} />
+        {result ? (
+          <MonteCarloChart data={result.chartData} />
+        ) : (
+          <div style={{ textAlign: 'center', padding: 60, color: '#6b6b80' }}>Running simulation...</div>
+        )}
       </div>
 
       {/* Sliders */}

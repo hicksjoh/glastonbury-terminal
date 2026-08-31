@@ -41,15 +41,20 @@ export function collectConsoleErrors(page: Page): string[] {
  * Call this AFTER performing actions on the page.
  */
 export function expectNoConsoleErrors(errors: string[]) {
-  // Filter out known benign errors (third-party scripts, hydration, resource loads)
+  // Hydration errors (#418/#423/#425/#422) used to be filtered out here. They
+  // were not benign: they were masking a real server/client render mismatch on
+  // the dashboard and Monte Carlo pages. The filter is gone on purpose — a
+  // hydration bailout is a failure, not noise.
+  //
+  // Missing optional assets and 404s from unconfigured optional APIs are still
+  // tolerated, but a 5xx is a genuine server fault and must fail the test.
   const realErrors = errors.filter(e =>
     !e.includes('favicon') &&
     !e.includes('third-party') &&
-    !e.includes('hydration') &&
-    !e.includes('Minified React error #418') && // hydration text mismatch
-    !e.includes('Minified React error #423') && // hydration mismatch
-    !e.includes('Minified React error #425') && // hydration content mismatch
-    !e.includes('Failed to load resource')       // 404s for optional assets/APIs
+    !/Failed to load resource.*status of 4\d\d/.test(e) &&
+    // In-flight requests cancelled by navigation/unmount. Benign, and common
+    // when a page is still fetching as the test moves on.
+    !e.includes('net::ERR_ABORTED')
   );
 
   expect(realErrors, `Console errors found:\n${realErrors.join('\n')}`).toHaveLength(0);

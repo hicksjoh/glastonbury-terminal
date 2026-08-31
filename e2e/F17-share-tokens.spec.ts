@@ -13,11 +13,6 @@ test.describe('@smoke F17 — share tokens', () => {
     const createRes = await request.post('/api/share', {
       data: { viewType: 'wealth_summary', label: 'F17 e2e smoke', ttlHours: 1 },
     });
-    if (createRes.status() === 500) {
-      // A missing production migration is a deployment bug, not an optional
-      // capability. Keep it visible as expected-to-fail until it is applied.
-      test.fixme(true, 'BUG: share_tokens migration is missing or Supabase is unconfigured');
-    }
     expect(createRes.status()).toBe(201);
     const created = await createRes.json();
     expect(created.token).toMatch(/^[a-f0-9]{32}$/);

@@ -7,7 +7,10 @@ name: Nightly Prod Smoke
 # should never again sit unnoticed for weeks.
 #
 # Secrets used (repo settings → Actions secrets):
-#   E2E_PASSWORD — terminal APP_PASSWORD, used by e2e/global-setup.ts
+#   E2E_PASSWORD           — terminal APP_PASSWORD, used by e2e/global-setup.ts
+#   HEALTHCHECKS_PING_KEY  — optional. Healthchecks.io project ping key (the
+#     same one the cron routes use). The `nightly-prod-smoke` check is created
+#     automatically on the first ping, so nothing needs setting up by hand.
 
 on:
   schedule:
@@ -49,11 +52,38 @@ jobs:
         if: ${{ github.event_name == 'workflow_run' }}
         run: sleep 240
 
+      - name: Healthchecks — signal start
+        env:
+          HC_KEY: ${{ secrets.HEALTHCHECKS_PING_KEY }}
+        run: |
+          if [ -z "$HC_KEY" ]; then
+            echo "HEALTHCHECKS_PING_KEY not set — skipping deadman ping."
+            exit 0
+          fi
+          curl -fsS -m 10 --retry 3 "https://hc-ping.com/$HC_KEY/nightly-prod-smoke/start?create=1" || true
+
       - name: Smoke + freshness against production
+        id: smoke
         run: npx playwright test --grep "@smoke|@freshness"
         env:
           E2E_BASE_URL: https://terminal.johnwesleyhicks.com
           E2E_PASSWORD: ${{ secrets.E2E_PASSWORD }}
+
+      - name: Healthchecks — report outcome
+        # The watchdog for the watchdog. GitHub silently disables scheduled
+        # workflows after 60 days of repo inactivity; if that happens this ping
+        # simply stops arriving and Healthchecks raises the alarm on its own.
+        if: ${{ !cancelled() }}
+        env:
+          HC_KEY: ${{ secrets.HEALTHCHECKS_PING_KEY }}
+          SMOKE_OUTCOME: ${{ steps.smoke.outcome }}
+        run: |
+          if [ -z "$HC_KEY" ]; then
+            echo "HEALTHCHECKS_PING_KEY not set — skipping deadman ping."
+            exit 0
+          fi
+          if [ "$SMOKE_OUTCOME" = "success" ]; then SUFFIX=""; else SUFFIX="/fail"; fi
+          curl -fsS -m 10 --retry 3 "https://hc-ping.com/$HC_KEY/nightly-prod-smoke$SUFFIX?create=1" || true
 
       - uses: actions/upload-artifact@v4
         if: ${{ !cancelled() }}
@@ -73,7 +103,7 @@ jobs:
           Run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
           Trigger: ${{ github.event_name }}
 
-          Download the smoke-report artifact on the run page for per-test detail. This issue auto-closes is NOT wired — close it manually once prod is verified green."
+          Download the smoke-report artifact on the run page for per-test detail. Auto-close is deliberately NOT wired up — close this issue by hand once prod is verified green."
           EXISTING=$(gh issue list --state open --search "$TITLE in:title" --json number -q '.[0].number')
           if [ -n "$EXISTING" ]; then
             gh issue comment "$EXISTING" --body "$BODY"
