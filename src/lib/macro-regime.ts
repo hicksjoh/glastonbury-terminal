@@ -1,3 +1,5 @@
+import { finiteOr } from './finite';
+
 // Macro Signal Engine — pure TypeScript, zero external dependencies
 // Classifies the macro environment into regimes and produces asset allocation + Fed predictions
 
@@ -248,17 +250,27 @@ export function fedWatchModel(
 ): FedPrediction {
   const NEUTRAL_RATE = 2.5;
   const INFLATION_TARGET = 2.0;
+
+  // A non-finite indicator makes `gap` NaN, and every comparison against
+  // NaN is false — so the chain below fell to `hold` while impliedRate
+  // was emitted as NaN (JSON.stringify renders that as null, and the
+  // page reads it as a number). Fall back to the neutral assumption for
+  // any reading we cannot use.
+  const fedFunds = finiteOr(fedFundsRate, NEUTRAL_RATE);
+  const inflation = finiteOr(cpi, INFLATION_TARGET);
+  const unemp = finiteOr(unemployment, 4.5);
+
   // Output gap proxy: lower unemployment → positive gap
   // NAIRU ≈ 4.5%; each 1% below → +1% output gap
-  const outputGapProxy = (4.5 - unemployment) * 1.0;
+  const outputGapProxy = (4.5 - unemp) * 1.0;
 
   const taylorTarget =
     NEUTRAL_RATE +
-    0.5 * (cpi - INFLATION_TARGET) +
+    0.5 * (inflation - INFLATION_TARGET) +
     0.5 * outputGapProxy;
 
   const impliedRate = Math.round(taylorTarget * 100) / 100;
-  const gap = taylorTarget - fedFundsRate;
+  const gap = taylorTarget - fedFunds;
 
   let prediction: 'hike' | 'hold' | 'cut';
   if (gap > 0.25) {

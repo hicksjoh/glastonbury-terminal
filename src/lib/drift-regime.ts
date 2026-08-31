@@ -152,8 +152,13 @@ export function hurstExponent(prices: number[]): number {
  * the series as trending, mean-reverting, or random walk.
  */
 export function detectDriftRegime(prices: number[], window?: number): DriftRegime {
-  const w = window ?? Math.min(prices.length, 120);
-  const recentPrices = prices.slice(-w);
+  // Drop unusable observations before measuring. A single NaN price
+  // makes the Hurst exponent NaN, which fails every comparison in the
+  // classification chain below (landing on 'random_walk') AND emits
+  // `confidence: NaN` — a number the API contractually promises.
+  const clean = prices.filter((v) => typeof v === 'number' && Number.isFinite(v));
+  const w = window ?? Math.min(clean.length, 120);
+  const recentPrices = clean.slice(-w);
 
   if (recentPrices.length < 16) {
     return {
@@ -190,13 +195,13 @@ export function detectDriftRegime(prices: number[], window?: number): DriftRegim
   }
 
   // Confidence based on distance of H from 0.5
-  const confidence = Math.min(1, Math.abs(H - 0.5) * 5);
+  const rawConfidence = Math.min(1, Math.abs(H - 0.5) * 5);
 
   return {
     regime,
-    hurstExponent: H,
-    autocorrelation,
-    confidence,
+    hurstExponent: Number.isFinite(H) ? H : 0.5,
+    autocorrelation: Number.isFinite(autocorrelation) ? autocorrelation : 0,
+    confidence: Number.isFinite(rawConfidence) ? Math.max(0, rawConfidence) : 0,
   };
 }
 

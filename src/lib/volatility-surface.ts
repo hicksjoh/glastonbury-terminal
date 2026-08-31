@@ -197,8 +197,14 @@ export function analyzeSkew(
   const skewSlope = computeSkewSlope(slice, spotPrice);
 
   // Classify skew shape
+  // Order matters: with a non-finite skew every comparison below is
+  // false and the chain lands on 'positive' — a confident shape claim
+  // derived from unusable data. Default to the equity-market norm only
+  // when the numbers are real.
   let skewType: 'negative' | 'positive' | 'smile';
-  if (putSkew25d > 0.005 && callSkew25d > 0.005) {
+  if (!Number.isFinite(putSkew25d) || !Number.isFinite(callSkew25d)) {
+    skewType = 'negative'; // insufficient data — report the market default
+  } else if (putSkew25d > 0.005 && callSkew25d > 0.005) {
     skewType = 'smile';
   } else if (putSkew25d > callSkew25d) {
     skewType = 'negative';
