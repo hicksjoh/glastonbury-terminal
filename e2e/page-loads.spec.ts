@@ -45,8 +45,13 @@ test.describe('Page Loads — All pages render without crashing', () => {
     ];
 
     for (const { text, expectedPath } of navTests) {
-      await page.goto('/');
-      await page.waitForLoadState('networkidle');
+      // Deliberately NOT networkidle. The dashboard fans out to a dozen APIs
+      // and holds an SSE briefing stream open, so "no network for 500ms" is
+      // slow at best and never true at worst — four of those in one test ran
+      // ~20s alone and blew the 30s budget under parallel load. Navigation
+      // only needs the sidebar link to be clickable, which the assertion
+      // below already waits for.
+      await page.goto('/', { waitUntil: 'domcontentloaded' });
 
       // Click the sidebar link — use the link's href to be precise
       const link = page.locator(`a[href="${expectedPath}"]`).first();

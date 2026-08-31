@@ -73,22 +73,49 @@ export async function GET() {
     checks.supabase = process.env.NEXT_PUBLIC_SUPABASE_URL ? 'error' : 'unconfigured';
   }
 
-  // Check Claude — verify the API key actually authenticates
+  // Check Claude — exercise the INFERENCE path, not just authentication.
+  //
+  // This used to call GET /v1/models, which only proves the key is valid. It
+  // returns 200 even when the account has no credit left, so on 2026-08-31
+  // health reported `claude: "ok"` while every Keisha call was failing with
+  // "Your credit balance is too low to access the Anthropic API". A health
+  // check that stays green through a total outage is worse than no check.
+  //
+  // The whole payload is memory-cached for 60s above, so this costs at most
+  // one 1-token request per minute per instance.
+  let claudeDetail: string | undefined;
   try {
     if (!process.env.ANTHROPIC_API_KEY) {
       checks.claude = 'unconfigured';
     } else {
-      const res = await fetch('https://api.anthropic.com/v1/models', {
+      const res = await fetch('https://api.anthropic.com/v1/messages', {
+        method: 'POST',
         headers: {
           'x-api-key': process.env.ANTHROPIC_API_KEY,
           'anthropic-version': '2023-06-01',
+          'content-type': 'application/json',
         },
-        signal: AbortSignal.timeout(4000),
+        body: JSON.stringify({
+          model: process.env.CLAUDE_MODEL_FAST || 'claude-haiku-4-5-20251001',
+          max_tokens: 1,
+          messages: [{ role: 'user', content: 'ping' }],
+        }),
+        signal: AbortSignal.timeout(6000),
       });
       checks.claude = res.ok ? 'ok' : 'error';
+      if (!res.ok) {
+        // Surface WHY, so the alarm names the cause instead of just "error".
+        // Billing and quota failures are indistinguishable from a bad key
+        // otherwise, and they need completely different remedies.
+        const body = await res.text().catch(() => '');
+        claudeDetail = `HTTP ${res.status}: ${body.slice(0, 200)}`;
+      }
     }
-  } catch {
+  } catch (err) {
     checks.claude = process.env.ANTHROPIC_API_KEY ? 'error' : 'unconfigured';
+    if (checks.claude === 'error') {
+      claudeDetail = err instanceof Error ? err.message.slice(0, 200) : 'probe failed';
+    }
   }
 
   // Check Phase 1 APIs (key presence)
@@ -138,6 +165,9 @@ export async function GET() {
     timestamp: new Date().toISOString(),
     version: '2.0.0',
     services: checks,
+    // Only present when a probe failed — names the cause so the nightly alarm
+    // says "credit balance too low" instead of a bare "error".
+    ...(claudeDetail ? { serviceDetail: { claude: claudeDetail } } : {}),
     summary: {
       total: Object.keys(checks).length,
       ok: okCount,

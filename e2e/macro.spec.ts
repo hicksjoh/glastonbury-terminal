@@ -39,11 +39,12 @@ test.describe('@smoke P0-2 — Macro page contract', () => {
     });
     page.on('pageerror', err => consoleErrors.push(err.message));
 
+    // Arm the waiter BEFORE navigating. `waitUntil: 'networkidle'` already
+    // implies /api/macro has come and gone, so waiting for it afterwards waits
+    // for a response that will never arrive and times out at 30s.
+    const macroResponse = page.waitForResponse(r => r.url().includes('/api/macro'));
     await page.goto('/macro', { waitUntil: 'networkidle' });
-
-    // The regime badge is the giant uppercase regime label (e.g. "EXPANSION").
-    // It only fills in once the API responds, so wait for the regime endpoint.
-    await page.waitForResponse(r => r.url().includes('/api/macro'));
+    await macroResponse;
 
     // Badge text must be a real string, not "UNDEFINED".
     const badge = page.locator('text=Composite Score').first();
