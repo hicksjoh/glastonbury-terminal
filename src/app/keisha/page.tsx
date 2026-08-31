@@ -1184,6 +1184,9 @@ export default function KeishaPage() {
     const older: ConversationSummary[] = [];
 
     for (const c of convos) {
+      const title = typeof c.title === 'string' ? c.title.trim().toLowerCase() : '';
+      const hasMeaningfulTitle = title !== '' && title !== 'untitled' && !title.startsWith('undefined');
+      if (c.messageCount === 0 && !hasMeaningfulTitle) continue;
       const t = new Date(c.updated_at).getTime();
       if (t >= todayStart) today.push(c);
       else if (t >= yesterdayStart) yesterday.push(c);

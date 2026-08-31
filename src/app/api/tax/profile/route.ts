@@ -5,6 +5,9 @@ import { captureRouteError } from '@/lib/api-error';
 import { loggerFor } from '@/lib/request-id';
 import type { FilingStatus } from '@/lib/tax-engine';
 
+// Live-data endpoint — never let Next static-optimize this at build time
+export const dynamic = 'force-dynamic';
+
 // ═══════════════════════════════════════════════════════════════════════════
 //  Tax Profile CRUD — GET (read/create default) + PUT (update)
 // ═══════════════════════════════════════════════════════════════════════════

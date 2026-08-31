@@ -3,6 +3,13 @@ import { createServiceClient } from '@/lib/supabase';
 import { captureRouteError } from '@/lib/api-error';
 import { loggerFor } from '@/lib/request-id';
 
+function meaningfulTitle(value: unknown): string | null {
+  if (typeof value !== 'string') return null;
+  const title = value.trim();
+  if (!title || title.toLowerCase().startsWith('undefined')) return null;
+  return title;
+}
+
 // GET: List all conversations, optionally filtered by persona
 export async function GET(req: NextRequest) {
   const { log, request_id } = loggerFor(req, { route: 'keisha/conversations' });
@@ -30,12 +37,17 @@ export async function GET(req: NextRequest) {
 
     // Return with a preview of the last message
     const conversations = (data || []).map((c: any) => {
-      const messages = c.messages_json || [];
+      const messages = Array.isArray(c.messages_json) ? c.messages_json : [];
       const lastMsg = messages.length > 0 ? messages[messages.length - 1] : null;
+      const firstMeaningfulMessage = messages.find(
+        (message: any) => typeof message?.content === 'string' && message.content.trim(),
+      );
       return {
         id: c.id,
         persona: c.persona,
-        title: c.title || (lastMsg?.content?.slice(0, 60) + '...') || 'New Conversation',
+        title: meaningfulTitle(c.title)
+          ?? meaningfulTitle(firstMeaningfulMessage?.content)?.slice(0, 60)
+          ?? 'Untitled',
         preview: lastMsg?.content?.slice(0, 100) || '',
         messageCount: messages.length,
         created_at: c.created_at,
@@ -62,7 +74,7 @@ export async function POST(req: NextRequest) {
       .from('keisha_chat_sessions')
       .insert({
         persona: persona || 'general',
-        title: title || null,
+        title: meaningfulTitle(title),
         messages_json: [],
       })
       .select('id, persona, title, created_at, updated_at')

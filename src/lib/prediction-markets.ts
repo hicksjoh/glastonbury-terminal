@@ -93,15 +93,27 @@ async function fetchPolymarketByIds(ids: string[]): Promise<PolymarketMarket[]> 
   }
 }
 
+// Top-by-volume on Polymarket is dominated by sports betting; without a
+// relevance filter the macro dashboard ends up quoting soccer matches.
+const FINANCE_CATEGORY_RE = /econom|financ|business|crypto|politic|fed|rates|inflation|world/i;
+const FINANCE_QUESTION_RE = /\b(fed|rate[s]?|inflation|cpi|gdp|recession|s&p|nasdaq|stocks?|bitcoin|btc|ethereum|crypto|tariff|treasur|unemployment|jobs|interest|dollar|oil|gold|earnings|ipo|shutdown|debt ceiling|election|war|invasion|ceasefire|sanctions|nato|nuclear|strikes?)\b/i;
+
+function isMacroRelevant(m: PolymarketMarket): boolean {
+  return FINANCE_CATEGORY_RE.test(m.category || '') || FINANCE_QUESTION_RE.test(m.question || '');
+}
+
 async function fetchPolymarketTopActive(limit = 8): Promise<PolymarketMarket[]> {
   try {
-    const res = await fetch(`https://gamma-api.polymarket.com/markets?active=true&closed=false&order=volume24hr&ascending=false&limit=${limit}`, {
+    // Over-fetch so the macro filter still has enough candidates after
+    // dropping sports/entertainment markets.
+    const res = await fetch(`https://gamma-api.polymarket.com/markets?active=true&closed=false&order=volume24hr&ascending=false&limit=${Math.max(limit * 12, 96)}`, {
       headers: { Accept: 'application/json' },
       signal: AbortSignal.timeout(5000),
     });
     if (!res.ok) return [];
     const body = await res.json();
-    return Array.isArray(body) ? body as PolymarketMarket[] : [];
+    if (!Array.isArray(body)) return [];
+    return (body as PolymarketMarket[]).filter(isMacroRelevant).slice(0, limit);
   } catch {
     return [];
   }

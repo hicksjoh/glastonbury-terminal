@@ -4,6 +4,7 @@ import { pingHealthcheck } from '@/lib/healthchecks';
 import { cronIsAuthorized } from '@/lib/cron-auth';
 import { captureRouteError } from '@/lib/api-error';
 import { loggerFor } from '@/lib/request-id';
+import { GET as refreshNarrative } from '@/app/api/narrative/route';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -23,6 +24,19 @@ async function handle(req: NextRequest): Promise<NextResponse> {
   if (!ok) {
     log.warn('unauthorized cron call');
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  }
+
+  // Reuse this middleware-allowlisted, self-authenticated cron endpoint for
+  // the narrative schedule. The query flag prevents extra prediction writes.
+  if (req.nextUrl.searchParams.get('job') === 'narrative') {
+    const narrativeReq = new Request(new URL('/api/narrative?refresh=true', req.url));
+    const response = await refreshNarrative(narrativeReq);
+    if (!response.ok) {
+      log.error({ status: response.status }, 'scheduled narrative refresh failed');
+    } else {
+      log.info('scheduled narrative refresh complete');
+    }
+    return response;
   }
 
   await pingHealthcheck(HC_SLUG, 'start');

@@ -2,6 +2,9 @@ import { NextResponse } from 'next/server';
 import { createServiceClient } from '@/lib/supabase';
 import { getQuote } from '@/lib/fmp-client';
 
+// Live-data endpoint — never let Next static-optimize this at build time
+export const dynamic = 'force-dynamic';
+
 async function fetchVIX(): Promise<number | null> {
   const q = await getQuote('^VIX');
   return q?.price ?? null;

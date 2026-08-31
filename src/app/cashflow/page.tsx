@@ -18,7 +18,7 @@ interface MonthData {
 interface CashflowData {
   current_cash: number;
   monthly_burn_rate: number;
-  runway_months: number;
+  runway_months: number | null;
   total_inflows_12m: number;
   total_outflows_12m: number;
   months: MonthData[];
@@ -117,7 +117,7 @@ export default function CashflowPage() {
               {[
                 { label: 'Current Cash', value: data?.current_cash || 0, icon: Wallet, color: '#4ade80' },
                 { label: 'Monthly Burn Rate', value: data?.monthly_burn_rate || 0, icon: TrendingDown, color: '#f87171' },
-                { label: 'Runway', value: data?.runway_months || 0, icon: Clock, color: '#22d3ee', format: (v: number) => `${v} months` },
+                { label: 'Runway', value: data?.runway_months ?? Infinity, icon: Clock, color: '#22d3ee', format: (v: number) => (Number.isFinite(v) ? `${v} months` : '∞ — no burn') },
                 { label: '12M Net Cash Flow', value: (data?.total_inflows_12m || 0) - (data?.total_outflows_12m || 0), icon: TrendingUp, color: '#8a5cf6' },
               ].map((card) => (
                 <div key={card.label} style={{

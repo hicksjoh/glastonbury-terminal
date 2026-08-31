@@ -1,9 +1,14 @@
 import { NextResponse } from 'next/server';
 import Anthropic from '@anthropic-ai/sdk';
-import { getCached, setCache, TTL } from '@/lib/server-cache';
+import { TTL } from '@/lib/server-cache';
+import { getDurable, setDurable, tryAcquireDurableLock } from '@/lib/durable-cache';
 import { checkRateLimitDurable } from '@/lib/rate-limit-durable';
 import { getSectorPerformance } from '@/lib/fmp-client';
 import { tagAnthropicCall } from '@/lib/anthropic-cost';
+import { cachedSystem } from '@/lib/prompts';
+
+export const dynamic = 'force-dynamic';
+export const maxDuration = 60;
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -16,6 +21,10 @@ export interface NarrativeResponse {
 }
 
 const CACHE_KEY = 'market-narrative';
+const REGEN_LOCK_KEY = 'market-narrative:regen-lock';
+const NARRATIVE_CACHE_TTL = 7 * TTL.DAY;
+const FALLBACK_CACHE_TTL = 30 * 60 * 1000; // placeholders must not displace a real narrative for long
+const WEEKDAY_STALE_MS = 6 * TTL.LONG;
 const ALPACA_DATA = 'https://data.alpaca.markets';
 const FMP_BASE = 'https://financialmodelingprep.com/stable';
 
@@ -61,17 +70,50 @@ async function fetchSectorPerf(): Promise<string> {
 
 // ─── Route ──────────────────────────────────────────────────────────────────
 
-export async function GET(): Promise<NextResponse> {
-  // P0-6: 12/hour durable cap. Single-user app — global key is sufficient.
-  const rl = await checkRateLimitDurable('narrative', 'global', 12, 60 * 60);
-  if (!rl.allowed) {
-    return NextResponse.json({ error: 'Rate limit exceeded', remaining: 0 }, { status: 429 });
+function isStaleOnWeekday(narrative: NarrativeResponse): boolean {
+  const age = Date.now() - new Date(narrative.timestamp).getTime();
+  const et = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/New_York' }));
+  const day = et.getDay();
+  return day >= 1 && day <= 5 && (!Number.isFinite(age) || age > WEEKDAY_STALE_MS);
+}
+
+const NARRATIVE_SYSTEM_PROMPT = `You are a real-time market analyst for the Glastonbury Terminal. Generate a 3-5 sentence narrative explaining WHAT is happening in the market right now and WHY. Include specific prices and levels. Explain causality — don't just describe, explain the mechanism.
+
+Be concise, authoritative, insightful. Bloomberg anchor style.
+
+IMPORTANT: Only reference data that is actually provided. If any data is missing or unavailable, omit it. Do NOT speculate about data outages, blackouts, or system failures.
+
+Respond in this exact JSON format and nothing else:
+{
+  "narrative": "Your 3-5 sentence market narrative here...",
+  "sentiment": "bullish|bearish|neutral",
+  "keyLevels": [{"symbol":"SPY","level":520,"significance":"Key support"}]
+}`;
+
+export async function GET(req: Request): Promise<NextResponse> {
+  const forceRefresh = new URL(req.url).searchParams.get('refresh') === 'true';
+
+  // The narrative lives in the durable kv_cache store so cron-triggered
+  // refreshes are visible to every instance. On weekdays the first reader
+  // past six hours regenerates; the distributed lock keeps concurrent stale
+  // readers from stampeding Claude.
+  const cached = await getDurable<NarrativeResponse>(CACHE_KEY);
+  if (cached && !forceRefresh && !isStaleOnWeekday(cached)) {
+    return NextResponse.json({ ...cached, cached: true });
+  }
+  // Mutual exclusion applies to forced refreshes too — force bypasses the
+  // freshness check above, not the lock. A cron refresh and a human clicking
+  // Refresh at the same moment must not both burn a Claude call.
+  if (cached && !(await tryAcquireDurableLock(REGEN_LOCK_KEY, TTL.MEDIUM))) {
+    return NextResponse.json({ ...cached, cached: true, refreshPending: true });
   }
 
-  // Check cache (5 min TTL)
-  const cached = getCached<NarrativeResponse>(CACHE_KEY);
-  if (cached) {
-    return NextResponse.json({ ...cached, cached: true });
+  // P0-6: cap actual regenerations, not inexpensive reads of the stored value.
+  const rl = await checkRateLimitDurable('narrative', 'global', 12, 60 * 60);
+  if (!rl.allowed) {
+    return cached
+      ? NextResponse.json({ ...cached, cached: true, refreshDeferred: true })
+      : NextResponse.json({ error: 'Rate limit exceeded', remaining: 0 }, { status: 429 });
   }
 
   try {
@@ -132,7 +174,12 @@ export async function GET(): Promise<NextResponse> {
         sentiment: 'neutral',
         keyLevels: [],
       };
-      setCache(CACHE_KEY, fallbackResponse, TTL.SHORT);
+      // Never displace a real narrative with a placeholder: keep serving the
+      // last good one and let a later reader retry the refresh.
+      if (cached) {
+        return NextResponse.json({ ...cached, cached: true, refreshFailed: true });
+      }
+      await setDurable(CACHE_KEY, fallbackResponse, FALLBACK_CACHE_TTL);
       return NextResponse.json({ ...fallbackResponse, cached: false });
     }
 
@@ -148,28 +195,13 @@ export async function GET(): Promise<NextResponse> {
     const msg = await anthropic.messages.create({
       model: narrativeModel,
       max_tokens: 400,
+      system: cachedSystem(NARRATIVE_SYSTEM_PROMPT),
       messages: [
         {
           role: 'user',
-          content: `You are a real-time market analyst for the Glastonbury Terminal. Generate a 3-5 sentence narrative explaining WHAT is happening in the market right now and WHY. Include specific prices and levels. Explain causality — don't just describe, explain the mechanism.
-
-Be concise, authoritative, insightful. Bloomberg anchor style.
-
-IMPORTANT: Only reference data that is actually provided below. If any data is missing or shows as unavailable, simply omit it from your analysis. Do NOT speculate about data outages, blackouts, or system failures. Focus only on the data you have.
-
-Also return:
-- sentiment: "bullish", "bearish", or "neutral"
-- keyLevels: up to 3 key price levels worth watching (symbol, level, significance)
-
-Current market data:
+          content: `Current market data:
 ${contextBlock}
-
-Respond in this exact JSON format:
-{
-  "narrative": "Your 3-5 sentence market narrative here...",
-  "sentiment": "bullish|bearish|neutral",
-  "keyLevels": [{"symbol":"SPY","level":520,"significance":"Key support"}]
-}`,
+`,
         },
       ],
     });
@@ -178,6 +210,7 @@ Respond in this exact JSON format:
     // Parse response
     const textBlock = msg.content.find(b => b.type === 'text');
     if (!textBlock || textBlock.type !== 'text') {
+      if (cached) return NextResponse.json({ ...cached, cached: true, refreshFailed: true });
       return NextResponse.json({ error: 'No response from AI' }, { status: 500 });
     }
 
@@ -200,11 +233,14 @@ Respond in this exact JSON format:
       keyLevels: Array.isArray(parsed.keyLevels) ? parsed.keyLevels.slice(0, 5) : [],
     };
 
-    setCache(CACHE_KEY, response, TTL.MEDIUM);
+    await setDurable(CACHE_KEY, response, NARRATIVE_CACHE_TTL);
     return NextResponse.json({ ...response, cached: false });
   } catch (err) {
     const msg = err instanceof Error ? err.message : 'Narrative generation failed';
     console.error('[narrative] Error:', msg);
+    // Serve the last good narrative through transient failures; 500 only
+    // when there is nothing at all to show.
+    if (cached) return NextResponse.json({ ...cached, cached: true, refreshFailed: true });
     return NextResponse.json({ error: msg }, { status: 500 });
   }
 }

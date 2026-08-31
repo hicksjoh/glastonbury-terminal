@@ -2,6 +2,9 @@ import { NextResponse } from 'next/server';
 import { createServiceClient } from '@/lib/supabase';
 import { sendPushNotification, PushSubscriptionData } from '@/lib/web-push';
 
+// Live-data endpoint — never let Next static-optimize this at build time
+export const dynamic = 'force-dynamic';
+
 const FMP_BASE = 'https://financialmodelingprep.com/stable';
 const FMP_KEY = process.env.FMP_API_KEY || '';
 const ALPACA_DATA_URL = 'https://data.alpaca.markets';
@@ -122,7 +125,7 @@ export async function GET() {
     // Collect unique symbols
     const symbolSet = new Set<string>();
     for (const alert of alerts as Alert[]) {
-      for (const cond of alert.conditions) {
+      for (const cond of alert.conditions ?? []) {
         if (cond.symbol) symbolSet.add(cond.symbol);
       }
     }
@@ -140,7 +143,7 @@ export async function GET() {
     const triggered: Array<{ id: string; name: string; action: string; conditions: AlertCondition[] }> = [];
 
     for (const alert of alerts as Alert[]) {
-      const results = alert.conditions.map(cond => {
+      const results = (alert.conditions ?? []).map(cond => {
         const data = priceMap.get(cond.symbol);
         if (!data) return false;
         return evaluateCondition(cond, data);
