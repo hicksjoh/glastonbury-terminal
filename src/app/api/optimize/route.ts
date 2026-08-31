@@ -244,8 +244,17 @@ export async function POST(request: NextRequest) {
       );
     }
     symbols = usableIdx.map((i) => symbols[i]);
-    marketWeights = usableIdx.map((i) => marketWeights[i]);
     const usableReturns = usableIdx.map((i) => allReturns[i]);
+
+    // equilibriumReturns() assumes market-cap weights that SUM TO 1
+    // (pi = delta * Sigma * w). Subsetting them without renormalising
+    // leaves the sum below 1, which understates every equilibrium return
+    // and makes the reported current allocation total less than 100%.
+    const keptWeights = usableIdx.map((i) => marketWeights[i]);
+    const keptSum = keptWeights.reduce((a, b) => a + b, 0);
+    marketWeights = Number.isFinite(keptSum) && keptSum > 0
+      ? keptWeights.map((w) => w / keptSum)
+      : keptWeights.map(() => 1 / keptWeights.length);
 
     // Align return lengths (use minimum length across all assets)
     const minLen = Math.min(...usableReturns.map((r) => r.length));
