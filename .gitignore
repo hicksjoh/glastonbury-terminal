@@ -47,3 +47,9 @@ e2e/.auth-state.json
 
 # supabase CLI scratch
 /supabase/.temp/
+
+# local agent worktrees + session scratch docs
+.claude/worktrees/
+CODEX-*.md
+HANDOFF.md
+PRODUCTION_READINESS_AUDIT.md

@@ -6,9 +6,51 @@ export const anthropic = new Anthropic({
   apiKey: process.env.ANTHROPIC_API_KEY!,
 });
 
-export const CLAUDE_MODEL_PRIMARY = process.env.CLAUDE_MODEL_PRIMARY || 'claude-opus-4-7';
-export const CLAUDE_MODEL_FALLBACK = process.env.CLAUDE_MODEL_FALLBACK || 'claude-sonnet-4-6';
-export const CLAUDE_MODEL_FAST = process.env.CLAUDE_MODEL_FAST || 'claude-haiku-4-5-20251001';
+// Keisha auto-uses the newest Claude family. `LATEST_BY_TIER` is the
+// single place to bump when a new family drops — everything downstream
+// resolves through it.
+//
+// Two paths to "always latest":
+//
+//   1. Do nothing — if CLAUDE_MODEL_PRIMARY / FALLBACK / FAST are unset,
+//      empty, or set to "auto" / "latest", Keisha uses LATEST_BY_TIER.
+//
+//   2. Force override — set CLAUDE_AUTO_LATEST=true and ANY pinned
+//      value in the tier vars is ignored. Use this when you've got
+//      old pins in .env you can't easily unset (Vercel, .env.local,
+//      or CI). One line, no editing of the existing tier vars.
+//
+// To pin a specific model for evals / A/B / cost tests, set:
+//   CLAUDE_AUTO_LATEST=false
+//   CLAUDE_MODEL_PRIMARY=claude-opus-4-7
+//
+// As of 2026-08 the newest family is Claude 5 (Opus 5 / Sonnet 5).
+// No Haiku 5 has shipped yet, so the fast tier stays on Haiku 4.5.
+const LATEST_BY_TIER = {
+  primary:  'claude-opus-5',
+  fallback: 'claude-sonnet-5',
+  fast:     'claude-haiku-4-5-20251001',
+} as const;
+
+function isTruthy(v: string | undefined): boolean {
+  return ['true', '1', 'yes', 'on'].includes((v ?? '').trim().toLowerCase());
+}
+
+// AUTO_LATEST override: when true, ignore pinned tier env vars and
+// always resolve to LATEST_BY_TIER. Defaults to false — existing
+// deployments that pin models keep their pins until they opt in.
+const AUTO_LATEST = isTruthy(process.env.CLAUDE_AUTO_LATEST);
+
+function resolveModel(envValue: string | undefined, tier: keyof typeof LATEST_BY_TIER): string {
+  if (AUTO_LATEST) return LATEST_BY_TIER[tier];
+  const v = (envValue ?? '').trim().toLowerCase();
+  if (!v || v === 'auto' || v === 'latest') return LATEST_BY_TIER[tier];
+  return envValue!.trim();
+}
+
+export const CLAUDE_MODEL_PRIMARY  = resolveModel(process.env.CLAUDE_MODEL_PRIMARY,  'primary');
+export const CLAUDE_MODEL_FALLBACK = resolveModel(process.env.CLAUDE_MODEL_FALLBACK, 'fallback');
+export const CLAUDE_MODEL_FAST     = resolveModel(process.env.CLAUDE_MODEL_FAST,     'fast');
 
 function isRetryableStatus(err: unknown): boolean {
   const status = (err as { status?: number })?.status;

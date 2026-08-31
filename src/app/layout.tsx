@@ -1,12 +1,32 @@
 import type { Metadata } from 'next';
-import { Inter } from 'next/font/google';
+import { Inter, Fraunces, JetBrains_Mono } from 'next/font/google';
 import './globals.css';
 import CommandBar from '@/components/CommandBar';
-import MarketTickerBar from '@/components/MarketTickerBar';
 import ServiceWorkerRegistration from '@/components/ServiceWorkerRegistration';
 import { Providers } from './providers';
 
-const inter = Inter({ subsets: ['latin'] });
+// Three faces, wired via next/font so they self-host and preload.
+// See docs/DESIGN-SYSTEM.md — Fraunces is the editorial voice for Keisha
+// long-form (memos, briefings, coach reviews). JetBrains Mono had been
+// CSS-only; now first-class.
+const inter = Inter({
+  subsets: ['latin'],
+  variable: '--font-sans',
+  display: 'swap',
+});
+const fraunces = Fraunces({
+  subsets: ['latin'],
+  variable: '--font-serif',
+  weight: ['400', '500', '600', '700'],
+  style: ['normal', 'italic'],
+  display: 'swap',
+});
+const jetbrainsMono = JetBrains_Mono({
+  subsets: ['latin'],
+  variable: '--font-mono',
+  weight: ['400', '500', '600', '700'],
+  display: 'swap',
+});
 
 export const metadata: Metadata = {
   title: {
@@ -35,20 +55,27 @@ export const metadata: Metadata = {
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="en" className="dark">
+    <html
+      lang="en"
+      className={`dark ${inter.variable} ${fraunces.variable} ${jetbrainsMono.variable}`}
+    >
       <head>
         <meta name="apple-mobile-web-app-capable" content="yes" />
         <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
         <meta name="apple-mobile-web-app-title" content="Glastonbury" />
         <link rel="apple-touch-icon" href="/icon-192.png" />
       </head>
-      <body className={inter.className} style={{ backgroundColor: '#08080d', color: '#e8e8e8', minHeight: '100vh' }}>
+      <body
+        className={inter.className}
+        style={{ backgroundColor: 'var(--bg)', color: 'var(--text)', minHeight: '100vh' }}
+      >
         <a href="#main-content" className="skip-to-content">
           Skip to main content
         </a>
         <Providers>
           <CommandBar />
-          <MarketTickerBar />
+          {/* MarketTickerBar is mounted by AppShell — rendering it here too
+              produced two stacked ticker bars on every AppShell page. */}
           {children}
         </Providers>
         <ServiceWorkerRegistration />

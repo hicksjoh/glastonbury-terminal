@@ -2,6 +2,9 @@ import { NextResponse } from 'next/server';
 import { fetchTradeIndicators } from '@/lib/alt-data/fred-trade';
 import { getCached, setCache } from '@/lib/server-cache';
 
+// Live-data endpoint — never let Next static-optimize this at build time
+export const dynamic = 'force-dynamic';
+
 // F9 — Trade & shipping alt-data overlay.
 //
 // Surfaces FRED-sourced freight, trade, and fuel indicators as a rough

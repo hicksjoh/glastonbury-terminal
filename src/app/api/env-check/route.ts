@@ -3,6 +3,9 @@ import { checkEnvironment, getEnvStatus } from '@/lib/env-check';
 import { getAllRateLimitStats } from '@/lib/rate-limiter';
 import { getAllCircuitStats } from '@/lib/circuit-breaker';
 
+// Live-data endpoint — never let Next static-optimize this at build time
+export const dynamic = 'force-dynamic';
+
 export async function GET() {
   const envCheck = checkEnvironment();
   const envStatus = getEnvStatus();

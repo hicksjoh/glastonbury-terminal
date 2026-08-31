@@ -4,6 +4,7 @@ import { pingHealthcheck } from '@/lib/healthchecks';
 import { cronIsAuthorized } from '@/lib/cron-auth';
 import { captureRouteError } from '@/lib/api-error';
 import { loggerFor } from '@/lib/request-id';
+import { GET as refreshNarrative } from '@/app/api/narrative/route';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -23,6 +24,30 @@ async function handle(req: NextRequest): Promise<NextResponse> {
   if (!ok) {
     log.warn('unauthorized cron call');
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  }
+
+  // Reuse this middleware-allowlisted, self-authenticated cron endpoint for
+  // the narrative schedule (a new cron route would require editing the
+  // untouchable middleware allowlist). Vercel's blessed way to share one
+  // path across schedules is the x-vercel-cron-schedule header — query
+  // strings in cron paths are undocumented and may be stripped, which would
+  // silently run a prediction snapshot instead. ?job=narrative is kept for
+  // manual/curl invocations. Keep NARRATIVE_SCHEDULES in sync with
+  // vercel.json.
+  const NARRATIVE_SCHEDULES = ['30 13 * * 1-5', '0 18 * * 1-5'];
+  const cronSchedule = req.headers.get('x-vercel-cron-schedule');
+  const isNarrativeJob =
+    req.nextUrl.searchParams.get('job') === 'narrative' ||
+    (cronSchedule !== null && NARRATIVE_SCHEDULES.includes(cronSchedule));
+  if (isNarrativeJob) {
+    const narrativeReq = new Request(new URL('/api/narrative?refresh=true', req.url));
+    const response = await refreshNarrative(narrativeReq);
+    if (!response.ok) {
+      log.error({ status: response.status }, 'scheduled narrative refresh failed');
+    } else {
+      log.info('scheduled narrative refresh complete');
+    }
+    return response;
   }
 
   await pingHealthcheck(HC_SLUG, 'start');

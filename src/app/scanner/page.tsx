@@ -5,23 +5,10 @@ import { AppShell } from '@/components/layout/AppShell';
 import { ErrorBoundary } from '@/components/ErrorBoundary';
 import { LoadingState } from '@/components/LoadingState';
 import { Radar, RefreshCw, ChevronDown, ChevronUp, ExternalLink, Check, AlertTriangle } from 'lucide-react';
+import { z } from 'zod';
+import { fetchParsed, gexResponseSchema, scannerResponseSchema } from '@/lib/api-schemas';
 
-interface Signal {
-  symbol: string;
-  company: string;
-  score: number;
-  sources: string[];
-  kellySizing: { shares: number; dollars: number; pctOfPortfolio: number };
-  thesis: string;
-  regime_fit: boolean;
-}
-
-interface ScannerData {
-  signals: Signal[];
-  preset: string;
-  timestamp: string;
-  marketRegime: string;
-}
+type ScannerData = z.infer<typeof scannerResponseSchema>;
 
 interface DriftResult {
   symbol: string;
@@ -42,11 +29,7 @@ interface PairResult {
   sharpe: number;
 }
 
-interface GexData {
-  symbol: string;
-  gexRegime: 'positive' | 'negative';
-  netGex: number;
-}
+type GexData = z.infer<typeof gexResponseSchema>;
 
 const PRESETS = [
   { key: 'confluence', label: 'Confluence', color: '#8a5cf6', desc: 'Cross-reference ALL signals' },
@@ -105,10 +88,8 @@ export default function ScannerPage() {
 
   // Fetch GEX regime for SPY once on load
   useEffect(() => {
-    fetch('/api/gex?symbol=SPY')
-      .then(r => r.json())
-      .then(d => { if (!d.error) setGexData(d); })
-      .catch(() => {});
+    fetchParsed('/api/gex?symbol=SPY', gexResponseSchema)
+      .then(d => { if (d) setGexData(d); });
   }, []);
 
   const fetchSignals = (p: string) => {
@@ -133,10 +114,8 @@ export default function ScannerPage() {
       return;
     }
 
-    fetch(`/api/scanner?preset=${p}`)
-      .then(r => r.json())
-      .then(d => { if (!d.error) setData(d); })
-      .catch(() => {})
+    fetchParsed(`/api/scanner?preset=${p}`, scannerResponseSchema)
+      .then(d => { if (d) setData(d); })
       .finally(() => setLoading(false));
   };
 
@@ -350,13 +329,13 @@ export default function ScannerPage() {
                 </div>
 
                 {/* Kelly Sizing */}
-                <div style={{ display: 'flex', gap: 12, marginBottom: 8 }}>
+                {s.kellySizing && <div style={{ display: 'flex', gap: 12, marginBottom: 8 }}>
                   <span style={{ color: '#22d3ee', fontSize: 12, fontFamily: "'JetBrains Mono', monospace" }}>Buy {s.kellySizing.shares} shares</span>
                   <span style={{ color: '#555570', fontSize: 12 }}>|</span>
                   <span style={{ color: '#f0c674', fontSize: 12, fontFamily: "'JetBrains Mono', monospace" }}>${s.kellySizing.dollars.toLocaleString()}</span>
                   <span style={{ color: '#555570', fontSize: 12 }}>|</span>
                   <span style={{ color: '#8888a8', fontSize: 12 }}>{s.kellySizing.pctOfPortfolio.toFixed(1)}% of portfolio</span>
-                </div>
+                </div>}
 
                 <div style={{ color: '#8888a8', fontSize: 13, lineHeight: 1.5 }}>{s.thesis}</div>
               </div>
@@ -396,10 +375,10 @@ export default function ScannerPage() {
             {gexData && (
               <span style={{
                 padding: '3px 8px', borderRadius: 6, fontSize: 11, fontWeight: 700,
-                background: gexData.gexRegime === 'positive' ? 'rgba(74,222,128,0.1)' : 'rgba(248,113,113,0.1)',
-                color: gexData.gexRegime === 'positive' ? '#4ade80' : '#f87171',
+                background: gexData.regime === 'positive' ? 'rgba(74,222,128,0.1)' : 'rgba(248,113,113,0.1)',
+                color: gexData.regime === 'positive' ? '#4ade80' : '#f87171',
                 fontFamily: "'JetBrains Mono', monospace",
-              }}>GEX {gexData.gexRegime === 'positive' ? '+' : '-'}</span>
+              }}>GEX {gexData.regime === 'positive' ? '+' : '-'}</span>
             )}
             {data && preset !== 'drift' && preset !== 'statarb' && (
               <span style={{ color: '#555570', fontSize: 11 }}>

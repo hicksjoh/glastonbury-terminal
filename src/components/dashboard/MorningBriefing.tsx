@@ -3,6 +3,9 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import { MessageSquare, X } from 'lucide-react';
+import { Card, EditorialProse } from '@/components/ui';
+import { DataAge } from '@/components/ui/DataAge';
+import { color, size as sz, weight, tracking, space, radius, motion } from '@/lib/design-tokens';
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
@@ -32,6 +35,10 @@ function MorningBriefingInner() {
   const router = useRouter();
   const [dismissed, setDismissed] = useState(true); // default hidden until checked
   const [briefing, setBriefing] = useState<string | null>(null);
+  const [briefingMeta, setBriefingMeta] = useState<{ cached: boolean; createdAt: string | null }>({
+    cached: false,
+    createdAt: null,
+  });
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -52,6 +59,10 @@ function MorningBriefingInner() {
           const data = await res.json();
           if (data.briefing) {
             setBriefing(data.briefing);
+            setBriefingMeta({
+              cached: data.cached === true,
+              createdAt: typeof data.created_at === 'string' ? data.created_at : null,
+            });
           }
         }
       } catch { /* silent */ }
@@ -73,41 +84,45 @@ function MorningBriefingInner() {
   const keishaTake = keishaTakeMatch ? keishaTakeMatch[1].trim() : null;
 
   return (
-    <div style={{
-      padding: 20,
-      background: '#12122a',
-      border: '1px solid #1a1a3a',
-      borderRadius: 16,
-      marginBottom: 20,
-      position: 'relative',
-    }}>
+    <Card tone="default" size="lg" style={{ marginBottom: space[5], position: 'relative' }}>
       {/* Header */}
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 12 }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: space[3] }}>
         <div>
-          <div style={{ fontSize: 18, fontWeight: 700, color: '#e8e8e8' }}>
+          <div style={{ fontSize: sz.subhead.fontSize, fontWeight: weight.bold, color: color.text }}>
             Good Morning, Wes
           </div>
-          <div style={{ fontSize: 12, color: '#666', marginTop: 2 }}>
+          <div style={{ fontSize: sz.body.fontSize, color: color.textDim, marginTop: space[0.5] }}>
             {formatGreetingDate()}
           </div>
+          {briefingMeta.createdAt && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: space[1], marginTop: space[1] }}>
+              {briefingMeta.cached && (
+                <span style={{ fontSize: sz.micro.fontSize, color: color.textDim }}>Cached</span>
+              )}
+              <DataAge ts={briefingMeta.createdAt} />
+            </div>
+          )}
         </div>
         <button
           onClick={handleDismiss}
           aria-label="Dismiss briefing"
           style={{
-            padding: 4, borderRadius: 4, border: 'none',
-            background: 'rgba(255,255,255,0.05)', cursor: 'pointer',
+            padding: space[1], borderRadius: radius.chip, border: 'none',
+            background: color.glassMd, color: color.textMuted, cursor: 'pointer',
             display: 'flex', alignItems: 'center',
+            transition: `color ${motion.duration.fast}ms ${motion.easing.default}`,
           }}
+          onMouseEnter={e => { e.currentTarget.style.color = color.text; }}
+          onMouseLeave={e => { e.currentTarget.style.color = color.textMuted; }}
         >
-          <X size={14} color="#666" />
+          <X size={14} />
         </button>
       </div>
 
       {/* Briefing content (truncated preview) */}
       <div style={{
-        fontSize: 13, color: '#bbb', lineHeight: 1.6, marginBottom: 12,
-        maxHeight: 120, overflow: 'hidden',
+        fontSize: sz.bodyLg.fontSize, color: color.textMuted, lineHeight: `${sz.bodyLg.lineHeight}px`,
+        marginBottom: space[3], maxHeight: 120, overflow: 'hidden',
         maskImage: 'linear-gradient(to bottom, black 60%, transparent 100%)',
         WebkitMaskImage: 'linear-gradient(to bottom, black 60%, transparent 100%)',
       }}>
@@ -117,38 +132,40 @@ function MorningBriefingInner() {
       {/* Keisha's Take callout */}
       {keishaTake && (
         <div style={{
-          padding: '10px 12px', borderRadius: 8, marginBottom: 12,
-          borderLeft: '3px solid #f0c674',
-          background: 'rgba(240,198,116,0.06)',
+          padding: `${space[2]}px ${space[3]}px`, borderRadius: radius.button, marginBottom: space[3],
+          background: color.goldSubtle,
+          border: `1px solid ${color.gold}30`,
         }}>
-          <div style={{ fontSize: 10, color: '#f0c674', fontWeight: 700, marginBottom: 3, textTransform: 'uppercase' }}>
+          <div style={{
+            fontSize: sz.micro.fontSize, color: color.gold, fontWeight: weight.bold,
+            marginBottom: space[0.5], textTransform: 'uppercase', letterSpacing: tracking.eyebrow,
+          }}>
             Keisha&apos;s Take
           </div>
-          <div style={{ fontSize: 13, color: '#d0d0e0', lineHeight: 1.5 }}>
-            {keishaTake}
-          </div>
+          <EditorialProse>{keishaTake}</EditorialProse>
         </div>
       )}
 
       {/* Actions */}
-      <div style={{ display: 'flex', gap: 8 }}>
+      <div style={{ display: 'flex', gap: space[2] }}>
         <button
           onClick={() => router.push('/keisha')}
           aria-label="Ask Keisha more about the briefing"
           style={{
-            padding: '6px 14px', borderRadius: 8, border: '1px solid #8a5cf6',
-            background: 'rgba(138,92,246,0.08)', color: '#8a5cf6',
-            fontSize: 12, fontWeight: 600, cursor: 'pointer',
-            display: 'flex', alignItems: 'center', gap: 5,
-            transition: 'background 150ms ease',
+            padding: `${space[2]}px ${space[4]}px`, borderRadius: radius.button,
+            border: `1px solid ${color.gold}30`,
+            background: color.goldSubtle, color: color.gold,
+            fontSize: sz.body.fontSize, fontWeight: weight.semibold, cursor: 'pointer',
+            display: 'flex', alignItems: 'center', gap: space[1],
+            transition: `background ${motion.duration.fast}ms ${motion.easing.default}`,
           }}
-          onMouseEnter={e => { e.currentTarget.style.background = 'rgba(138,92,246,0.15)'; }}
-          onMouseLeave={e => { e.currentTarget.style.background = 'rgba(138,92,246,0.08)'; }}
+          onMouseEnter={e => { e.currentTarget.style.background = color.goldEmphasis; }}
+          onMouseLeave={e => { e.currentTarget.style.background = color.goldSubtle; }}
         >
           <MessageSquare size={12} /> Ask Keisha More
         </button>
       </div>
-    </div>
+    </Card>
   );
 }
 

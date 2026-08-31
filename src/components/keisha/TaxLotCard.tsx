@@ -90,7 +90,7 @@ function MethodRow({ method, result, isBest, isWorst, bestTax, onSelect }: {
       {/* Gain/Loss */}
       <td style={{
         padding: '8px 10px', fontSize: 13, fontWeight: 600, color: gainColor,
-        fontFamily: "'JetBrains Mono', monospace", textAlign: 'right',
+        fontFamily: "'JetBrains Mono', monospace", fontVariantNumeric: 'tabular-nums', textAlign: 'right',
       }}>
         {formatDollars(result.totalGainLoss, true)}
         <div style={{ fontSize: 10, color: '#666', fontWeight: 400 }}>
@@ -102,7 +102,7 @@ function MethodRow({ method, result, isBest, isWorst, bestTax, onSelect }: {
       {/* Tax Est */}
       <td style={{
         padding: '8px 10px', fontSize: 13, fontWeight: 600, color: taxColor,
-        fontFamily: "'JetBrains Mono', monospace", textAlign: 'right',
+        fontFamily: "'JetBrains Mono', monospace", fontVariantNumeric: 'tabular-nums', textAlign: 'right',
       }}>
         {formatDollars(result.totalTaxEstimate)}
       </td>
@@ -110,7 +110,7 @@ function MethodRow({ method, result, isBest, isWorst, bestTax, onSelect }: {
       {/* Savings */}
       <td style={{
         padding: '8px 10px', fontSize: 13, fontWeight: 600, textAlign: 'right',
-        fontFamily: "'JetBrains Mono', monospace",
+        fontFamily: "'JetBrains Mono', monospace", fontVariantNumeric: 'tabular-nums',
         color: savings === 0 ? '#4ade80' : '#f87171',
       }}>
         {savings === 0 ? (
@@ -157,17 +157,17 @@ function LotDetailRow({ lot, quantityToSell, gainLoss, gainType, daysHeld }: {
 
   return (
     <tr style={{ borderBottom: '1px solid rgba(26,26,58,0.5)' }}>
-      <td style={{ padding: '4px 8px', fontSize: 11, color: '#8888a8', fontFamily: "'JetBrains Mono', monospace" }}>
+      <td style={{ padding: '4px 8px', fontSize: 11, color: '#8888a8', fontFamily: "'JetBrains Mono', monospace", fontVariantNumeric: 'tabular-nums' }}>
         {lot.id}
       </td>
       <td style={{ padding: '4px 8px', fontSize: 11, color: '#b0b0c0' }}>{buyDateStr}</td>
-      <td style={{ padding: '4px 8px', fontSize: 11, color: '#e8e8e8', textAlign: 'right', fontFamily: "'JetBrains Mono', monospace" }}>
+      <td style={{ padding: '4px 8px', fontSize: 11, color: '#e8e8e8', textAlign: 'right', fontFamily: "'JetBrains Mono', monospace", fontVariantNumeric: 'tabular-nums' }}>
         {quantityToSell}
       </td>
-      <td style={{ padding: '4px 8px', fontSize: 11, color: '#b0b0c0', textAlign: 'right', fontFamily: "'JetBrains Mono', monospace" }}>
+      <td style={{ padding: '4px 8px', fontSize: 11, color: '#b0b0c0', textAlign: 'right', fontFamily: "'JetBrains Mono', monospace", fontVariantNumeric: 'tabular-nums' }}>
         ${lot.costBasis.toFixed(2)}
       </td>
-      <td style={{ padding: '4px 8px', fontSize: 11, color: gainColor, textAlign: 'right', fontWeight: 600, fontFamily: "'JetBrains Mono', monospace" }}>
+      <td style={{ padding: '4px 8px', fontSize: 11, color: gainColor, textAlign: 'right', fontWeight: 600, fontFamily: "'JetBrains Mono', monospace", fontVariantNumeric: 'tabular-nums' }}>
         {formatDollars(gainLoss, true)}
       </td>
       <td style={{ padding: '4px 8px', fontSize: 11, textAlign: 'center' }}>
@@ -233,7 +233,7 @@ function TaxLotCardInner({ data }: { data: TaxLotCardData }) {
             background: 'rgba(240,198,116,0.1)', border: '1px solid rgba(240,198,116,0.3)',
           }}>
             <div style={{ fontSize: 10, color: '#8888a8', fontWeight: 600 }}>POTENTIAL SAVINGS</div>
-            <div style={{ fontSize: 16, fontWeight: 700, color: '#f0c674', fontFamily: "'JetBrains Mono', monospace" }}>
+            <div style={{ fontSize: 16, fontWeight: 700, color: '#f0c674', fontFamily: "'JetBrains Mono', monospace", fontVariantNumeric: 'tabular-nums' }}>
               ${comparison.maxSavings.toLocaleString()}
             </div>
           </div>

@@ -7,6 +7,9 @@ import {
   type ShareViewType,
 } from '@/lib/share/tokens';
 
+// Live-data endpoint — never let Next static-optimize this at build time
+export const dynamic = 'force-dynamic';
+
 // F17 — Tokenized share-link admin endpoint.
 //
 // GET    /api/share         - list active tokens (auth required)

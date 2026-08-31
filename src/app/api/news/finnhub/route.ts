@@ -3,6 +3,9 @@ import { apiFetchWithFallback } from '@/lib/api-client';
 import { buildMeta } from '@/lib/api-meta';
 import { signImageUrl } from '@/lib/img-proxy';
 
+// Live-data endpoint — never let Next static-optimize this at build time
+export const dynamic = 'force-dynamic';
+
 interface FinnhubNewsItem {
   headline?: string;
   summary?: string;

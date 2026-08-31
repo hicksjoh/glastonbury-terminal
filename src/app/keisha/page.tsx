@@ -12,6 +12,7 @@ import { ExplainButton } from '@/components/keisha/ExplainButton';
 import { GlossaryTerm } from '@/components/keisha/GlossaryTerm';
 import { TradeCard, PortfolioSnapshotCard, OptionsCard, GuardCard, GEXCard, InsiderCard, ToolLoadingSkeleton, OrderTicketCard, MiniChartCard, GreeksCalcCard, TradePreviewCard } from '@/components/keisha';
 import TaxImpactBanner from '@/components/trade/TaxImpactBanner';
+import { useLiveAck, NotionalConfirmDialog } from '@/components/trade/LiveTradingGate';
 import { GLOSSARY, getGlossaryKeys } from '@/lib/glossary';
 import type { RenderCard, TradeCardData, PortfolioCardData, OptionsCardData, GuardCardData, GEXCardData, InsiderCardData, OrderTicketCardData, MiniChartCardData, GreeksCalcCardData, TradePreviewCardData } from '@/types/keisha';
 
@@ -195,6 +196,7 @@ function TradeModal({ action, symbol, crewVerdict, guardCheck, onConfirm, onModi
 }
 
 export default function KeishaPage() {
+  const liveAck = useLiveAck();
   const [messages, setMessages] = useState<ChatMessage[]>([INITIAL_MESSAGE]);
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
@@ -210,6 +212,7 @@ export default function KeishaPage() {
   const [searchResults, setSearchResults] = useState<ConversationSummary[]>([]);
   const [pendingOrder, setPendingOrder] = useState<{ id?: string; type: string; params: Record<string, string>; expiresAt?: string } | null>(null);
   const [confirmingOrder, setConfirmingOrder] = useState(false);
+  const [notionalConfirm, setNotionalConfirm] = useState<{ notionalUsd: number } | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const recognitionRef = useRef<Record<string, unknown> | null>(null);
   const abortRef = useRef<AbortController | null>(null);
@@ -653,7 +656,10 @@ export default function KeishaPage() {
     try {
       const res = await fetch('/api/autopilot', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          ...(liveAck.token ? { 'x-live-ack': liveAck.token } : {}),
+        },
         body: JSON.stringify({
           action: 'execute',
           symbol: tradeModal.symbol,
@@ -685,7 +691,7 @@ export default function KeishaPage() {
     }
   };
 
-  const handleOrderConfirm = async () => {
+  const submitPendingOrder = async (typedConfirm?: string) => {
     if (!pendingOrder) return;
     if (!pendingOrder.id) {
       // Server didn't issue a pending-order id \u2014 Keisha can no longer be
@@ -705,13 +711,52 @@ export default function KeishaPage() {
     try {
       const res = await fetch('/api/keisha/actions', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          ...(liveAck.token ? { 'x-live-ack': liveAck.token } : {}),
+        },
         body: JSON.stringify({
           action: pendingOrder.type,
           pendingOrderId: pendingOrder.id,
+          ...(typedConfirm !== undefined ? { typedConfirm } : {}),
         }),
       });
       const data = await res.json();
+      if (!res.ok && data.code === 'typed_confirm_required') {
+        // Prefer the SERVER's notional. Our local estimate is qty × limitPrice,
+        // which is 0 for a market order — the dialog would ask the user to type
+        // "0", the server would reject it against its own quote-derived figure,
+        // and the two would never agree.
+        const serverNotional = Number(data.notional_usd);
+        const qty = Number(pendingOrder.params.qty ?? pendingOrder.params.quantity ?? pendingOrder.params.shares);
+        const price = Number(pendingOrder.params.limitPrice ?? 0);
+        setNotionalConfirm({
+          notionalUsd: Number.isFinite(serverNotional) && serverNotional > 0
+            ? serverNotional
+            : qty * price,
+        });
+        return;
+      }
+      if (!res.ok && data.code === 'notional_indeterminate') {
+        // Server couldn't price the order (market order it can't quote), so the
+        // large-order gate can't be applied and it refused to guess.
+        setMessages(prev => [...prev, {
+          id: Date.now().toString(),
+          role: 'assistant',
+          content: "I couldn't determine this order's dollar value, so I can't run the large-order safety check on it. Resubmit it as a **limit order** and I'll price it before it goes to market.",
+          timestamp: new Date().toISOString(),
+        }]);
+        return;
+      }
+      if (!res.ok && ['live_ack_required', 'live_ack_expired', 'live_ack_invalid'].includes(data.code)) {
+        setMessages(prev => [...prev, {
+          id: Date.now().toString(),
+          role: 'assistant',
+          content: 'Your live-trading acknowledgment expired. Please re-confirm in the red LIVE modal, then retry this order.',
+          timestamp: new Date().toISOString(),
+        }]);
+        return;
+      }
       const statusIcon = res.ok ? '\u2705' : '\u274c';
       const statusMsg = data.message || data.error || 'Order processed';
       setMessages(prev => [...prev, {
@@ -720,6 +765,7 @@ export default function KeishaPage() {
         content: `${statusIcon} **Order Executed:** ${statusMsg}`,
         timestamp: new Date().toISOString(),
       }]);
+      setPendingOrder(null);
     } catch {
       setMessages(prev => [...prev, {
         id: Date.now().toString(),
@@ -727,9 +773,25 @@ export default function KeishaPage() {
         content: '\u274c Order submission failed — check your connection.',
         timestamp: new Date().toISOString(),
       }]);
+      setPendingOrder(null);
+    } finally {
+      setConfirmingOrder(false);
     }
-    setPendingOrder(null);
-    setConfirmingOrder(false);
+  };
+
+  const handleOrderConfirm = async () => {
+    if (!pendingOrder) return;
+    const qty = Number(pendingOrder.params.qty ?? pendingOrder.params.quantity ?? pendingOrder.params.shares);
+    const price = Number(pendingOrder.params.limitPrice ?? 0);
+    const notionalUsd = qty * price;
+    const thresholdUsd = Number(process.env.NEXT_PUBLIC_LIVE_TYPED_CONFIRM_THRESHOLD_USD) || 5000;
+
+    if (liveAck.isLive && notionalUsd >= thresholdUsd) {
+      setNotionalConfirm({ notionalUsd });
+      return;
+    }
+
+    await submitPendingOrder();
   };
 
   const handleOrderCancel = () => {
@@ -1122,6 +1184,9 @@ export default function KeishaPage() {
     const older: ConversationSummary[] = [];
 
     for (const c of convos) {
+      const title = typeof c.title === 'string' ? c.title.trim().toLowerCase() : '';
+      const hasMeaningfulTitle = title !== '' && title !== 'untitled' && !title.startsWith('undefined');
+      if (c.messageCount === 0 && !hasMeaningfulTitle) continue;
       const t = new Date(c.updated_at).getTime();
       if (t >= todayStart) today.push(c);
       else if (t >= yesterdayStart) yesterday.push(c);
@@ -1750,6 +1815,17 @@ export default function KeishaPage() {
           onCancel={() => setTradeModal(null)}
         />
       )}
+
+      <NotionalConfirmDialog
+        open={notionalConfirm !== null}
+        notionalUsd={notionalConfirm?.notionalUsd ?? 0}
+        thresholdUsd={Number(process.env.NEXT_PUBLIC_LIVE_TYPED_CONFIRM_THRESHOLD_USD) || 5000}
+        onConfirm={(typedConfirm) => {
+          setNotionalConfirm(null);
+          void submitPendingOrder(typedConfirm);
+        }}
+        onCancel={() => setNotionalConfirm(null)}
+      />
 
       {/* Order Confirmation Banner */}
       {pendingOrder && (

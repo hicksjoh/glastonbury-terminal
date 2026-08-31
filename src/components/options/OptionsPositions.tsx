@@ -104,36 +104,36 @@ export default function OptionsPositions({ onClose }: OptionsPositionsProps) {
                           {pos.direction}
                         </span>
                       </td>
-                      <td style={{ padding: '10px 10px', fontSize: 13, fontFamily: "'JetBrains Mono', monospace" }}>{pos.quantity}</td>
-                      <td style={{ padding: '10px 10px', fontSize: 13, fontFamily: "'JetBrains Mono', monospace" }}>${Number(pos.avgCost).toFixed(2)}</td>
-                      <td style={{ padding: '10px 10px', fontSize: 13, fontFamily: "'JetBrains Mono', monospace" }}>${Number(pos.currentPrice).toFixed(2)}</td>
+                      <td style={{ padding: '10px 10px', fontSize: 13, fontFamily: "'JetBrains Mono', monospace", fontVariantNumeric: 'tabular-nums' }}>{pos.quantity}</td>
+                      <td style={{ padding: '10px 10px', fontSize: 13, fontFamily: "'JetBrains Mono', monospace", fontVariantNumeric: 'tabular-nums' }}>${Number(pos.avgCost).toFixed(2)}</td>
+                      <td style={{ padding: '10px 10px', fontSize: 13, fontFamily: "'JetBrains Mono', monospace", fontVariantNumeric: 'tabular-nums' }}>${Number(pos.currentPrice).toFixed(2)}</td>
                       <td style={{
-                        padding: '10px 10px', fontSize: 13, fontFamily: "'JetBrains Mono', monospace",
+                        padding: '10px 10px', fontSize: 13, fontFamily: "'JetBrains Mono', monospace", fontVariantNumeric: 'tabular-nums',
                         color: pos.pnl >= 0 ? '#4ade80' : '#ef4444',
                       }}>
                         {pos.pnl >= 0 ? '+' : ''}${Number(pos.pnl).toFixed(0)}
                       </td>
                       <td style={{
-                        padding: '10px 10px', fontSize: 13, fontFamily: "'JetBrains Mono', monospace",
+                        padding: '10px 10px', fontSize: 13, fontFamily: "'JetBrains Mono', monospace", fontVariantNumeric: 'tabular-nums',
                         color: pos.pnlPercent >= 0 ? '#4ade80' : '#ef4444',
                       }}>
                         {pos.pnlPercent >= 0 ? '+' : ''}{Number(pos.pnlPercent).toFixed(1)}%
                       </td>
                       <td style={{
-                        padding: '10px 10px', fontSize: 13, fontFamily: "'JetBrains Mono', monospace",
+                        padding: '10px 10px', fontSize: 13, fontFamily: "'JetBrains Mono', monospace", fontVariantNumeric: 'tabular-nums',
                         color: pos.dte <= 7 ? '#f59e0b' : '#c8c8d0',
                         fontWeight: pos.dte <= 7 ? 700 : 400,
                       }}>
                         {pos.dte}
                       </td>
                       <td style={{
-                        padding: '10px 10px', fontSize: 12, fontFamily: "'JetBrains Mono', monospace",
+                        padding: '10px 10px', fontSize: 12, fontFamily: "'JetBrains Mono', monospace", fontVariantNumeric: 'tabular-nums',
                         color: pos.delta >= 0 ? '#4ade80' : '#ef4444',
                       }}>
                         {pos.delta >= 0 ? '+' : ''}{Number(pos.delta).toFixed(2)}
                       </td>
                       <td style={{
-                        padding: '10px 10px', fontSize: 12, fontFamily: "'JetBrains Mono', monospace",
+                        padding: '10px 10px', fontSize: 12, fontFamily: "'JetBrains Mono', monospace", fontVariantNumeric: 'tabular-nums',
                         color: pos.theta >= 0 ? '#4ade80' : '#ef4444',
                       }}>
                         ${Number(pos.theta).toFixed(2)}
@@ -185,7 +185,7 @@ function MiniStat({ label, value, small }: { label: string; value: string; small
       <div style={{ fontSize: 9, color: '#555', textTransform: 'uppercase' }}>{label}</div>
       <div style={{
         fontSize: small ? 10 : 12, color: '#c8c8d0',
-        fontFamily: "'JetBrains Mono', monospace", marginTop: 2,
+        fontFamily: "'JetBrains Mono', monospace", fontVariantNumeric: 'tabular-nums', marginTop: 2,
         overflow: 'hidden', textOverflow: 'ellipsis',
       }}>{value}</div>
     </div>

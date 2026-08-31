@@ -36,7 +36,8 @@ test.describe('@smoke S2 — /api/portfolio/snapshot GET requires valid JWT', ()
   test('accepts a freshly-issued valid JWT cookie', async ({ request }) => {
     // Mirror the login pattern from S1-jwt-sessions.spec.ts: POST credentials,
     // pull the gt-auth cookie out of Set-Cookie, replay it on the snapshot GET.
-    const password = process.env.E2E_PASSWORD || 'Glastonbury#GT!';
+    const password = process.env.E2E_PASSWORD;
+    if (!password) throw new Error('E2E_PASSWORD is required for snapshot auth tests.');
     const loginRes = await request.post('/api/auth/login', { data: { password } });
     expect(loginRes.status()).toBe(200);
 

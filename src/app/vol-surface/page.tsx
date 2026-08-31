@@ -4,6 +4,8 @@ import { useState, useEffect } from 'react';
 import { AppShell } from '@/components/layout/AppShell';
 import { ErrorBoundary } from '@/components/ErrorBoundary';
 import { Layers, RefreshCw } from 'lucide-react';
+import { z } from 'zod';
+import { fetchParsed, volSurfaceResponseSchema } from '@/lib/api-schemas';
 
 /* ── colour palette ──────────────────────────────────────────── */
 const C = {
@@ -21,55 +23,7 @@ const C = {
 
 const MONO = "'JetBrains Mono', 'Fira Code', monospace";
 
-/* ── types ───────────────────────────────────────────────────── */
-interface GridPoint {
-  strike: number;
-  expiry: string;
-  iv: number;
-  delta?: number;
-}
-
-interface SkewAnalysis {
-  skewType: string;
-  putSkew25d: number;
-  callSkew25d: number;
-  riskReversal: number;
-  butterfly: number;
-  skewSlope: number;
-  interpretation: string;
-}
-
-interface TermPoint {
-  expiry: string;
-  iv: number;
-}
-
-interface Mispricing {
-  strike: number;
-  expiry: string;
-  type: string;
-  currentIV: number;
-  expectedIV: number;
-  edge: number;
-  direction: string;
-}
-
-interface VolSurfaceData {
-  symbol: string;
-  spotPrice: number;
-  surface: {
-    grid: GridPoint[];
-    strikes: number[];
-    expirations: string[];
-  };
-  skewAnalysis: SkewAnalysis;
-  termStructure: {
-    points: TermPoint[];
-    shape: string;
-  };
-  mispricings: Mispricing[];
-  lastUpdated: string;
-}
+type VolSurfaceData = z.infer<typeof volSurfaceResponseSchema>;
 
 /* ── symbols ─────────────────────────────────────────────────── */
 const SYMBOLS = ['AAPL', 'MSFT', 'NVDA', 'TSLA', 'AMZN', 'GOOGL', 'META', 'SPY'];
@@ -170,10 +124,8 @@ export default function VolSurfacePage() {
     async function fetchData() {
       setLoading(true);
       try {
-        const res = await fetch(`/api/vol-surface?symbol=${symbol}`);
-        if (res.ok && !cancelled) {
-          setData(await res.json());
-        }
+        const parsed = await fetchParsed(`/api/vol-surface?symbol=${symbol}`, volSurfaceResponseSchema);
+        if (parsed && !cancelled) setData(parsed);
       } catch (err) {
         console.error('Vol surface fetch error:', err);
       } finally {
@@ -196,6 +148,11 @@ export default function VolSurfacePage() {
       ivLookup[`${p.expiry}-${p.strike}`] = p.iv;
     }
   }
+
+  /* API returns skewAnalysis as one entry per expiration; render the front
+     expiration. Older single-object responses are handled too. */
+  const rawSkew = data?.skewAnalysis;
+  const skew = Array.isArray(rawSkew) ? rawSkew[0] ?? null : rawSkew ?? null;
 
   /* term structure chart scaling */
   const termIVs = data ? data.termStructure.points.map((p) => p.iv) : [];
@@ -375,16 +332,19 @@ export default function VolSurfacePage() {
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
               {/* SKEW ANALYSIS */}
               <Card title="Skew Analysis">
+                {!skew ? (
+                  <div style={{ fontSize: 12, color: C.muted }}>No skew data available</div>
+                ) : (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
                   {/* skew type badge */}
                   <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
                     <span style={{ fontSize: 12, color: C.muted }}>Type</span>
                     <Badge
-                      label={data.skewAnalysis.skewType}
+                      label={skew.skewType || 'unknown'}
                       color={
-                        data.skewAnalysis.skewType.toLowerCase().includes('put')
+                        (skew.skewType || '').toLowerCase().includes('put')
                           ? C.red
-                          : data.skewAnalysis.skewType.toLowerCase().includes('call')
+                          : (skew.skewType || '').toLowerCase().includes('call')
                           ? C.green
                           : C.purple
                       }
@@ -394,11 +354,11 @@ export default function VolSurfacePage() {
                   {/* metrics grid */}
                   <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
                     {[
-                      { label: '25d Put Skew', value: pct(data.skewAnalysis.putSkew25d), color: C.red },
-                      { label: '25d Call Skew', value: pct(data.skewAnalysis.callSkew25d), color: C.green },
-                      { label: 'Risk Reversal', value: pct(data.skewAnalysis.riskReversal), color: data.skewAnalysis.riskReversal < 0 ? C.red : C.green },
-                      { label: 'Butterfly', value: pct(data.skewAnalysis.butterfly), color: C.cyan },
-                      { label: 'Skew Slope', value: data.skewAnalysis.skewSlope.toFixed(4), color: C.gold },
+                      { label: '25d Put Skew', value: pct(skew.putSkew25d ?? 0), color: C.red },
+                      { label: '25d Call Skew', value: pct(skew.callSkew25d ?? 0), color: C.green },
+                      { label: 'Risk Reversal', value: pct(skew.riskReversal ?? 0), color: (skew.riskReversal ?? 0) < 0 ? C.red : C.green },
+                      { label: 'Butterfly', value: pct(skew.butterfly ?? 0), color: C.cyan },
+                      { label: 'Skew Slope', value: (skew.skewSlope ?? 0).toFixed(4), color: C.gold },
                     ].map((m) => (
                       <div
                         key={m.label}
@@ -429,9 +389,10 @@ export default function VolSurfacePage() {
                       lineHeight: 1.5,
                     }}
                   >
-                    {data.skewAnalysis.interpretation}
+                    {skew.interpretation}
                   </div>
                 </div>
+                )}
               </Card>
 
               {/* TERM STRUCTURE */}
@@ -441,9 +402,9 @@ export default function VolSurfacePage() {
                   <Badge
                     label={data.termStructure.shape}
                     color={
-                      data.termStructure.shape.toLowerCase() === 'contango'
+                      (data.termStructure.shape || '').toLowerCase() === 'contango'
                         ? C.green
-                        : data.termStructure.shape.toLowerCase() === 'backwardation'
+                        : (data.termStructure.shape || '').toLowerCase() === 'backwardation'
                         ? C.red
                         : C.gold
                     }
@@ -595,7 +556,7 @@ export default function VolSurfacePage() {
                     </thead>
                     <tbody>
                       {data.mispricings.map((m, i) => {
-                        const isOver = m.direction.toLowerCase().includes('over');
+                        const isOver = (m.direction || '').toLowerCase().includes('over');
                         const dirColor = isOver ? C.red : C.green;
                         return (
                           <tr

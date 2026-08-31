@@ -51,8 +51,9 @@ describe('session JWT', () => {
   it('returns null for a tampered token', async () => {
     const token = await createSessionJwt({ sub: 'wes' });
     const parts = token.split('.');
-    // Flip the last char of the signature.
-    const tampered = `${parts[0]}.${parts[1]}.${parts[2].slice(0, -1)}X`;
+    // Replace the last signature char with a DIFFERENT char — a fixed 'X'
+    // is a no-op 1/64 of the time when the signature already ends in 'X'.
+    const tampered = `${parts[0]}.${parts[1]}.${parts[2].slice(0, -1)}${parts[2].endsWith('X') ? 'Y' : 'X'}`;
     const verified = await verifySessionJwt(tampered);
     expect(verified).toBeNull();
   });

@@ -71,8 +71,8 @@ export async function GET(req: NextRequest) {
       flows,
       summary: {
         totalFlows: flows.length,
-        bullishPct: Math.round((bullish / total) * 100),
-        bearishPct: Math.round(((total - bullish) / total) * 100),
+        bullishPct: total > 0 ? Math.round((bullish / total) * 100) : 0,
+        bearishPct: total > 0 ? Math.round(((total - bullish) / total) * 100) : 0,
         topSymbols,
         scannedSymbols: symbols,
       },

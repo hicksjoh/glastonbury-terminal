@@ -4,6 +4,9 @@ import { createServiceClient } from '@/lib/supabase';
 import { buildMarketContext } from '@/lib/market-intel';
 import { checkRateLimitDurable } from '@/lib/rate-limit-durable';
 
+// Live-data endpoint — never let Next static-optimize this at build time
+export const dynamic = 'force-dynamic';
+
 async function getBriefingContext(): Promise<string> {
   const parts: string[] = [];
 

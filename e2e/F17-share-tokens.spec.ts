@@ -9,14 +9,14 @@ import { test, expect } from '@playwright/test';
  */
 test.describe('@smoke F17 — share tokens', () => {
   test('full lifecycle: create -> public read -> revoke -> 404', async ({ request }) => {
-    // 1. Create token (auth-required admin endpoint). Skip the rest of
-    // the lifecycle if the share_tokens migration hasn't been applied
-    // yet — the route correctly returns 500 in that case.
+    // 1. Create token (auth-required admin endpoint).
     const createRes = await request.post('/api/share', {
       data: { viewType: 'wealth_summary', label: 'F17 e2e smoke', ttlHours: 1 },
     });
     if (createRes.status() === 500) {
-      test.skip(true, 'share_tokens migration not yet applied to Supabase — skipping lifecycle test');
+      // A missing production migration is a deployment bug, not an optional
+      // capability. Keep it visible as expected-to-fail until it is applied.
+      test.fixme(true, 'BUG: share_tokens migration is missing or Supabase is unconfigured');
     }
     expect(createRes.status()).toBe(201);
     const created = await createRes.json();

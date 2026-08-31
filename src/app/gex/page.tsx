@@ -4,36 +4,10 @@ import { useState, useEffect, useCallback } from 'react';
 import { AppShell } from '@/components/layout/AppShell';
 import { ErrorBoundary } from '@/components/ErrorBoundary';
 import { Zap, RefreshCw } from 'lucide-react';
+import { z } from 'zod';
+import { fetchParsed, gexResponseSchema } from '@/lib/api-schemas';
 
-interface StrikeGEX {
-  strike: number;
-  gex: number;
-}
-
-interface ExpirationEntry {
-  expiration: string;
-  gex: number;
-}
-
-interface GEXData {
-  regime: string;
-  spotPrice: number;
-  netGEX: number;
-  levels: {
-    putWall: number;
-    callWall: number;
-    gammaFlip: number;
-    gammaFlipPrecise: number | null;
-    hvl: number;
-    pinStrikes: number[];
-  };
-  vannaExposure: number;
-  charmExposure: number;
-  byStrike: StrikeGEX[];
-  impact: string;
-  expirationBreakdown: ExpirationEntry[];
-  dataSource: string;
-}
+type GEXData = z.infer<typeof gexResponseSchema>;
 
 const SYMBOLS = ['SPY', 'QQQ', 'IWM', 'DIA', 'AAPL', 'MSFT', 'NVDA', 'TSLA', 'AMZN', 'GOOGL', 'META'];
 
@@ -54,20 +28,6 @@ function formatNumber(n: number | null | undefined): string {
   if (Math.abs(n) >= 1_000_000) return `${(n / 1_000_000).toFixed(2)}M`;
   if (Math.abs(n) >= 1_000) return `${(n / 1_000).toFixed(1)}K`;
   return n.toFixed(2);
-}
-
-/** Validate that the API response has the expected shape */
-function isValidGEXData(obj: unknown): obj is GEXData {
-  if (!obj || typeof obj !== 'object') return false;
-  const d = obj as Record<string, unknown>;
-  return (
-    typeof d.regime === 'string' &&
-    d.levels != null &&
-    typeof d.levels === 'object' &&
-    Array.isArray(d.byStrike) &&
-    typeof d.impact === 'string' &&
-    Array.isArray(d.expirationBreakdown)
-  );
 }
 
 /** Describe vanna exposure in plain English */
@@ -108,21 +68,12 @@ export default function GEXPage() {
     setLoading(true);
     setError(null);
     try {
-      const res = await fetch(`/api/gex?symbol=${symbol}`);
-      if (!res.ok) {
-        setError(`API returned ${res.status}`);
-        return;
-      }
-      const json = await res.json();
-      if (json.error) {
-        setError(json.error);
-        return;
-      }
-      if (!isValidGEXData(json)) {
+      const parsed = await fetchParsed(`/api/gex?symbol=${symbol}`, gexResponseSchema);
+      if (!parsed) {
         setError('Unexpected data format from API');
         return;
       }
-      setData(json);
+      setData(parsed);
     } catch (err) {
       console.error('GEX fetch error:', err);
       setError(err instanceof Error ? err.message : 'Failed to fetch GEX data');

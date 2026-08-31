@@ -5,24 +5,11 @@ import { AppShell } from '@/components/layout/AppShell';
 import { ErrorBoundary } from '@/components/ErrorBoundary';
 import { LoadingState } from '@/components/LoadingState';
 import { CalendarDays, TrendingUp, Zap, ChevronRight } from 'lucide-react';
+import { z } from 'zod';
+import { earningsResponseSchema, fetchParsed } from '@/lib/api-schemas';
 
-interface EarningsEntry {
-  symbol: string;
-  company: string;
-  date: string;
-  time: 'bmo' | 'amc';
-  epsEstimate: number;
-  revenueEstimate: number;
-  surpriseHistory: { beatRate: number; avgSurprise: number; avgMoveOnEarnings: number };
-  ivAnalysis: { currentIV: number; avgPostEarningsIV: number; crushEstimate: number; straddle_price: number };
-  playRecommendation: string;
-}
-
-interface EarningsData {
-  upcoming: EarningsEntry[];
-  thisWeek: number;
-  highImpact: EarningsEntry[];
-}
+type EarningsData = z.infer<typeof earningsResponseSchema>;
+type EarningsEntry = EarningsData['upcoming'][number];
 
 export default function EarningsPage() {
   const [data, setData] = useState<EarningsData | null>(null);
@@ -32,14 +19,14 @@ export default function EarningsPage() {
 
   useEffect(() => {
     setLoading(true);
-    fetch(`/api/earnings?range=${range}`)
-      .then(r => r.json())
-      .then(d => { if (!d.error) setData(d); })
-      .catch(() => {})
+    fetchParsed(`/api/earnings?range=${range}`, earningsResponseSchema)
+      .then(d => { if (d) setData(d); })
       .finally(() => setLoading(false));
   }, [range]);
 
-  const getBeatColor = (rate: number) => rate >= 75 ? '#4ade80' : rate >= 50 ? '#f0c674' : '#f87171';
+  const getBeatColor = (rate: number | null | undefined) => (rate ?? 0) >= 75 ? '#4ade80' : (rate ?? 0) >= 50 ? '#f0c674' : '#f87171';
+  // API returns null for these when options quotes are unavailable (weekends, illiquid names)
+  const fmtN = (v: number | null | undefined, d = 1) => (typeof v === 'number' && Number.isFinite(v) ? v.toFixed(d) : '—');
 
   return (
     <AppShell>
@@ -104,7 +91,7 @@ export default function EarningsPage() {
                         background: 'rgba(248,113,113,0.1)', border: '1px solid rgba(248,113,113,0.3)',
                         color: '#f87171', fontWeight: 600, fontFamily: "'JetBrains Mono', monospace",
                       }}>
-                        {e.symbol} ±{e.surpriseHistory.avgMoveOnEarnings.toFixed(1)}%
+                        {e.symbol} ±{fmtN(e.surpriseHistory?.avgMoveOnEarnings)}%
                       </button>
                     ))}
                   </div>
@@ -145,15 +132,15 @@ export default function EarningsPage() {
                           ${e.epsEstimate?.toFixed(2) ?? 'N/A'}
                         </td>
                         <td style={{ padding: '10px 12px' }}>
-                          <span style={{ fontSize: 11, fontWeight: 600, fontFamily: "'JetBrains Mono', monospace", color: getBeatColor(e.surpriseHistory.beatRate) }}>
-                            {e.surpriseHistory.beatRate.toFixed(0)}%
+                          <span style={{ fontSize: 11, fontWeight: 600, fontFamily: "'JetBrains Mono', monospace", color: getBeatColor(e.surpriseHistory?.beatRate) }}>
+                            {fmtN(e.surpriseHistory?.beatRate, 0)}%
                           </span>
                         </td>
                         <td style={{ padding: '10px 12px', fontFamily: "'JetBrains Mono', monospace", fontSize: 12, color: '#f0c674' }}>
-                          ±{e.surpriseHistory.avgMoveOnEarnings.toFixed(1)}%
+                          ±{fmtN(e.surpriseHistory?.avgMoveOnEarnings)}%
                         </td>
                         <td style={{ padding: '10px 12px', fontFamily: "'JetBrains Mono', monospace", fontSize: 12, color: '#22d3ee' }}>
-                          {e.ivAnalysis.crushEstimate.toFixed(0)}%
+                          {fmtN(e.ivAnalysis?.crushEstimate, 0)}%
                         </td>
                         <td style={{ padding: '10px 12px' }}><ChevronRight size={14} color="#555570" /></td>
                       </tr>
@@ -189,7 +176,7 @@ export default function EarningsPage() {
                   </div>
                   <div style={{ flex: 1, background: 'rgba(240,198,116,0.08)', borderRadius: 10, padding: 14 }}>
                     <div style={{ color: '#8888a8', fontSize: 10, textTransform: 'uppercase', marginBottom: 4 }}>Avg Earnings Move</div>
-                    <div style={{ color: '#f0c674', fontSize: 16, fontWeight: 700, fontFamily: "'JetBrains Mono', monospace" }}>±{selected.surpriseHistory.avgMoveOnEarnings.toFixed(1)}%</div>
+                    <div style={{ color: '#f0c674', fontSize: 16, fontWeight: 700, fontFamily: "'JetBrains Mono', monospace" }}>±{fmtN(selected.surpriseHistory?.avgMoveOnEarnings)}%</div>
                   </div>
                 </div>
 
@@ -199,11 +186,11 @@ export default function EarningsPage() {
                   <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 10 }}>
                     <div style={{ background: 'rgba(74,222,128,0.08)', borderRadius: 8, padding: 12, textAlign: 'center' }}>
                       <div style={{ color: '#8888a8', fontSize: 10, textTransform: 'uppercase', marginBottom: 4 }}>Beat Rate</div>
-                      <div style={{ color: getBeatColor(selected.surpriseHistory.beatRate), fontSize: 22, fontWeight: 700, fontFamily: "'JetBrains Mono', monospace" }}>{selected.surpriseHistory.beatRate.toFixed(0)}%</div>
+                      <div style={{ color: getBeatColor(selected.surpriseHistory?.beatRate), fontSize: 22, fontWeight: 700, fontFamily: "'JetBrains Mono', monospace" }}>{fmtN(selected.surpriseHistory?.beatRate, 0)}%</div>
                     </div>
                     <div style={{ background: 'rgba(34,211,238,0.08)', borderRadius: 8, padding: 12, textAlign: 'center' }}>
                       <div style={{ color: '#8888a8', fontSize: 10, textTransform: 'uppercase', marginBottom: 4 }}>Avg Surprise</div>
-                      <div style={{ color: '#22d3ee', fontSize: 22, fontWeight: 700, fontFamily: "'JetBrains Mono', monospace" }}>{selected.surpriseHistory.avgSurprise >= 0 ? '+' : ''}{selected.surpriseHistory.avgSurprise.toFixed(1)}%</div>
+                      <div style={{ color: '#22d3ee', fontSize: 22, fontWeight: 700, fontFamily: "'JetBrains Mono', monospace" }}>{(selected.surpriseHistory?.avgSurprise ?? 0) >= 0 ? '+' : ''}{fmtN(selected.surpriseHistory?.avgSurprise)}%</div>
                     </div>
                     <div style={{ background: 'rgba(138,92,246,0.08)', borderRadius: 8, padding: 12, textAlign: 'center' }}>
                       <div style={{ color: '#8888a8', fontSize: 10, textTransform: 'uppercase', marginBottom: 4 }}>EPS Estimate</div>
@@ -218,19 +205,19 @@ export default function EarningsPage() {
                   <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
                     <div style={{ background: 'rgba(255,255,255,0.03)', borderRadius: 8, padding: 12 }}>
                       <div style={{ color: '#8888a8', fontSize: 10, textTransform: 'uppercase', marginBottom: 4 }}>Current IV</div>
-                      <div style={{ color: '#e8e8f0', fontSize: 18, fontWeight: 700, fontFamily: "'JetBrains Mono', monospace" }}>{(selected.ivAnalysis.currentIV * 100).toFixed(1)}%</div>
+                      <div style={{ color: '#e8e8f0', fontSize: 18, fontWeight: 700, fontFamily: "'JetBrains Mono', monospace" }}>{fmtN(selected.ivAnalysis?.currentIV == null ? null : selected.ivAnalysis.currentIV * 100)}%</div>
                     </div>
                     <div style={{ background: 'rgba(255,255,255,0.03)', borderRadius: 8, padding: 12 }}>
                       <div style={{ color: '#8888a8', fontSize: 10, textTransform: 'uppercase', marginBottom: 4 }}>Post-Earnings IV</div>
-                      <div style={{ color: '#e8e8f0', fontSize: 18, fontWeight: 700, fontFamily: "'JetBrains Mono', monospace" }}>{(selected.ivAnalysis.avgPostEarningsIV * 100).toFixed(1)}%</div>
+                      <div style={{ color: '#e8e8f0', fontSize: 18, fontWeight: 700, fontFamily: "'JetBrains Mono', monospace" }}>{fmtN(selected.ivAnalysis?.avgPostEarningsIV == null ? null : selected.ivAnalysis.avgPostEarningsIV * 100)}%</div>
                     </div>
                     <div style={{ background: 'rgba(248,113,113,0.08)', borderRadius: 8, padding: 12 }}>
                       <div style={{ color: '#8888a8', fontSize: 10, textTransform: 'uppercase', marginBottom: 4 }}>IV Crush Estimate</div>
-                      <div style={{ color: '#f87171', fontSize: 18, fontWeight: 700, fontFamily: "'JetBrains Mono', monospace" }}>{selected.ivAnalysis.crushEstimate.toFixed(0)}%</div>
+                      <div style={{ color: '#f87171', fontSize: 18, fontWeight: 700, fontFamily: "'JetBrains Mono', monospace" }}>{fmtN(selected.ivAnalysis?.crushEstimate, 0)}%</div>
                     </div>
                     <div style={{ background: 'rgba(240,198,116,0.08)', borderRadius: 8, padding: 12 }}>
                       <div style={{ color: '#8888a8', fontSize: 10, textTransform: 'uppercase', marginBottom: 4 }}>ATM Straddle</div>
-                      <div style={{ color: '#f0c674', fontSize: 18, fontWeight: 700, fontFamily: "'JetBrains Mono', monospace" }}>${selected.ivAnalysis.straddle_price.toFixed(2)}</div>
+                      <div style={{ color: '#f0c674', fontSize: 18, fontWeight: 700, fontFamily: "'JetBrains Mono', monospace" }}>${fmtN(selected.ivAnalysis?.straddle_price, 2)}</div>
                     </div>
                   </div>
                 </div>

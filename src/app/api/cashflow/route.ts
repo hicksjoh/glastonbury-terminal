@@ -1,6 +1,9 @@
 import { NextResponse } from 'next/server';
 import { createServiceClient } from '@/lib/supabase';
 
+// Live-data endpoint — never let Next static-optimize this at build time
+export const dynamic = 'force-dynamic';
+
 export async function GET() {
   try {
     const supabase = createServiceClient();
@@ -58,7 +61,7 @@ export async function GET() {
     const totalInflows = months.reduce((sum, m) => sum + m.inflows, 0);
     const totalOutflows = months.reduce((sum, m) => sum + m.outflows, 0);
     const monthlyBurnRate = totalOutflows / 12;
-    const runway = monthlyBurnRate > 0 ? Math.round(runningBalance / monthlyBurnRate) : 999;
+    const runway = monthlyBurnRate > 0 ? Math.round(runningBalance / monthlyBurnRate) : null;
     const crunchMonth = months.find(m => m.balance < 25000);
 
     return NextResponse.json({

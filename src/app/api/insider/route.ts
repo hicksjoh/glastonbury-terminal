@@ -10,6 +10,7 @@ import {
   type CongressTradeRow as SenateTrade,
 } from '@/lib/fmp-client';
 import { buildMeta, type ApiMeta } from '@/lib/api-meta';
+import { getQuiverCongressTrades, getQuiverInsiderTrades } from '@/lib/quiver';
 
 export async function GET(req: NextRequest) {
   try {
@@ -20,33 +21,57 @@ export async function GET(req: NextRequest) {
     const cutoff = new Date();
     cutoff.setDate(cutoff.getDate() - days);
     const metas: ApiMeta[] = [];
+    const quiverConfigured = Boolean(process.env.QUIVER_API_KEY);
+    // Track sources per section — with type=all, insider can come from
+    // Quiver while congress falls back to FMP; one flat label would lie.
+    let insiderSource: string | null = null;
+    let congressSource: string | null = null;
 
     // FMP migration (P0-1): /v4/insider-trading, /v4/senate-*, and
     // /v4/insider-trading-rss-feed are 403 on the current plan. All calls now
     // go through fmp-client.ts /stable wrappers.
     let insiderTrades: ReturnType<typeof parseInsiderTrades> = [];
     if (type === 'all' || type === 'insider') {
-      const rows = symbol
-        ? await getInsiderTrades(symbol, 100)
-        : await getLatestInsiderTrades(50);
-      insiderTrades = parseInsiderTrades(rows, cutoff, symbol);
-      metas.push(buildMeta({ source: 'fmp', live: rows.length > 0 }));
+      if (quiverConfigured) {
+        try {
+          const result = await getQuiverInsiderTrades();
+          insiderTrades = result.data
+            .filter(t => (!symbol || t.symbol === symbol.toUpperCase()) && new Date(t.date) >= cutoff)
+            .slice(0, 50);
+          metas.push(result._meta);
+          if (insiderTrades.length > 0) insiderSource = 'quiver';
+        } catch { /* FMP fallback below */ }
+      }
+      if (insiderTrades.length === 0) {
+        const rows = symbol ? await getInsiderTrades(symbol, 100) : await getLatestInsiderTrades(50);
+        insiderTrades = parseInsiderTrades(rows, cutoff, symbol);
+        metas.push(buildMeta({ source: 'fmp', live: rows.length > 0 }));
+        insiderSource = 'fmp';
+      }
     }
 
     let congressTrades: ReturnType<typeof parseCongressTrades> = [];
     if (type === 'all' || type === 'congress') {
-      const [senate, house] = await Promise.all([
-        symbol ? getSenateTrades(symbol) : getLatestSenateTrades(),
-        symbol ? getHouseTrades(symbol) : getLatestHouseTrades(),
-      ]);
-      congressTrades = [
-        ...parseCongressTrades(senate, cutoff, 'senate', symbol),
-        ...parseCongressTrades(house, cutoff, 'house', symbol),
-      ];
-      metas.push(
-        buildMeta({ source: 'fmp', live: senate.length > 0 }),
-        buildMeta({ source: 'fmp', live: house.length > 0 }),
-      );
+      if (quiverConfigured) {
+        try {
+          const result = await getQuiverCongressTrades();
+          congressTrades = result.data
+            .filter(t => (!symbol || t.ticker === symbol.toUpperCase()) && new Date(t.transactionDate || t.disclosureDate) >= cutoff)
+            .map(t => ({ symbol: t.ticker, representative: t.representative || 'Unknown', party: t.party, chamber: t.chamber || 'congress', transactionType: t.transactionType as 'buy' | 'sell', amount: t.amount, date: t.transactionDate, disclosureDate: t.disclosureDate }))
+            .slice(0, 50);
+          metas.push(result._meta);
+          if (congressTrades.length > 0) congressSource = 'quiver';
+        } catch { /* FMP fallback below */ }
+      }
+      if (congressTrades.length === 0) {
+        const [senate, house] = await Promise.all([
+          symbol ? getSenateTrades(symbol) : getLatestSenateTrades(),
+          symbol ? getHouseTrades(symbol) : getLatestHouseTrades(),
+        ]);
+        congressTrades = [...parseCongressTrades(senate, cutoff, 'senate', symbol), ...parseCongressTrades(house, cutoff, 'house', symbol)];
+        metas.push(buildMeta({ source: 'fmp', live: senate.length > 0 }), buildMeta({ source: 'fmp', live: house.length > 0 }));
+        congressSource = 'fmp';
+      }
     }
 
     // Generate signals
@@ -57,12 +82,19 @@ export async function GET(req: NextRequest) {
       insiderTrades,
       congressTrades,
       signals,
-      _meta: buildMeta({
-        source: 'fmp',
-        live: allLive,
-        cached: metas.some(m => m.cached),
-        stale: metas.some(m => m.stale),
-      }),
+      _meta: {
+        ...buildMeta({
+          source: (() => {
+            const used = [insiderSource, congressSource].filter(Boolean) as string[];
+            if (used.length === 0) return quiverConfigured ? 'quiver' : 'fmp';
+            return used.every(u => u === used[0]) ? used[0] : 'mixed';
+          })(),
+          live: insiderTrades.length + congressTrades.length > 0 && allLive,
+          cached: metas.some(m => m.cached),
+          stale: metas.some(m => m.stale),
+        }),
+        sources: { insider: insiderSource, congress: congressSource },
+      },
     });
   } catch (error) {
     const msg = error instanceof Error ? error.message : 'Unknown error';

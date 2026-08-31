@@ -26,6 +26,20 @@ export class ErrorBoundary extends Component<Props, State> {
     const label = this.props.label ? ` [${this.props.label}]` : '';
     console.error(`[ErrorBoundary]${label} Caught error:`, error);
     console.error(`[ErrorBoundary]${label} Component stack:`, errorInfo.componentStack);
+    try {
+      void fetch('/api/client-errors', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          label: this.props.label || 'ErrorBoundary',
+          message: error.message,
+          path: location.pathname,
+          ts: new Date().toISOString(),
+        }),
+      }).catch(() => {});
+    } catch {
+      // Error reporting must never cause another client error.
+    }
   }
 
   render() {

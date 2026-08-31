@@ -2,40 +2,27 @@
 
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import MarkdownRenderer from '@/components/MarkdownRenderer';
+import { Card, EditorialProse, ModelBadge, PillBadge, StreamingIndicator } from '@/components/ui';
+import { color, font, size as sz, weight, tracking, space, radius, motion } from '@/lib/design-tokens';
+
+// The Keisha AI Briefing card — dashboard hero for streaming Claude output.
+// This is the showcase for the design system's AI surfaces:
+//   - Card tone="aiAccent" (gold-ring elevation)
+//   - EditorialProse for the long-form body (Fraunces)
+//   - StreamingIndicator (three-dot pulse + inline cursor)
+//   - ModelBadge for the "Opus 4.7 · 1.2s · cached" chip
+// See docs/DESIGN-SYSTEM.md.
 
 type StreamEvent =
-  | { type: 'meta'; cached: boolean; model?: string; briefingId?: string; createdAt?: string }
+  | { type: 'meta';  cached: boolean; model?: string; briefingId?: string; createdAt?: string }
   | { type: 'model'; model: string }
   | { type: 'token'; text: string }
-  | { type: 'done'; cached: boolean; briefingId?: string | null; model?: string; tokensIn?: number; tokensOut?: number; latencyMs?: number; costUsd?: number }
+  | { type: 'done';  cached: boolean; briefingId?: string | null; model?: string;
+      tokensIn?: number; tokensOut?: number; latencyMs?: number; costUsd?: number }
   | { type: 'error'; message: string };
 
-function GlassShell({ children }: { children: React.ReactNode }) {
-  const [hovered, setHovered] = useState(false);
-  return (
-    <div
-      onMouseEnter={() => setHovered(true)}
-      onMouseLeave={() => setHovered(false)}
-      style={{
-        padding: '20px 22px',
-        overflow: 'hidden',
-        background: 'rgba(255, 255, 255, 0.03)',
-        backdropFilter: 'blur(12px)',
-        WebkitBackdropFilter: 'blur(12px)',
-        border: `1px solid rgba(138, 92, 246, ${hovered ? 0.3 : 0.12})`,
-        borderRadius: 14,
-        transition: 'all 0.2s ease',
-        transform: hovered ? 'translateY(-2px)' : 'none',
-        boxShadow: hovered ? '0 8px 32px rgba(138, 92, 246, 0.08)' : 'none',
-      }}
-    >
-      {children}
-    </div>
-  );
-}
-
 function formatTimeAgo(at: Date | null): string {
-  if (!at) return 'Loading...';
+  if (!at) return 'Loading…';
   const diff = Date.now() - at.getTime();
   const s = Math.floor(diff / 1000);
   if (s < 60) return 'Just now';
@@ -54,11 +41,10 @@ export function BriefingCard() {
   const [fetchedAt, setFetchedAt] = useState<Date | null>(null);
   const [modelUsed, setModelUsed] = useState<string | null>(null);
   const [cached, setCached] = useState(false);
+  const [latencyMs, setLatencyMs] = useState<number | null>(null);
   const [, setTick] = useState(0);
 
   const sourceRef = useRef<EventSource | null>(null);
-  // Watchdog: forces an error state if the stream goes silent. Kept in a ref
-  // so re-entrancy doesn't leak timers across retries.
   const watchdogRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastTokenAtRef = useRef<number>(0);
   const STREAM_OVERALL_TIMEOUT_MS = 45_000;
@@ -85,6 +71,7 @@ export function BriefingCard() {
     setError(null);
     setCached(false);
     setModelUsed(null);
+    setLatencyMs(null);
     setStatus('streaming');
     lastTokenAtRef.current = Date.now();
 
@@ -94,14 +81,12 @@ export function BriefingCard() {
     const es = new EventSource(url);
     sourceRef.current = es;
 
-    // Watchdog: fire if the stream opens but never produces tokens, OR
-    // if it stalls mid-stream for longer than the idle threshold.
     const startedAt = Date.now();
     const tick = () => {
       const now = Date.now();
       const sinceStart = now - startedAt;
       const sinceToken = now - lastTokenAtRef.current;
-      if (sourceRef.current !== es) return; // stream already replaced
+      if (sourceRef.current !== es) return;
       if (sinceStart > STREAM_OVERALL_TIMEOUT_MS || sinceToken > STREAM_IDLE_TIMEOUT_MS) {
         setError('Briefing timed out — tap retry');
         setStatus('error');
@@ -114,11 +99,8 @@ export function BriefingCard() {
 
     es.onmessage = (e) => {
       let payload: StreamEvent;
-      try {
-        payload = JSON.parse(e.data) as StreamEvent;
-      } catch {
-        return;
-      }
+      try { payload = JSON.parse(e.data) as StreamEvent; }
+      catch { return; }
       switch (payload.type) {
         case 'meta':
           setCached(!!payload.cached);
@@ -137,6 +119,7 @@ export function BriefingCard() {
         case 'done':
           if (!payload.cached) setFetchedAt(new Date());
           if (payload.model) setModelUsed(payload.model);
+          if (typeof payload.latencyMs === 'number') setLatencyMs(payload.latencyMs);
           setStatus('done');
           closeStream();
           break;
@@ -157,14 +140,12 @@ export function BriefingCard() {
     };
   }, [closeStream, status]);
 
-  // Mount: start once
   useEffect(() => {
     startStream();
     return () => closeStream();
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Tick relative timestamp every 30s
   useEffect(() => {
     const id = setInterval(() => setTick(t => t + 1), 30_000);
     return () => clearInterval(id);
@@ -174,62 +155,77 @@ export function BriefingCard() {
   const isIdleEmpty = !text && isStreaming;
 
   return (
-    <GlassShell>
-      {/* Header */}
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-          <div style={{
-            width: 28, height: 28, borderRadius: '50%',
-            background: 'linear-gradient(135deg, #f0c674, #c9a84c)',
-            display: 'flex', alignItems: 'center', justifyContent: 'center',
-            fontSize: 13, fontWeight: 800, color: '#080b14',
-          }}>K</div>
+    <Card size="lg" tone="aiAccent">
+      {/* ── Header ─────────────────────────────────────────────── */}
+      <div style={{
+        display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: space[4],
+      }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: space[3] }}>
+          {/* Keisha avatar — single gold, no gradient */}
+          <div
+            aria-hidden="true"
+            style={{
+              width: 32, height: 32, borderRadius: '50%',
+              background: color.gold,
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              fontFamily: font.serif,
+              fontSize: 15, fontWeight: weight.bold, color: color.bg,
+              boxShadow: `0 0 0 3px ${color.goldSubtle}`,
+            }}
+          >
+            K
+          </div>
           <div>
-            <div style={{ fontSize: 11, fontWeight: 600, color: '#f0c674', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+            <div style={{
+              fontSize: sz.label.fontSize, fontWeight: weight.semibold, color: color.gold,
+              textTransform: 'uppercase', letterSpacing: tracking.eyebrow,
+            }}>
               Keisha — AI Briefing
             </div>
-            <div style={{ fontSize: 10, color: '#555', display: 'flex', gap: 6, alignItems: 'center' }}>
+            <div style={{
+              fontSize: sz.micro.fontSize, color: color.textDim,
+              display: 'flex', gap: space[2], alignItems: 'center', marginTop: 2,
+            }}>
               <span>{isStreaming ? (cached ? 'Replaying…' : 'Streaming…') : formatTimeAgo(fetchedAt)}</span>
-              {cached && <span style={{ color: '#4ade80' }}>• cached</span>}
-              {modelUsed && !isStreaming && <span style={{ color: '#666' }}>• {modelUsed}</span>}
+              {cached && <PillBadge tone="positive" size="sm">cached</PillBadge>}
+              {isStreaming && <StreamingIndicator />}
             </div>
           </div>
         </div>
         <button
           onClick={() => startStream({ refresh: true })}
           disabled={isStreaming}
-          style={{
-            background: 'none', border: 'none',
-            color: isStreaming ? '#333' : '#666',
-            cursor: isStreaming ? 'not-allowed' : 'pointer',
-            padding: 4, fontSize: 14,
-          }}
+          aria-label="Regenerate briefing"
           title="Regenerate briefing"
+          style={{
+            background: 'none', border: `1px solid ${color.border}`, borderRadius: radius.button,
+            color: isStreaming ? color.textFaint : color.textMuted,
+            cursor: isStreaming ? 'not-allowed' : 'pointer',
+            padding: '6px 10px', fontSize: sz.body.fontSize,
+            transition: `all ${motion.duration.fast}ms ${motion.easing.default}`,
+          }}
         >
           ↻
         </button>
       </div>
 
-      {/* Body */}
+      {/* ── Body ───────────────────────────────────────────────── */}
       {isIdleEmpty ? (
-        <div style={{ display: 'flex', gap: 6, padding: '20px 0' }}>
-          {[0, 1, 2].map(i => (
-            <div key={i} style={{
-              width: 8, height: 8, borderRadius: '50%',
-              background: '#f0c674', opacity: 0.5,
-              animation: `pulse 1.2s ease-in-out ${i * 0.2}s infinite`,
-            }} />
-          ))}
+        <div style={{ display: 'flex', alignItems: 'center', gap: space[3], padding: `${space[5]}px 0` }}>
+          <StreamingIndicator label="Keisha is compiling your briefing" />
         </div>
       ) : error && !text ? (
-        <div style={{ fontSize: 13, color: '#f87171', padding: '8px 0' }}>
-          {error}
+        <div style={{
+          fontSize: sz.bodyLg.fontSize, color: color.negative, padding: `${space[2]}px 0`,
+          display: 'flex', alignItems: 'center', gap: space[3],
+        }}>
+          <span>{error}</span>
           <button
             onClick={() => startStream({ refresh: true })}
             style={{
-              marginLeft: 10, background: 'none', border: '1px solid #f87171',
-              color: '#f87171', padding: '2px 8px', borderRadius: 6,
-              fontSize: 11, cursor: 'pointer',
+              background: 'transparent', border: `1px solid ${color.negative}`,
+              color: color.negative, padding: '4px 10px', borderRadius: radius.button,
+              fontSize: sz.label.fontSize, fontWeight: weight.semibold, cursor: 'pointer',
             }}
           >
             Retry
@@ -238,33 +234,30 @@ export function BriefingCard() {
       ) : (
         <div style={{ position: 'relative' }}>
           <div style={{
-            maxHeight: expanded ? 'none' : 180,
+            maxHeight: expanded ? 'none' : 200,
             overflow: 'hidden',
-            transition: 'max-height 0.4s ease',
+            transition: `max-height ${motion.duration.slow}ms ${motion.easing.settle}`,
           }}>
-            <MarkdownRenderer content={text} compact />
-            {isStreaming && (
-              <span
-                aria-hidden="true"
-                style={{
-                  display: 'inline-block', width: 8, height: 14,
-                  background: '#f0c674', marginLeft: 2, verticalAlign: 'middle',
-                  animation: 'blink 1s steps(1) infinite',
-                }}
-              />
-            )}
+            <EditorialProse>
+              <MarkdownRenderer content={text} compact />
+              {isStreaming && <StreamingIndicator variant="cursor" />}
+            </EditorialProse>
           </div>
+
           {!expanded && text.length > 300 && !isStreaming && (
             <div style={{
-              position: 'absolute', bottom: 0, left: 0, right: 0, height: 60,
-              background: 'linear-gradient(transparent, rgba(8, 11, 20, 0.95))',
-              display: 'flex', alignItems: 'flex-end', justifyContent: 'center', paddingBottom: 4,
+              position: 'absolute', bottom: 0, left: 0, right: 0, height: 72,
+              background: `linear-gradient(transparent, ${color.surface} 85%)`,
+              display: 'flex', alignItems: 'flex-end', justifyContent: 'center', paddingBottom: space[1],
+              pointerEvents: 'none',
             }}>
               <button
                 onClick={() => setExpanded(true)}
                 style={{
-                  background: 'none', border: 'none', color: '#f0c674',
-                  fontSize: 12, cursor: 'pointer', fontWeight: 600,
+                  pointerEvents: 'auto',
+                  background: 'transparent', border: `1px solid ${color.gold}30`,
+                  color: color.gold, padding: '4px 12px', borderRadius: radius.full,
+                  fontSize: sz.label.fontSize, fontWeight: weight.semibold, cursor: 'pointer',
                 }}
               >
                 Read full briefing →
@@ -275,8 +268,8 @@ export function BriefingCard() {
             <button
               onClick={() => setExpanded(false)}
               style={{
-                background: 'none', border: 'none', color: '#888',
-                fontSize: 11, cursor: 'pointer', marginTop: 8,
+                background: 'none', border: 'none', color: color.textMuted,
+                fontSize: sz.label.fontSize, cursor: 'pointer', marginTop: space[2],
               }}
             >
               Collapse ↑
@@ -285,12 +278,20 @@ export function BriefingCard() {
         </div>
       )}
 
-      <style jsx>{`
-        @keyframes blink {
-          50% { opacity: 0; }
-        }
-      `}</style>
-    </GlassShell>
+      {/* ── Footer (model + telemetry) ─────────────────────────── */}
+      {!isStreaming && !error && text && (
+        <div style={{
+          marginTop: space[3], paddingTop: space[3],
+          borderTop: `1px solid ${color.borderFaint}`,
+          display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: space[3],
+        }}>
+          <ModelBadge model={modelUsed} latencyMs={latencyMs ?? undefined} cached={cached} />
+          <span style={{ fontSize: sz.micro.fontSize, color: color.textDim, fontFamily: font.mono }}>
+            {formatTimeAgo(fetchedAt)}
+          </span>
+        </div>
+      )}
+    </Card>
   );
 }
 

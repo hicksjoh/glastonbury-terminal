@@ -1,6 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createServiceClient } from '@/lib/supabase';
 
+// Live-data endpoint — never let Next static-optimize this at build time
+export const dynamic = 'force-dynamic';
+
 export async function GET() {
   try {
     const supabase = createServiceClient();
@@ -14,7 +17,9 @@ export async function GET() {
       return NextResponse.json({ alerts: getMockAlerts() });
     }
 
-    return NextResponse.json({ alerts: data || getMockAlerts() });
+    // Rows created before the conditions column was required can have null here
+    const alerts = (data || getMockAlerts()).map((a: Record<string, unknown>) => ({ ...a, conditions: a.conditions ?? [] }));
+    return NextResponse.json({ alerts });
   } catch {
     return NextResponse.json({ alerts: getMockAlerts() });
   }

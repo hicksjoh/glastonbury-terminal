@@ -5,11 +5,18 @@ import { Sidebar } from './Sidebar';
 import { TradingModeBanner } from './TradingModeBanner';
 import { NotificationBell } from '@/components/NotificationBell';
 import { RegimeBadge } from '@/components/RegimeBadge';
+import { MarketStatusChip } from '@/components/MarketStatusChip';
 import { ShortcutsHelp } from '@/components/ShortcutsHelp';
 import { useKeyboardShortcuts } from '@/hooks/useKeyboardShortcuts';
 
 const MarketTickerBar = dynamic(() => import('@/components/MarketTickerBar'), { ssr: false });
 const VoiceMic = dynamic(() => import('@/components/keisha/VoiceMic').then(m => m.VoiceMic), { ssr: false });
+// LiveTradingGate reads NEXT_PUBLIC_TRADING_MODE and is a no-op in paper.
+// In live mode it either mints the session ack or shows the red modal.
+const LiveTradingGate = dynamic(
+  () => import('@/components/trade/LiveTradingGate').then(m => m.LiveTradingGate),
+  { ssr: false },
+);
 
 const VOICE_ENABLED = process.env.NEXT_PUBLIC_FEATURE_VOICE === 'true';
 
@@ -61,7 +68,8 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const sidebarWidth = compact ? SIDEBAR_COMPACT : SIDEBAR_FULL;
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', minHeight: '100vh', backgroundColor: '#08080d' }}>
+    // Transparent shell — the obsidian ground + dot grid live on <body> (globals.css)
+    <div style={{ display: 'flex', flexDirection: 'column', minHeight: '100vh', backgroundColor: 'transparent' }}>
       <TradingModeBanner />
       <MarketTickerBar />
       <div style={{ display: 'flex', flex: 1 }}>
@@ -98,6 +106,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             padding: isMobile ? '12px 16px 0' : '12px 40px 0', position: 'sticky', top: 0, zIndex: 50,
             paddingTop: isMobile ? 48 : undefined,
           }}>
+            <MarketStatusChip />
             <RegimeBadge />
             <NotificationBell />
           </div>
@@ -108,6 +117,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       </div>
       <ShortcutsHelp />
       {VOICE_ENABLED && <VoiceMic />}
+      <LiveTradingGate />
     </div>
   );
 }

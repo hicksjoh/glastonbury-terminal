@@ -5,13 +5,14 @@ import { AppShell } from '@/components/layout/AppShell';
 import { ErrorBoundary } from '@/components/ErrorBoundary';
 import { Globe } from 'lucide-react';
 import { PredictionMarketsCard } from '@/components/macro/PredictionMarketsCard';
-import type { MacroResponse } from '@/types/macro';
+import { z } from 'zod';
+import { fetchParsed, macroResponseSchema } from '@/lib/api-schemas';
 
 const PREDICTION_MARKETS_ENABLED = process.env.NEXT_PUBLIC_FEATURE_PREDICTION_MARKETS === 'true';
 
 // Use the canonical API contract from src/types/macro.ts so route + page
 // can never silently disagree (P0-2, hardening/p0-codex-fixes).
-type MacroData = MacroResponse;
+type MacroData = z.infer<typeof macroResponseSchema>;
 
 const REGIME_COLORS: Record<string, string> = {
   expansion: '#4ade80',
@@ -94,10 +95,9 @@ export default function MacroPage() {
   useEffect(() => {
     const fetchData = async () => {
       try {
-        const res = await fetch('/api/macro');
-        if (!res.ok) throw new Error(`API error: ${res.status}`);
-        const json = await res.json();
-        setData(json);
+        const parsed = await fetchParsed('/api/macro', macroResponseSchema);
+        if (!parsed) throw new Error('Failed to load macro data');
+        setData(parsed);
       } catch (err) {
         console.error('Macro fetch error:', err);
         setError(err instanceof Error ? err.message : 'Failed to load macro data');

@@ -12,7 +12,8 @@ import { test, expect } from '@playwright/test';
  */
 test.describe('@smoke S1 — JWT session cookies', () => {
   test('issued cookie is a JWT (3-part, starts with eyJ)', async ({ request }) => {
-    const password = process.env.E2E_PASSWORD || 'Glastonbury#GT!';
+    const password = process.env.E2E_PASSWORD;
+    if (!password) throw new Error('E2E_PASSWORD is required for JWT session tests.');
     const res = await request.post('/api/auth/login', { data: { password } });
     expect(res.status()).toBe(200);
     const body = await res.json();
@@ -39,13 +40,16 @@ test.describe('@smoke S1 — JWT session cookies', () => {
 
   test('rejects a tampered JWT signature', async ({ request }) => {
     // Take a real login cookie, flip the last char of the signature, expect 401.
-    const password = process.env.E2E_PASSWORD || 'Glastonbury#GT!';
+    const password = process.env.E2E_PASSWORD;
+    if (!password) throw new Error('E2E_PASSWORD is required for JWT session tests.');
     const loginRes = await request.post('/api/auth/login', { data: { password } });
     const setCookie = loginRes.headers()['set-cookie'] || '';
     const match = /gt-auth=([^;]+)/.exec(setCookie);
     expect(match).not.toBeNull();
     const parts = match![1].split('.');
-    const tampered = `${parts[0]}.${parts[1]}.${parts[2].slice(0, -1)}X`;
+    // Replace the last signature char with a DIFFERENT char — a fixed 'X'
+    // is a no-op 1/64 of the time when the signature already ends in 'X'.
+    const tampered = `${parts[0]}.${parts[1]}.${parts[2].slice(0, -1)}${parts[2].endsWith('X') ? 'Y' : 'X'}`;
 
     const res = await request.get('/api/sectors', {
       headers: { Cookie: `gt-auth=${tampered}` },
