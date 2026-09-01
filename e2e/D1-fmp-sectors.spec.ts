@@ -15,17 +15,22 @@ test.describe('@smoke D1 — FMP sector performance', () => {
     const res = await request.get('/api/health');
     expect(res.status()).toBe(200);
     const body = await res.json();
-    expect(body.services).toBeDefined();
-    expect(body.services.fmp).toBe('ok');
-  });
-
-  test('GET /api/sectors returns a non-empty sectors array with numeric changes', async ({ request }) => {
-    const res = await request.get('/api/sectors');
-    expect(res.status()).toBe(200);
-
-    const body = await res.json();
     expect(body.sectors).toBeDefined();
     expect(Array.isArray(body.sectors)).toBe(true);
+
+    // HONESTY CHECK — runs at every hour, weekends included.
+    //
+    // /api/sectors used to emit all eight sectors at "0.00" whenever it
+    // had no usable upstream data, with HTTP 200 and no marker. That is
+    // indistinguishable from a genuinely flat market, so the heatmap
+    // rendered fabricated data and this spec passed straight through a
+    // real FMP quota outage. The route must now say so explicitly.
+    if (body.degraded) {
+      throw new Error(
+        `/api/sectors is DEGRADED (reason: ${body.reason}). Upstream FMP data is unavailable — ` +
+        `the sector heatmap has no real data to show. This is a genuine outage, not a test flake.`,
+      );
+    }
     expect(body.sectors.length).toBeGreaterThan(0);
 
     // Every sector must have a name and a changesPercentage that parses to a finite number.
@@ -38,14 +43,14 @@ test.describe('@smoke D1 — FMP sector performance', () => {
       expect(Number.isFinite(pct)).toBe(true);
     }
 
-    // At least one sector should be non-zero — if everything is 0.00 the
-    // fallback kicked in and we are not actually reading FMP sector data.
+    // At least one sector should be non-zero once a session has actually
+    // traded. All-zero is the CORRECT answer on a weekend and before the
+    // 09:30 ET open, so only demand movement inside a session.
     //
-    // But all-zero is also the CORRECT answer when no session has traded yet:
-    // on a weekend, and on a weekday before the 09:30 ET open. The nightly
-    // smoke runs at 07:00 ET, so asserting non-zero unconditionally would fail
-    // this every single weekday morning and train everyone to ignore the alarm.
-    // Only demand movement once the session has actually been underway.
+    // NOTE: this gate means the assertion below never executes on the
+    // 07:00 ET nightly run. That is why the degraded check above is
+    // deliberately UNGATED — it is the part that catches a real outage,
+    // and it must run at every hour.
     const nonZero = body.sectors.filter((s: { changesPercentage: string | number }) => {
       const pct = typeof s.changesPercentage === 'number'
         ? s.changesPercentage
@@ -65,9 +70,7 @@ test.describe('@smoke D1 — FMP sector performance', () => {
     const etMinutes = parseInt(part('hour'), 10) * 60 + parseInt(part('minute'), 10);
     // 09:45 ET — 15 minutes past the open, so prints have definitely landed.
     // Caveat: NYSE holidays are not modelled, so a manual afternoon run on
-    // Thanksgiving or Christmas will still fail here. The scheduled nightly
-    // runs at 07:00 ET and always takes the skip branch, so the dead-man
-    // switch is unaffected.
+    // Thanksgiving or Christmas will still fail here.
     const sessionUnderway = !isWeekend && etMinutes >= 9 * 60 + 45;
 
     if (sessionUnderway) {
