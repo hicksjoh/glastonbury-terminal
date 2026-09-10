@@ -18,15 +18,16 @@ type SearchParams = {
 };
 
 /**
- * Shared handler for both verbs. Takes the REAL NextRequest (needed for the
- * durable, session-keyed rate limit) plus already-parsed params, so neither
- * verb has to fabricate a request object for the other.
+ * Rate limit + embeddings-config gate. Runs BEFORE either verb touches the
+ * request body, so a rate-limited caller gets 429 even when the body is
+ * malformed — matching the pre-refactor ordering, where POST rate-limited
+ * first and parsed second. Returns a response to short-circuit, or null.
  */
-async function handleSearch(req: NextRequest, body: SearchParams) {
+async function preflight(req: NextRequest): Promise<NextResponse | null> {
   // P0-6: embeddings call per query, durable session-keyed.
   const { key } = await getRateLimitIdentity(req);
   const { allowed } = await checkRateLimitDurable('semantic-search', key, 30, 60);
-  if (!allowed) return NextResponse.json({ error: 'Too many requests' }, { status: 429 });
+  if (!allowed) return NextResponse.json({ error: 'Too many requests', hits: [] }, { status: 429 });
 
   const cfg = isEmbeddingConfigured();
   if (!cfg.ready) {
@@ -35,6 +36,12 @@ async function handleSearch(req: NextRequest, body: SearchParams) {
       { status: 503 },
     );
   }
+  return null;
+}
+
+/** Shared body handler. preflight() has already passed by the time this runs. */
+async function handleSearch(body: SearchParams) {
+  const cfg = isEmbeddingConfigured();
 
   const query = (body.query ?? '').trim();
   if (!query) return NextResponse.json({ error: 'Empty query', hits: [] }, { status: 400 });
@@ -58,20 +65,28 @@ async function handleSearch(req: NextRequest, body: SearchParams) {
 }
 
 export async function POST(req: NextRequest) {
+  const gate = await preflight(req);
+  if (gate) return gate;
+
   let body: SearchParams;
   try {
     body = await req.json();
   } catch {
     return NextResponse.json({ error: 'Bad JSON', hits: [] }, { status: 400 });
   }
-  return handleSearch(req, body);
+  return handleSearch(body);
 }
 
 export async function GET(req: NextRequest) {
+  const gate = await preflight(req);
+  if (gate) return gate;
+
   const sp = req.nextUrl.searchParams;
-  const limit = sp.get('limit');
-  const parsedLimit = limit === null ? undefined : Number(limit);
-  return handleSearch(req, {
+  // `?limit=` (empty) must fall through to the default, not to Number('') === 0,
+  // which the clamp below would floor to 1. Matches the old `sp.get(..) ? .. : undefined`.
+  const rawLimit = sp.get('limit');
+  const parsedLimit = rawLimit ? Number(rawLimit) : undefined;
+  return handleSearch({
     query: sp.get('q') ?? '',
     match_count: Number.isFinite(parsedLimit) ? parsedLimit : undefined,
     filter_doc_type: sp.get('type') ?? undefined,

@@ -24,15 +24,27 @@ test.describe('@smoke S4 — GET /api/search/semantic does not crash', () => {
     expect(res.status()).not.toBe(500);
     expect([200, 400, 429, 503]).toContain(res.status());
 
-    // Whatever the outcome, it must be JSON with the documented envelope.
+    // Every non-2xx branch of this route now returns `hits: []` alongside
+    // `error` — including 429, which used to be the odd one out. That
+    // uniformity is deliberate: a caller can read `.hits` without first
+    // branching on status. Assert it holds for whatever status comes back.
     const body = await res.json();
     expect(body).toHaveProperty('hits');
+    if (res.status() !== 200) expect(body).toHaveProperty('error');
   });
 
   test('GET and POST agree on status for the same query', async ({ request }) => {
-    // The two verbs share one handler now; drift between them is the bug.
+    // Both verbs share preflight() + handleSearch(); drift between them is the bug.
+    // Each call consumes its own slot in the 30-per-60s durable limiter, so if
+    // either side trips 429 the comparison is meaningless rather than failing —
+    // skip instead of asserting, so a busy bucket can't red the nightly.
     const getRes = await request.get('/api/search/semantic?q=AAPL');
     const postRes = await request.post('/api/search/semantic', { data: { query: 'AAPL' } });
+
+    test.skip(
+      getRes.status() === 429 || postRes.status() === 429,
+      'rate limiter tripped between the two calls — nothing to compare',
+    );
     expect(getRes.status()).toBe(postRes.status());
   });
 });
