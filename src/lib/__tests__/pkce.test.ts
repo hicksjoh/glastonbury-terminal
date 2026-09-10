@@ -87,7 +87,10 @@ describe('PKCE — verifyS256', () => {
     const v = MIN_VERIFIER;
     const c = await challengeFor(v);
     // Flip one byte of the verifier — challenge should no longer match.
-    const tampered = 'b' + v.slice(1);
+    // Must pick a replacement that differs from the current first char:
+    // a fixed 'b' is a no-op ~1/64 of the time, when the random verifier
+    // already starts with 'b', and the challenge then matches after all.
+    const tampered = (v[0] === 'b' ? 'c' : 'b') + v.slice(1);
     expect(await verifyS256(tampered, c)).toBe(false);
   });
 
