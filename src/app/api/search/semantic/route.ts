@@ -10,7 +10,19 @@ const VALID_DOC_TYPES: DocType[] = ['filing', 'transcript', 'journal', 'news', '
 
 // POST /api/search/semantic  body: { query, match_count?, filter_ticker?, filter_doc_type? }
 // GET  /api/search/semantic?q=...&type=...&ticker=...&limit=...  (convenience)
-export async function POST(req: NextRequest) {
+type SearchParams = {
+  query?: string;
+  match_count?: number;
+  filter_ticker?: string;
+  filter_doc_type?: string;
+};
+
+/**
+ * Shared handler for both verbs. Takes the REAL NextRequest (needed for the
+ * durable, session-keyed rate limit) plus already-parsed params, so neither
+ * verb has to fabricate a request object for the other.
+ */
+async function handleSearch(req: NextRequest, body: SearchParams) {
   // P0-6: embeddings call per query, durable session-keyed.
   const { key } = await getRateLimitIdentity(req);
   const { allowed } = await checkRateLimitDurable('semantic-search', key, 30, 60);
@@ -23,9 +35,6 @@ export async function POST(req: NextRequest) {
       { status: 503 },
     );
   }
-
-  let body: { query?: string; match_count?: number; filter_ticker?: string; filter_doc_type?: string };
-  try { body = await req.json(); } catch { return NextResponse.json({ error: 'Bad JSON', hits: [] }, { status: 400 }); }
 
   const query = (body.query ?? '').trim();
   if (!query) return NextResponse.json({ error: 'Empty query', hits: [] }, { status: 400 });
@@ -48,17 +57,24 @@ export async function POST(req: NextRequest) {
   }
 }
 
+export async function POST(req: NextRequest) {
+  let body: SearchParams;
+  try {
+    body = await req.json();
+  } catch {
+    return NextResponse.json({ error: 'Bad JSON', hits: [] }, { status: 400 });
+  }
+  return handleSearch(req, body);
+}
+
 export async function GET(req: NextRequest) {
   const sp = req.nextUrl.searchParams;
-  const synth = new Request(req.url, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      query: sp.get('q') ?? '',
-      match_count: sp.get('limit') ? Number(sp.get('limit')) : undefined,
-      filter_doc_type: sp.get('type') ?? undefined,
-      filter_ticker: sp.get('ticker') ?? undefined,
-    }),
+  const limit = sp.get('limit');
+  const parsedLimit = limit === null ? undefined : Number(limit);
+  return handleSearch(req, {
+    query: sp.get('q') ?? '',
+    match_count: Number.isFinite(parsedLimit) ? parsedLimit : undefined,
+    filter_doc_type: sp.get('type') ?? undefined,
+    filter_ticker: sp.get('ticker') ?? undefined,
   });
-  return POST(synth as NextRequest);
 }
