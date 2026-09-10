@@ -14,6 +14,7 @@
 // don't change.
 
 import { log as baseLog } from './logger';
+import { recordApiFailure, recordApiSuccess } from './circuit-breaker';
 
 export const FMP_STABLE = 'https://financialmodelingprep.com/stable';
 const FMP_TIMEOUT_MS = 5_000;
@@ -48,6 +49,49 @@ export function isFmpUnavailable<T>(v: T | FmpUnavailable): v is FmpUnavailable 
 function key(): string | null {
   const k = process.env.FMP_API_KEY;
   return k && k.length > 0 ? k : null;
+}
+
+/**
+ * Rate-limit latch.
+ *
+ * When FMP's daily quota is exhausted every /stable endpoint answers
+ * HTTP 429 "Limit Reach". Without a latch each caller kept hammering it
+ * — getSectorPerformance alone walked five calendar days back, making
+ * five more requests after the first had already said the quota was
+ * blown, and empty results are deliberately not cached so every fresh
+ * request repeated the whole thing. That turns a quota problem into a
+ * guarantee the quota stays blown.
+ *
+ * The latch is in-memory and per-instance, which is the right scope: it
+ * exists to stop THIS process from making the outage worse, not to be a
+ * distributed quota ledger.
+ */
+const FMP_RATE_LIMIT_COOLDOWN_MS = 15 * 60 * 1_000;
+let fmpRateLimitedUntil = 0;
+
+/** True while we know the FMP quota is blown and are backing off. */
+export function isFmpRateLimited(): boolean {
+  return Date.now() < fmpRateLimitedUntil;
+}
+
+function markFmpRateLimited(retryAfterSeconds?: number): void {
+  const cooldown = retryAfterSeconds && Number.isFinite(retryAfterSeconds) && retryAfterSeconds > 0
+    ? Math.min(retryAfterSeconds * 1_000, 6 * 60 * 60 * 1_000)
+    : FMP_RATE_LIMIT_COOLDOWN_MS;
+  fmpRateLimitedUntil = Date.now() + cooldown;
+  fmpLog.warn({ cooldown_ms: cooldown }, 'FMP rate limit hit (429) — backing off');
+  recordApiFailure('fmp');
+}
+
+/**
+ * Test seam: clear ALL module-level FMP state between cases — the
+ * rate-limit latch AND the 5-minute sector cache. Clearing only the
+ * latch leaves a cached result that silently short-circuits the next
+ * test's network call.
+ */
+export function __resetFmpRateLimitForTests(): void {
+  fmpRateLimitedUntil = 0;
+  sectorCache = null;
 }
 
 async function fmpFetch(url: string): Promise<Response> {
@@ -336,17 +380,36 @@ function offsetDate(isoDate: string, days: number): string {
   return d.toISOString().slice(0, 10);
 }
 
-async function fetchSectorSnapshot(date: string): Promise<SectorSnapshotRow[]> {
+/**
+ * `rows` on success (possibly empty — that date simply had no session).
+ * `rateLimited` when FMP says the quota is blown, which is a DIFFERENT
+ * condition from "no data" and must not be retried against other dates.
+ */
+type SectorSnapshotResult =
+  | { status: 'ok'; rows: SectorSnapshotRow[] }
+  | { status: 'rateLimited' }
+  | { status: 'error' };
+
+async function fetchSectorSnapshot(date: string): Promise<SectorSnapshotResult> {
   const k = key();
-  if (!k) return [];
+  if (!k) return { status: 'error' };
   const url = `${FMP_STABLE}/sector-performance-snapshot?date=${date}&apikey=${k}`;
   try {
     const res = await fmpFetch(url);
-    if (!res.ok) return [];
+    if (res.status === 429) {
+      const retryAfter = Number(res.headers.get('retry-after'));
+      markFmpRateLimited(Number.isFinite(retryAfter) ? retryAfter : undefined);
+      return { status: 'rateLimited' };
+    }
+    if (!res.ok) {
+      recordApiFailure('fmp');
+      return { status: 'error' };
+    }
     const data = await res.json();
-    return Array.isArray(data) ? (data as SectorSnapshotRow[]) : [];
+    recordApiSuccess('fmp');
+    return { status: 'ok', rows: Array.isArray(data) ? (data as SectorSnapshotRow[]) : [] };
   } catch {
-    return [];
+    return { status: 'error' };
   }
 }
 
@@ -361,11 +424,19 @@ export async function getSectorPerformance(): Promise<SectorPerformance[]> {
     return sectorCache.value;
   }
 
-  // Try today → -1 → -2 → ... up to 5 calendar days back to cover holiday weekends.
+  // Already known to be rate limited — don't touch the network at all.
+  if (isFmpRateLimited()) return [];
+
+  // Try today → -1 → -2 → ... up to 5 calendar days back to cover holiday
+  // weekends. A 429 aborts the walk immediately: walking back five days
+  // when the quota is blown just spends five more requests to be told the
+  // same thing, and makes the outage worse.
   let rows: SectorSnapshotRow[] = [];
   let tryDate = mostRecentTradingDay();
   for (let i = 0; i < 5 && rows.length === 0; i++) {
-    rows = await fetchSectorSnapshot(tryDate);
+    const result = await fetchSectorSnapshot(tryDate);
+    if (result.status === 'rateLimited') return [];
+    if (result.status === 'ok') rows = result.rows;
     if (rows.length === 0) tryDate = mostRecentTradingDay(new Date(offsetDate(tryDate, -1) + 'T00:00:00Z'));
   }
 
@@ -378,8 +449,10 @@ export async function getSectorPerformance(): Promise<SectorPerformance[]> {
   const bySector: Record<string, number[]> = {};
   for (const row of rows) {
     if (!row.sector) continue;
+    const change = Number(row.averageChange);
+    if (!Number.isFinite(change)) continue; // a malformed row must not NaN the sector
     if (!bySector[row.sector]) bySector[row.sector] = [];
-    bySector[row.sector].push(row.averageChange);
+    bySector[row.sector].push(change);
   }
 
   const result: SectorPerformance[] = Object.keys(bySector).map(sector => {

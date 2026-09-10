@@ -3,6 +3,7 @@ import { getCached, setCache, TTL } from '@/lib/server-cache';
 import {
   getSectorPerformance as getSectorPerformanceStable,
   getQuote,
+  isFmpRateLimited,
 } from '@/lib/fmp-client';
 import { captureRouteError } from '@/lib/api-error';
 import { loggerFor } from '@/lib/request-id';
@@ -85,12 +86,10 @@ export async function GET(req: NextRequest) {
   const { log, request_id } = loggerFor(req, { route: 'sectors' });
   try {
     if (!FMP_KEY) {
-      // Return sectors with 0% and a hint
-      const sectors = Object.keys(SECTOR_REPS).map(s => ({
-        sector: s,
-        changesPercentage: '0.00',
-      }));
-      return NextResponse.json({ sectors, noKey: true });
+      // Report the absence. The previous version emitted every sector at
+      // "0.00", which renders as a genuinely flat market rather than as
+      // missing data.
+      return NextResponse.json({ sectors: [], noKey: true, degraded: true, reason: 'no_api_key' });
     }
 
     const type = req.nextUrl.searchParams.get('type');
@@ -155,12 +154,26 @@ export async function GET(req: NextRequest) {
       })
     );
 
-    const sectors = sectorEntries.map(([sectorName], i) => {
-      const quotes = allQuotes[i];
-      if (quotes.length === 0) return { sector: sectorName, changesPercentage: '0.00' };
-      const avg = quotes.reduce((sum, q) => sum + (q.changePercentage || 0), 0) / quotes.length;
-      return { sector: sectorName, changesPercentage: avg.toFixed(2) };
+    // Only emit a sector we actually priced. A sector with no usable
+    // quotes used to be reported as "0.00" — indistinguishable from a
+    // sector that genuinely finished flat. When FMP's quota is blown
+    // EVERY sector took that path, so the heatmap rendered a totally
+    // flat market, with HTTP 200 and no marker, on a day the market
+    // had moved.
+    const sectors = sectorEntries.flatMap(([sectorName], i) => {
+      const quotes = allQuotes[i].filter(q => Number.isFinite(q.changePercentage));
+      if (quotes.length === 0) return [];
+      const avg = quotes.reduce((sum, q) => sum + q.changePercentage, 0) / quotes.length;
+      return [{ sector: sectorName, changesPercentage: avg.toFixed(2) }];
     });
+
+    if (sectors.length === 0) {
+      const reason = isFmpRateLimited() ? 'fmp_rate_limited' : 'fmp_unavailable';
+      log.warn({ reason }, 'sectors degraded — no usable upstream data');
+      // Deliberately NOT cached: we want the next request to retry once
+      // the quota window rolls over.
+      return NextResponse.json({ sectors: [], degraded: true, reason });
+    }
 
     const payload = { sectors };
     setCache(cacheKey, payload, TTL.MEDIUM);
@@ -171,6 +184,6 @@ export async function GET(req: NextRequest) {
     // failure so we know FMP is down.
     const eventId = captureRouteError(error, { request_id, route: 'sectors' });
     log.warn({ err: error instanceof Error ? error.message : String(error), sentry_event_id: eventId }, 'sectors fallthrough — returning empty');
-    return NextResponse.json({ sectors: [], stocks: [] });
+    return NextResponse.json({ sectors: [], stocks: [], degraded: true, reason: 'route_error' });
   }
 }
