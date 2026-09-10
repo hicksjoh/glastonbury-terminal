@@ -15,6 +15,23 @@ test.describe('@smoke D1 — FMP sector performance', () => {
     const res = await request.get('/api/health');
     expect(res.status()).toBe(200);
     const body = await res.json();
+    expect(body.services).toBeDefined();
+    expect(body.services.fmp).toBe('ok');
+  });
+
+  test('GET /api/sectors returns a non-empty sectors array with numeric changes', async ({ request }) => {
+    // NOTE: this request line, and the test boundary above it, were lost when
+    // the FMP-honesty change fused these two tests into one. The survivor
+    // fetched /api/health and then asserted /api/sectors' body shape against
+    // it, so `body.sectors` was undefined on every single run — the nightly
+    // went permanently red, and the `services.fmp === 'ok'` assertion the
+    // first test's name promises had been silently deleted.
+    //
+    // Net effect: the change written to make FMP monitoring honest left it
+    // both broken and weaker. Keep these two tests separate.
+    const res = await request.get('/api/sectors');
+    expect(res.status()).toBe(200);
+    const body = await res.json();
     expect(body.sectors).toBeDefined();
     expect(Array.isArray(body.sectors)).toBe(true);
 
