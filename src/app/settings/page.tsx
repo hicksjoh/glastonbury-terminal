@@ -99,10 +99,25 @@ export default function SettingsPage() {
     setTesting('fmp');
     try {
       const res = await fetch('/api/sectors');
-      if (res.ok) {
-        updateConnection('fmp', 'connected', 'Sector data OK');
-      } else {
+      if (!res.ok) {
         updateConnection('fmp', 'disconnected', `HTTP ${res.status}`);
+        return;
+      }
+      // HTTP 200 alone proves nothing: /api/sectors answers 200 even when
+      // it has no usable upstream data. Reporting "Sector data OK" off the
+      // status code is how this panel showed FMP healthy straight through
+      // a quota outage.
+      const body = await res.json().catch(() => null);
+      const count = Array.isArray(body?.sectors) ? body.sectors.length : 0;
+      if (body?.degraded || count === 0) {
+        const reason = body?.reason === 'fmp_rate_limited'
+          ? 'Rate limited — FMP quota exhausted'
+          : body?.reason === 'no_api_key'
+            ? 'No FMP_API_KEY configured'
+            : 'No sector data returned';
+        updateConnection('fmp', 'disconnected', reason);
+      } else {
+        updateConnection('fmp', 'connected', `Sector data OK (${count} sectors)`);
       }
     } catch (e: unknown) {
       updateConnection('fmp', 'disconnected', e instanceof Error ? e.message : 'Network error');
