@@ -175,9 +175,21 @@ describe('S2 cronIsAuthorized — fail closed when CRON_SECRET is missing', () =
       const { createSessionJwt } = await import('../session');
       const token = await createSessionJwt({ sub: 'wes' });
       const parts = token.split('.');
-      // Replace the last signature char with a DIFFERENT char — a fixed 'X'
-      // is a no-op 1/64 of the time when the signature already ends in 'X'.
-      const tampered = `${parts[0]}.${parts[1]}.${parts[2].slice(0, -1)}${parts[2].endsWith('X') ? 'Y' : 'X'}`;
+      // Tamper the DECODED signature bytes, not the encoded text.
+      //
+      // Editing the last base64url character is not reliably a tamper. A
+      // 32-byte HMAC-SHA256 signature encodes to 43 chars, and 43 * 6 = 258
+      // bits for 256 bits of data — so the final character carries only 4
+      // meaningful bits and decoders discard the low 2. Swapping it to 'X'
+      // therefore decodes to an IDENTICAL signature whenever the original
+      // ended in 'U', 'V' or 'W': the JWT still verifies and this test fails
+      // with "expected true to be false" about 3 runs in 64 (~4.7%).
+      //
+      // An earlier fix addressed only the exact-match 'X' case (1/64) and
+      // left the padding-bit collisions. Flipping a byte is unambiguous.
+      const sig = Buffer.from(parts[2], 'base64url');
+      sig[0] ^= 0xff;
+      const tampered = `${parts[0]}.${parts[1]}.${sig.toString('base64url')}`;
       expect(
         await cronIsAuthorized(
           mockReq({ cookies: { 'gt-auth': tampered } }),

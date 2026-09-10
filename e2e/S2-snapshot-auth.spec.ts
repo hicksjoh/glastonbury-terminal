@@ -50,16 +50,23 @@ test.describe('@smoke S2 — /api/portfolio/snapshot GET requires valid JWT', ()
       headers: { Cookie: `gt-auth=${jwt}` },
     });
 
-    // The valid-JWT case must NOT 401. We accept any non-401 response that's
-    // either a clean 200 (with the documented body shape) or a downstream
-    // 5xx — a stale Supabase schema (e.g., missing `equity` column) is an
-    // unrelated bug and not what this test is gating.
-    expect(res.status()).not.toBe(401);
+    // A valid JWT must produce a real 200 with the documented body shape.
+    //
+    // This assertion used to be `expect(status).not.toBe(401)` guarded by
+    // `if (status === 200)`, with a comment waiving a "stale Supabase schema
+    // (e.g., missing `equity` column)" as an unrelated bug. That waiver was
+    // load-bearing: prod really was missing `equity`, `net_worth` and
+    // `positions_json`, this route really was returning 500 on every call,
+    // and the daily snapshot cron ("0 22 * * 1-5") had therefore never
+    // written a row. The suite stayed green through all of it because the
+    // only hard assertion was about the 401 path.
+    //
+    // Fixed by supabase/migrations/20260909_portfolio_snapshots_missing_columns.sql.
+    // Keep this strict — it is the dead-man switch for that drift returning.
+    expect(res.status()).toBe(200);
 
-    if (res.status() === 200) {
-      const body = await res.json();
-      expect(body.success).toBe(true);
-      expect(Array.isArray(body.snapshots)).toBe(true);
-    }
+    const body = await res.json();
+    expect(body.success).toBe(true);
+    expect(Array.isArray(body.snapshots)).toBe(true);
   });
 });
