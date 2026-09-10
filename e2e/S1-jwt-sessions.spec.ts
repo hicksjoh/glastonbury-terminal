@@ -49,7 +49,15 @@ test.describe('@smoke S1 — JWT session cookies', () => {
     const parts = match![1].split('.');
     // Replace the last signature char with a DIFFERENT char — a fixed 'X'
     // is a no-op 1/64 of the time when the signature already ends in 'X'.
-    const tampered = `${parts[0]}.${parts[1]}.${parts[2].slice(0, -1)}${parts[2].endsWith('X') ? 'Y' : 'X'}`;
+    // Tamper the DECODED signature bytes, not the encoded text. A 32-byte
+    // HMAC-SHA256 signature encodes to 43 base64url chars, and 43 * 6 = 258
+    // bits for 256 bits of data — so the final character carries only 4
+    // meaningful bits and decoders discard the low 2. Editing it to 'X' is
+    // therefore a NO-OP whenever the original ended in 'U', 'V' or 'W': the
+    // token still verifies and this test fails ~4.7% of runs.
+    const sig = Buffer.from(parts[2], 'base64url');
+    sig[0] ^= 0xff;
+    const tampered = `${parts[0]}.${parts[1]}.${sig.toString('base64url')}`;
 
     const res = await request.get('/api/sectors', {
       headers: { Cookie: `gt-auth=${tampered}` },
