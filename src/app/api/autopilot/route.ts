@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import type { AutopilotCandidate, AutopilotResponse } from '@/lib/autopilot-contract';
+import type { AutopilotCandidate, AutopilotExecution, AutopilotResponse } from '@/lib/autopilot-contract';
 import { normalizeExecutionRow } from '@/lib/autopilot-contract';
 import { createServiceClient } from '@/lib/supabase';
 import { rateLimit } from '@/lib/rate-limit';
@@ -373,28 +373,44 @@ async function handleExecute(req: NextRequest, body: {
 
 // ── Status: Current Pipeline Status ────────────────────────────────────────
 async function handleStatus(): Promise<NextResponse> {
-  if (lastPipelineRun) {
-    return NextResponse.json(lastPipelineRun);
-  }
-
-  // Try fetching from Supabase if no in-memory run
+  // ALWAYS read execution history from the database, even when an in-memory
+  // pipeline run exists.
+  //
+  // This used to short-circuit on `lastPipelineRun` alone. That was survivable
+  // while `executed` carried approved candidates, but now that it carries only
+  // real broker fills — and a scan deliberately sets it to [] — short-circuiting
+  // meant that after one scan on a warm lambda, every later status call
+  // returned `executed: []` and never looked at `autopilot_executions`. The
+  // fills were in the table and invisible in the UI.
+  let executed: AutopilotExecution[] = [];
+  let historyError = false;
   try {
     const supabase = createServiceClient();
     const { data, error } = await supabase
       .from('autopilot_executions')
       .select('*')
       .order('created_at', { ascending: false })
-      .limit(1);
-
+      .limit(50);
     if (error) throw error;
+    executed = (data || []).map(normalizeExecutionRow);
+  } catch {
+    historyError = true;
+  }
+
+  if (lastPipelineRun) {
+    return NextResponse.json({ ...lastPipelineRun, executed });
+  }
+
+  try {
+    if (historyError) throw new Error('history unavailable');
 
     return NextResponse.json({
-      pipelineId: data?.[0]?.pipeline_id || null,
+      pipelineId: executed[0]?.pipelineId ?? null,
       stage: 'last_known',
       candidates: [],
-      executed: (data || []).map(normalizeExecutionRow),
+      executed,
       rejected: [],
-      timestamp: data?.[0]?.created_at || new Date().toISOString(),
+      timestamp: executed[0]?.executedAt ?? new Date().toISOString(),
     });
   } catch {
     return NextResponse.json({

@@ -6,7 +6,7 @@
  * one file so the provenance stays obvious; each `describe` names the finding.
  */
 import { describe, it, expect } from 'vitest';
-import { isPrivateAddress, isSafeImageUrl } from '@/lib/img-proxy';
+import { isPrivateAddress, isSafeImageUrl, pinnedLookup } from '@/lib/img-proxy';
 import { normalizeExecutionRow } from '@/lib/autopilot-contract';
 import { getTaxYearData, latestSupportedTaxYear, ACTIVE_TAX_YEAR } from '@/lib/tax-engine';
 
@@ -63,6 +63,47 @@ describe('M7 img-proxy: private address rejection', () => {
   });
 });
 
+/** Node's LookupFunction is overloaded; this adapter calls it without `any`. */
+type LookupCallback = (...args: unknown[]) => void;
+function callLookup(
+  fn: unknown,
+  hostname: string,
+  optionsOrCb: Record<string, unknown> | LookupCallback,
+  cb?: LookupCallback,
+): void {
+  (fn as (h: string, o: unknown, c?: LookupCallback) => void)(hostname, optionsOrCb, cb);
+}
+
+describe('M7 img-proxy: address pinning closes the DNS-rebinding window', () => {
+  // Validating a hostname and then letting the HTTP client resolve it again is
+  // a TOCTOU gap — a rebinding host answers public for the check and private
+  // for the connection. pinnedLookup forces the socket onto the address we
+  // actually approved.
+  it('answers with the pinned address regardless of the hostname asked for', () => {
+    const lookupFn = pinnedLookup('93.184.216.34', 4);
+    let seen: unknown[] = [];
+    callLookup(lookupFn, 'evil-rebinder.example.com', {}, (...args) => { seen = args; });
+    expect(seen[0]).toBeNull();
+    expect(seen[1]).toBe('93.184.216.34');
+    expect(seen[2]).toBe(4);
+  });
+
+  it('honours the `all` option shape the agent may request', () => {
+    const lookupFn = pinnedLookup('2606:4700::1111', 6);
+    let seen: unknown[] = [];
+    callLookup(lookupFn, 'example.com', { all: true }, (...args) => { seen = args; });
+    expect(seen[0]).toBeNull();
+    expect(seen[1]).toEqual([{ address: '2606:4700::1111', family: 6 }]);
+  });
+
+  it('supports the (hostname, callback) two-arg form', () => {
+    const lookupFn = pinnedLookup('1.1.1.1', 4);
+    let seen: unknown[] = [];
+    callLookup(lookupFn, 'example.com', (...args) => { seen = args; });
+    expect(seen[1]).toBe('1.1.1.1');
+  });
+});
+
 // ── C7 — autopilot execution contract ──────────────────────────────────────
 describe('C7 autopilot: execution rows normalise to one shape', () => {
   it('maps a real autopilot_executions row', () => {
@@ -89,20 +130,30 @@ describe('C7 autopilot: execution rows normalise to one shape', () => {
     expect(row.price).toBeNull();
   });
 
-  it('survives a row where every nullable column is null', () => {
+  it('survives a row where every nullable column is null, inventing nothing', () => {
+    // Crucially it must NOT default the side to 'buy', the quantity to 0, or
+    // the timestamp to now. This is an audit surface; a fabricated direction or
+    // execution time is worse than a visible gap.
     const row = normalizeExecutionRow({});
-    expect(row.side).toBe('buy');
-    expect(row.shares).toBe(0);
+    expect(row.side).toBe('unknown');
+    expect(row.shares).toBeNull();
     expect(row.price).toBeNull();
     expect(row.orderId).toBeNull();
-    expect(typeof row.executedAt).toBe('string');
+    expect(row.executedAt).toBeNull();
+  });
+
+  it("maps an unrecognised side to 'unknown' rather than 'buy'", () => {
+    expect(normalizeExecutionRow({ side: 'BUY_TO_COVER' }).side).toBe('unknown');
+    expect(normalizeExecutionRow({ side: '' }).side).toBe('unknown');
+    expect(normalizeExecutionRow({ side: 'SELL' }).side).toBe('sell');
+    expect(normalizeExecutionRow({ side: 'Buy' }).side).toBe('buy');
   });
 
   it('coerces a non-numeric price to null rather than NaN', () => {
     // NaN serialises to null over JSON anyway; making it explicit here means
     // the page's null check is the single place that has to be right.
     expect(normalizeExecutionRow({ filled_avg_price: 'n/a' }).price).toBeNull();
-    expect(normalizeExecutionRow({ shares: 'abc' }).shares).toBe(0);
+    expect(normalizeExecutionRow({ shares: 'abc' }).shares).toBeNull();
   });
 });
 

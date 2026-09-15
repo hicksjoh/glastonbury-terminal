@@ -61,7 +61,8 @@ function getVerdictStyle(verdict: string): { bg: string; color: string } {
 }
 
 /** Execution timestamps are ISO UTC; the terminal reads in ET everywhere. */
-function formatExecutedAt(iso: string): string {
+function formatExecutedAt(iso: string | null): string {
+  if (!iso) return '—';
   const d = new Date(iso);
   if (!Number.isFinite(d.getTime())) return '—';
   return d.toLocaleString('en-US', {
@@ -539,14 +540,18 @@ export default function AutoPilotPage() {
                       <td style={{ padding: '12px 14px' }}>
                         <span style={{
                           display: 'inline-block', padding: '3px 10px', borderRadius: 6, fontSize: 11, fontWeight: 700,
-                          background: ex.side === 'buy' ? 'rgba(74,222,128,0.15)' : 'rgba(248,113,113,0.15)',
-                          color: ex.side === 'buy' ? COLORS.green : COLORS.red,
+                          background: ex.side === 'buy' ? 'rgba(74,222,128,0.15)'
+                            : ex.side === 'sell' ? 'rgba(248,113,113,0.15)'
+                            : 'rgba(255,255,255,0.06)',
+                          color: ex.side === 'buy' ? COLORS.green
+                            : ex.side === 'sell' ? COLORS.red
+                            : COLORS.textSecondary,
                         }}>
-                          {ex.side.toUpperCase()}
+                          {ex.side === 'unknown' ? '—' : ex.side.toUpperCase()}
                         </span>
                       </td>
                       <td style={{ padding: '12px 14px', fontFamily: 'JetBrains Mono, monospace', fontSize: 13, color: COLORS.textPrimary }}>
-                        {ex.shares}
+                        {ex.shares ?? '—'}
                       </td>
                       <td style={{ padding: '12px 14px', fontFamily: 'JetBrains Mono, monospace', fontSize: 13, color: COLORS.textPrimary }}>
                         {/* null until the order fills — never format it blind. */}

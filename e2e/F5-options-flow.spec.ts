@@ -23,8 +23,16 @@ test.describe('@smoke F5 — options flow', () => {
     expect(Array.isArray(body.flows)).toBe(true);
     expect(body.summary).toBeDefined();
     expect(typeof body.summary.totalFlows).toBe('number');
-    expect(typeof body.summary.bullishPct).toBe('number');
-    expect(typeof body.summary.bearishPct).toBe('number');
+    // With zero flows the route reports null rather than dividing 0/0 and
+    // calling the result "100% bearish", so the contract is number-or-null.
+    if (body.summary.totalFlows > 0) {
+      expect(typeof body.summary.bullishPct).toBe('number');
+      expect(typeof body.summary.bearishPct).toBe('number');
+      expect(body.summary.bullishPct + body.summary.bearishPct).toBe(100);
+    } else {
+      expect(body.summary.bullishPct).toBeNull();
+      expect(body.summary.bearishPct).toBeNull();
+    }
     expect(Array.isArray(body.summary.scannedSymbols)).toBe(true);
     expect(body.summary.scannedSymbols).toEqual(expect.arrayContaining(['SPY', 'NVDA']));
 

@@ -35,4 +35,4 @@ async function GET_impl(req: NextRequest) {
 
 // Durable, session-keyed rate limiting (CLAUDE.md rule 6). See
 // src/lib/api-rate-limit.ts — the old in-memory limiter was per-lambda.
-export const GET = withRateLimit('research/list', RATE.EXPENSIVE, GET_impl);
+export const GET = withRateLimit('research/list', RATE.POLL, GET_impl);

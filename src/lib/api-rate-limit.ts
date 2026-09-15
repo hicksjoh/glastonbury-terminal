@@ -52,6 +52,13 @@ export const RATE = {
   /** Order placement and other irreversible actions. */
   CRITICAL: { limit: 10, windowSeconds: 60, failClosed: true } as RateSpec,
   /**
+   * Status endpoints a page polls on a timer. /research and /research/[id]
+   * poll every 5s = 12 req/min, so any ceiling at or below that would 429 a
+   * long-running research job mid-flight and make it look stuck. Must stay
+   * comfortably above the fastest poll interval in the UI.
+   */
+  POLL: { limit: 60, windowSeconds: 60 } as RateSpec,
+  /**
    * Public asset proxying. One news page render fires ~30 image requests in a
    * single burst, so a 40/min ceiling would break the page it serves.
    */

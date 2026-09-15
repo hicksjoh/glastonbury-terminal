@@ -93,7 +93,12 @@ function getExportShape(src) {
   //   this guard off for 89 routes the moment the wrapper was introduced.
   const aliasMatch =
     src.match(/export\s+const\s+GET\s*=\s*([A-Za-z_$][\w$]*)\s*;/) ||
-    src.match(/export\s+const\s+GET\s*=\s*\w+\s*\([^)]*?,\s*([A-Za-z_$][\w$]*)\s*\)\s*;/) ||
+    // Any wrapper call, however nested or member-qualified, whose LAST
+    // identifier argument is the handler:
+    //   withRateLimit('x', RATE.READ, GET_impl)
+    //   authed(withRateLimit('x', RATE.READ, GET_impl))
+    //   wrappers.withRateLimit('x', specFor('read'), GET_impl)
+    src.match(/export\s+const\s+GET\s*=[\s\S]*?,\s*([A-Za-z_$][\w$]*)\s*\)+\s*;/) ||
     src.match(/export\s*\{[^}]*\b([A-Za-z_$][\w$]*)\s+as\s+GET\b[^}]*\}/);
   if (aliasMatch) {
     const name = aliasMatch[1];
@@ -103,6 +108,15 @@ function getExportShape(src) {
     // Unresolvable alias: fail conservative — require an explicit opt-out.
     if (!decl) return 'paramless';
     return readsRequest(src, decl[1], decl.index + decl[0].length) ? 'has-params' : 'paramless';
+  }
+
+  // A GET export exists but matched none of the shapes above. Returning null
+  // here — which is what this did — made the file invisible to the guard.
+  // Any unrecognised shape must fail closed and demand an explicit opt-out,
+  // otherwise a new wrapper style silently switches the check off, exactly as
+  // introducing withRateLimit() did for 89 routes.
+  if (/export\s+(const|async\s+function|function)\s+GET\b|\bas\s+GET\b/.test(src)) {
+    return 'paramless';
   }
 
   return null;
@@ -147,8 +161,36 @@ function walkPages(dir, out = []) {
  * Opt out per line with a trailing `// prerender-safe: <reason>`.
  */
 function clockCallsInRenderPath(src) {
-  const m = src.match(/export\s+default\s+(?:async\s+)?function\s+\w*\s*\([^)]*\)\s*\{/);
-  if (!m) return [];
+  // Locate the default-exported component, whatever form it takes. Matching
+  // only `export default function` skipped every arrow-function page
+  // (`const Page = () => {...}; export default Page;` and
+  // `export default () => {...}`), which is a false negative in the guard
+  // itself — strictly worse than a false positive, since it reports green.
+  let m = src.match(/export\s+default\s+(?:async\s+)?function\s+\w*\s*\([^)]*\)\s*\{/);
+
+  if (!m) {
+    // export default () => { ... }   /   export default async (props) => { ... }
+    m = src.match(/export\s+default\s+(?:async\s*)?\([^)]*\)\s*=>\s*\{/);
+  }
+
+  if (!m) {
+    // export default Identifier  ->  resolve the declaration in this file.
+    const named = src.match(/export\s+default\s+([A-Za-z_$][\w$]*)\s*;/);
+    if (named) {
+      const n = named[1];
+      m = src.match(new RegExp(`(?:async\\s+)?function\\s+${n}\\s*\\([^)]*\\)\\s*\\{`))
+        || src.match(new RegExp(`const\\s+${n}\\s*(?::[^=]+)?=\\s*(?:async\\s*)?\\([^)]*\\)\\s*=>\\s*\\{`))
+        || src.match(new RegExp(`const\\s+${n}\\s*(?::[^=]+)?=\\s*(?:async\\s+)?function\\s*\\([^)]*\\)\\s*\\{`));
+    }
+  }
+
+  // Still unresolved: report it rather than silently passing. A page whose
+  // component this cannot find is a page this guard is not protecting.
+  if (!m) {
+    return CLOCK_CALL.test(src.replace(/\/\/.*$/gm, ''))
+      ? [{ line: 0, text: '(could not locate the default-exported component; clock/random call present somewhere in this file — verify by hand or annotate)' }]
+      : [];
+  }
 
   const bodyStart = m.index + m[0].length;
   const hits = [];

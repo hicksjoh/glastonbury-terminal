@@ -41,15 +41,21 @@ export interface AutopilotCandidate {
 export interface AutopilotExecution {
   id: string;
   symbol: string;
-  side: 'buy' | 'sell';
-  shares: number;
+  /**
+   * 'unknown' for anything that is not exactly buy or sell. This is an audit
+   * surface: defaulting a corrupt or unrecognised side ('', 'BUY_TO_COVER', a
+   * null column) to 'buy' would print a direction that never happened.
+   */
+  side: 'buy' | 'sell' | 'unknown';
+  /** null when the row carries no usable quantity — not 0, which reads as a real zero-share fill. */
+  shares: number | null;
   /** Average fill price. null while the order is accepted but unfilled. */
   price: number | null;
   orderId: string | null;
   orderStatus: string | null;
   pipelineId: string | null;
-  /** ISO 8601. */
-  executedAt: string;
+  /** ISO 8601, or null when the row has no timestamp. Never "now" as a stand-in. */
+  executedAt: string | null;
 }
 
 export interface AutopilotResponse {
@@ -74,15 +80,16 @@ function asFiniteOrNull(v: unknown): number | null {
  */
 export function normalizeExecutionRow(row: Record<string, unknown>): AutopilotExecution {
   const rawSide = String(row.side ?? '').toLowerCase();
+  const createdAt = row.created_at == null ? null : String(row.created_at);
   return {
     id: String(row.id ?? row.order_id ?? `${row.symbol ?? 'unknown'}-${row.created_at ?? ''}`),
     symbol: String(row.symbol ?? ''),
-    side: rawSide === 'sell' ? 'sell' : 'buy',
-    shares: asFiniteOrNull(row.shares) ?? 0,
+    side: rawSide === 'sell' ? 'sell' : rawSide === 'buy' ? 'buy' : 'unknown',
+    shares: asFiniteOrNull(row.shares),
     price: asFiniteOrNull(row.filled_avg_price),
     orderId: row.order_id == null ? null : String(row.order_id),
     orderStatus: row.status == null ? null : String(row.status),
     pipelineId: row.pipeline_id == null ? null : String(row.pipeline_id),
-    executedAt: String(row.created_at ?? new Date().toISOString()),
+    executedAt: createdAt,
   };
 }

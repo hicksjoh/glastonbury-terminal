@@ -1,5 +1,6 @@
 import { createHmac } from 'crypto';
 import { lookup } from 'dns/promises';
+import type { LookupFunction } from 'net';
 import { isIP } from 'net';
 
 const PLACEHOLDER = '/news-placeholder.svg';
@@ -92,26 +93,73 @@ export function isSafeImageUrl(raw: string): boolean {
 }
 
 /**
- * The authoritative check: resolve the hostname and reject if ANY answer is
- * non-global. Must be called for the initial target and again for every
- * redirect hop, because `redirect: 'follow'` never re-runs validation.
+ * Resolve a URL's host and return the single address we are willing to talk to,
+ * or null if it is not safe.
+ *
+ * Returning the address matters as much as the verdict. Validating a hostname
+ * and then letting the HTTP client resolve it again is a TOCTOU gap: a DNS
+ * rebinding host answers with a public address for our check and a private one
+ * microseconds later for the real connection. The caller must PIN the returned
+ * address for the socket (see `pinnedLookup`), so the bytes go to the address
+ * we actually approved.
  */
-export async function isPubliclyRoutableUrl(raw: string): Promise<boolean> {
-  if (!isSafeImageUrl(raw)) return false;
+export async function resolveSafeAddress(
+  raw: string,
+): Promise<{ address: string; family: 4 | 6; hostname: string } | null> {
+  if (!isSafeImageUrl(raw)) return null;
   let hostname: string;
   try {
     hostname = new URL(raw).hostname.replace(/^\[|\]$/g, '');
   } catch {
-    return false;
+    return null;
   }
-  if (isIP(hostname)) return !isPrivateAddress(hostname);
+
+  if (isIP(hostname)) {
+    if (isPrivateAddress(hostname)) return null;
+    return { address: hostname, family: isIP(hostname) === 6 ? 6 : 4, hostname };
+  }
+
   try {
     const answers = await lookup(hostname, { all: true });
-    if (answers.length === 0) return false;
-    return answers.every(a => !isPrivateAddress(a.address));
+    if (answers.length === 0) return null;
+    // Every answer must be public. A mixed answer set is a rebinding
+    // signature, not a partially-usable host.
+    if (answers.some(a => isPrivateAddress(a.address))) return null;
+    // Pinning means committing to ONE address, which gives up the Happy
+    // Eyeballs fallback that `fetch` would have done across the answer set.
+    // Prefer IPv4, which is the more reliably routable egress family.
+    const chosen = answers.find(a => a.family === 4) ?? answers[0];
+    return { address: chosen.address, family: chosen.family === 6 ? 6 : 4, hostname };
   } catch {
-    return false;
+    return null;
   }
+}
+
+/**
+ * A `lookup` implementation for node's http/https agents that always answers
+ * with the pre-approved address, so DNS cannot change under us between the
+ * check and the connect. The original hostname still drives TLS SNI and the
+ * Host header, so certificate validation is unaffected.
+ */
+export function pinnedLookup(address: string, family: 4 | 6): LookupFunction {
+  return ((_hostname, options, callback) => {
+    const cb = (typeof options === 'function' ? options : callback) as (
+      err: NodeJS.ErrnoException | null,
+      addr: string | Array<{ address: string; family: number }>,
+      fam?: number,
+    ) => void;
+    const opts = typeof options === 'function' ? {} : (options ?? {});
+    if ((opts as { all?: boolean }).all) {
+      cb(null, [{ address, family }]);
+    } else {
+      cb(null, address, family);
+    }
+  }) as LookupFunction;
+}
+
+/** Convenience wrapper for callers that only need the yes/no. */
+export async function isPubliclyRoutableUrl(raw: string): Promise<boolean> {
+  return (await resolveSafeAddress(raw)) !== null;
 }
 
 export function signImageUrl(rawUrl: string | null | undefined): string | null {
