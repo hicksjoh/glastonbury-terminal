@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createServiceClient } from '@/lib/supabase';
 import { driftRegimeScan } from '@/lib/drift-regime';
 import { getHistoricalPrices } from '@/lib/fmp-client';
+import { withRateLimit, RATE } from '@/lib/api-rate-limit';
 
 const DEFAULT_SYMBOLS = ['SPY', 'QQQ', 'AAPL', 'MSFT', 'NVDA', 'TSLA', 'AMZN', 'GOOGL', 'META'];
 
@@ -12,7 +13,7 @@ async function fetchHistoricalPrices(symbol: string): Promise<number[]> {
   return data.historical.map(d => d.close).reverse();
 }
 
-export async function GET(request: NextRequest) {
+async function GET_impl(request: NextRequest) {
   try {
     const { searchParams } = new URL(request.url);
     const symbolsParam = searchParams.get('symbols');
@@ -89,3 +90,7 @@ export async function GET(request: NextRequest) {
     );
   }
 }
+
+// Durable, session-keyed rate limiting (CLAUDE.md rule 6). See
+// src/lib/api-rate-limit.ts — the old in-memory limiter was per-lambda.
+export const GET = withRateLimit('drift', RATE.UPSTREAM, GET_impl);

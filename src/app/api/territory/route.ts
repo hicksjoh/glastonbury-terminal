@@ -3,8 +3,9 @@ import { fetchTerritoryIntel } from '@/lib/territory-engine';
 import { getAllCR3Zips, CR3_TERRITORY_ZIPS } from '@/lib/territory-score';
 import { buildMeta } from '@/lib/api-meta';
 import { getCached, setCache } from '@/lib/server-cache';
+import { withRateLimit, RATE } from '@/lib/api-rate-limit';
 
-export async function GET(req: NextRequest) {
+async function GET_impl(req: NextRequest) {
   try {
     const zip = req.nextUrl.searchParams.get('zip');
     const region = req.nextUrl.searchParams.get('region'); // 'seacoast_fl' or 'west_coast_fl'
@@ -133,3 +134,7 @@ function avgScore(items: { totalScore: number }[]): number {
   if (!items || items.length === 0) return 0;
   return Math.round(items.reduce((sum, i) => sum + i.totalScore, 0) / items.length);
 }
+
+// Durable, session-keyed rate limiting (CLAUDE.md rule 6). See
+// src/lib/api-rate-limit.ts — the old in-memory limiter was per-lambda.
+export const GET = withRateLimit('territory', RATE.WRITE, GET_impl);

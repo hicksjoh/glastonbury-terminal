@@ -6,7 +6,8 @@ export interface GEXAnalysisResult {
   symbol: string;
   spotPrice: number;
   netGEX: number;
-  regime: 'positive' | 'negative';
+  /** 'none' = the chain carried no gamma at all (no data), not neutral positioning. */
+  regime: 'positive' | 'negative' | 'none';
   impact: string;
   levels: {
     putWall: number;
@@ -196,7 +197,7 @@ export interface GEXLevels {
   hvl: number;
   gammaFlip: number;
   netGEX: number;
-  regime: 'positive' | 'negative';
+  regime: 'positive' | 'negative' | 'none';
   pinStrikes: number[];
 }
 
@@ -279,7 +280,12 @@ export function findGEXLevels(gexByStrike: Map<number, number>, chain: OptionsCh
   let netGEX = 0;
   gexByStrike.forEach(val => { netGEX += val; });
 
-  const regime: 'positive' | 'negative' = netGEX > 0 ? 'positive' : 'negative';
+  // Zero is not negative — it is "no gamma in this chain". A weekend or an
+  // empty options feed produced netGEX 0 with every strike at 0, and this
+  // ternary routed it to 'negative', which the impact text then narrated as a
+  // confident dealer-positioning thesis built on nothing.
+  const regime: 'positive' | 'negative' | 'none' =
+    !Number.isFinite(netGEX) || netGEX === 0 ? 'none' : netGEX > 0 ? 'positive' : 'negative';
 
   const pinStrikes = Array.from(gexByStrike.entries())
     .sort((a, b) => Math.abs(b[1]) - Math.abs(a[1]))
@@ -290,6 +296,9 @@ export function findGEXLevels(gexByStrike: Map<number, number>, chain: OptionsCh
 }
 
 export function gexImpact(netGEX: number, spotPrice: number): string {
+  if (!Number.isFinite(netGEX) || netGEX === 0) {
+    return 'No gamma exposure in the loaded chain — no dealer-positioning read is available.';
+  }
   const regime = netGEX > 0 ? 'positive' : 'negative';
   const normalized = Math.abs(netGEX) / (spotPrice * spotPrice);
 

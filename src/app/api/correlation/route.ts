@@ -1,10 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { pearsonCorrelation, correlationMatrix, diversificationScore, alignReturnSeries, isUsableReturnSeries } from '@/lib/correlation';
 import { getHistoricalPrices } from '@/lib/fmp-client';
+import { withRateLimit, RATE } from '@/lib/api-rate-limit';
 
 const FMP_KEY = process.env.FMP_API_KEY;
 
-export async function GET(req: NextRequest) {
+async function GET_impl(req: NextRequest) {
   try {
     if (!FMP_KEY) {
       return NextResponse.json({ error: 'FMP_API_KEY not configured' }, { status: 500 });
@@ -154,3 +155,7 @@ function std(arr: number[]): number {
   const variance = arr.reduce((sum, val) => sum + (val - mean) ** 2, 0) / (n - 1);
   return Math.sqrt(variance);
 }
+
+// Durable, session-keyed rate limiting (CLAUDE.md rule 6). See
+// src/lib/api-rate-limit.ts — the old in-memory limiter was per-lambda.
+export const GET = withRateLimit('correlation', RATE.UPSTREAM, GET_impl);

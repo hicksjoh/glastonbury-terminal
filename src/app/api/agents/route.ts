@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createServiceClient } from '@/lib/supabase';
+import { withRateLimit, RATE } from '@/lib/api-rate-limit';
 
-export async function GET(req: NextRequest) {
+async function GET_impl(req: NextRequest) {
   try {
     const supabase = createServiceClient();
     const agent = req.nextUrl.searchParams.get('agent');
@@ -20,7 +21,7 @@ export async function GET(req: NextRequest) {
   }
 }
 
-export async function POST(req: NextRequest) {
+async function POST_impl(req: NextRequest) {
   try {
     const supabase = createServiceClient();
     const body = await req.json();
@@ -34,3 +35,8 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ success: false, error: 'Failed to create agent action' }, { status: 500 });
   }
 }
+
+// Durable, session-keyed rate limiting (CLAUDE.md rule 6). See
+// src/lib/api-rate-limit.ts — the old in-memory limiter was per-lambda.
+export const GET = withRateLimit('agents', RATE.EXPENSIVE, GET_impl);
+export const POST = withRateLimit('agents', RATE.EXPENSIVE, POST_impl);

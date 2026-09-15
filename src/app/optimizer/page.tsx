@@ -14,6 +14,9 @@ interface OptimizeResult {
   sharpeRatio: number;
   frontier: { risk: number; return: number; sharpe: number }[];
   aiViews: { symbol: string; view: string; confidence: number; reasoning: string }[];
+  /** 'ai' = posterior blends model views; 'prior-only' = pure equilibrium. */
+  viewSource?: 'ai' | 'prior-only';
+  aiViewsRequested?: boolean;
   rebalanceInstructions: string;
 }
 
@@ -193,11 +196,29 @@ export default function OptimizerPage() {
         {!loading && data && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 24 }}>
 
+            {/* Say which model produced these weights. A prior-only run is a
+                legitimate result, but it is NOT an AI-informed one, and the
+                page used to look identical either way. */}
+            {data.aiViewsRequested && data.viewSource === 'prior-only' && (
+              <div style={{
+                padding: '10px 14px', borderRadius: 8, fontSize: 13,
+                background: 'rgba(240,198,116,0.08)', border: '1px solid rgba(240,198,116,0.25)',
+                color: '#f0c674',
+              }}>
+                AI views unavailable — showing the equilibrium (prior-only) allocation.
+                No model opinions are reflected in these weights.
+              </div>
+            )}
+
             {/* Stats Row */}
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 16 }}>
               {[
-                { label: 'Expected Return', value: data.expectedReturn, color: COLORS.green, suffix: '%' },
-                { label: 'Expected Risk', value: data.expectedRisk, color: COLORS.gold, suffix: '%' },
+                // The API works in decimal fractions (0.12 = 12% annual) — the
+                // route's own prompt builder does `* 100` to render them. The UI
+                // used to append '%' to the raw decimal, so a 12% expected return
+                // displayed as "0.12%". Scale here, at the single display boundary.
+                { label: 'Expected Return', value: data.expectedReturn * 100, color: COLORS.green, suffix: '%' },
+                { label: 'Expected Risk', value: data.expectedRisk * 100, color: COLORS.gold, suffix: '%' },
                 { label: 'Sharpe Ratio', value: data.sharpeRatio, color: COLORS.cyan, suffix: '' },
               ].map((stat) => (
                 <div key={stat.label} style={{
@@ -380,7 +401,7 @@ export default function OptimizerPage() {
                             position: 'absolute', left: -32, top: -6,
                             color: '#666', fontSize: 9, ...mono,
                           }}>
-                            {(maxRet - pct * rangeRet).toFixed(1)}
+                            {((maxRet - pct * rangeRet) * 100).toFixed(1)}
                           </span>
                         </div>
                       ))}
@@ -399,7 +420,7 @@ export default function OptimizerPage() {
                           zIndex: i === optIdx ? 2 : 1,
                           cursor: 'default',
                         }}
-                          title={`Risk: ${p.risk.toFixed(2)}%, Return: ${p.return.toFixed(2)}%, Sharpe: ${p.sharpe.toFixed(2)}`}
+                          title={`Risk: ${(p.risk * 100).toFixed(2)}%, Return: ${(p.return * 100).toFixed(2)}%, Sharpe: ${p.sharpe.toFixed(2)}`}
                         />
                       ))}
                       {/* Current portfolio marker */}
@@ -415,7 +436,7 @@ export default function OptimizerPage() {
                           transform: 'translate(-50%, -50%)',
                           zIndex: 3,
                         }}
-                          title={`Optimal: Risk ${data.expectedRisk.toFixed(2)}%, Return ${data.expectedReturn.toFixed(2)}%`}
+                          title={`Optimal: Risk ${(data.expectedRisk * 100).toFixed(2)}%, Return ${(data.expectedReturn * 100).toFixed(2)}%`}
                         />
                       )}
                       {/* Legend */}

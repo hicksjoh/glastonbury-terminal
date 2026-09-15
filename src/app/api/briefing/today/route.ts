@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { createServiceClient } from '@/lib/supabase';
 import { isBriefingStale } from '@/lib/briefing-staleness';
+import { withRateLimit, RATE } from '@/lib/api-rate-limit';
 
 export const revalidate = 60; // cache for 60 seconds
 
@@ -8,7 +9,7 @@ export const revalidate = 60; // cache for 60 seconds
 // Forces the dashboard to fall back to live-generation via /api/briefing.
 const MAX_BRIEFING_AGE_HOURS = 24;
 
-export async function GET() {
+async function GET_impl() {
   try {
     const supabase = createServiceClient();
 
@@ -44,3 +45,7 @@ export async function GET() {
     return NextResponse.json({ briefing: null, cached: false });
   }
 }
+
+// Durable, session-keyed rate limiting (CLAUDE.md rule 6). See
+// src/lib/api-rate-limit.ts — the old in-memory limiter was per-lambda.
+export const GET = withRateLimit('briefing/today', RATE.EXPENSIVE, GET_impl);

@@ -113,10 +113,18 @@ export async function verifyAccessToken(
 ): Promise<AccessTokenPayload | null> {
   if (!token) return null;
   try {
-    // We accept either the expected resource URL OR the legacy placeholder.
-    // jose accepts a string[] for audience and matches against any.
+    // Strict RFC 8707 resource binding.
+    //
+    // LEGACY_AUDIENCE ('terminal-mcp') used to be accepted alongside the
+    // expected resource as a one-hour rollout transition, with no cutoff date
+    // encoded anywhere. While it stood, a token carrying the generic audience
+    // was valid at ANY MCP resource signed with the same SESSION_SECRET —
+    // production, preview, another instance — which is precisely the
+    // cross-resource replay that resource binding exists to stop. The
+    // transition window closed weeks ago; only the exact resource is accepted
+    // when the caller supplies one.
     const acceptedAudiences: string[] = expectedResource
-      ? [expectedResource, LEGACY_AUDIENCE]
+      ? [expectedResource]
       : [LEGACY_AUDIENCE];
     const { payload } = await jwtVerify(token, encodedSecret(), {
       algorithms: [ALG],

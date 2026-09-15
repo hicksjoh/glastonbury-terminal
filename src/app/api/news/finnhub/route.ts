@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { apiFetchWithFallback } from '@/lib/api-client';
 import { buildMeta } from '@/lib/api-meta';
 import { signImageUrl } from '@/lib/img-proxy';
+import { withRateLimit, RATE } from '@/lib/api-rate-limit';
 
 // Live-data endpoint — never let Next static-optimize this at build time
 export const dynamic = 'force-dynamic';
@@ -17,7 +18,7 @@ interface FinnhubNewsItem {
   [k: string]: unknown;
 }
 
-export async function GET() {
+async function GET_impl() {
   try {
     if (!process.env.FINNHUB_API_KEY) {
       return NextResponse.json({
@@ -53,3 +54,7 @@ export async function GET() {
     });
   }
 }
+
+// Durable, session-keyed rate limiting (CLAUDE.md rule 6). See
+// src/lib/api-rate-limit.ts — the old in-memory limiter was per-lambda.
+export const GET = withRateLimit('news/finnhub', RATE.UPSTREAM, GET_impl);

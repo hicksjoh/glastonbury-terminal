@@ -123,8 +123,8 @@ export default function FlowPage() {
         {data?.summary && (
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 12, marginBottom: 24 }}>
             <SummaryCard label="Total Flows" value={String(data.summary.totalFlows)} color="#8a5cf6" />
-            <SummaryCard label="Bullish" value={`${data.summary.bullishPct}%`} color="#4ade80" />
-            <SummaryCard label="Bearish" value={`${data.summary.bearishPct}%`} color="#f87171" />
+            <SummaryCard label="Bullish" value={data.summary.bullishPct != null ? `${data.summary.bullishPct}%` : '—'} color="#4ade80" />
+            <SummaryCard label="Bearish" value={data.summary.bearishPct != null ? `${data.summary.bearishPct}%` : '—'} color="#f87171" />
             <div style={{
               background: 'rgba(255,255,255,0.03)', border: '1px solid #1e1e35',
               borderRadius: 10, padding: 14,

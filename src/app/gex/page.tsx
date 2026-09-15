@@ -93,7 +93,11 @@ export default function GEXPage() {
       ? Math.max(...data.byStrike.map((s) => Math.abs(s.gex ?? 0)), 1)
       : 1;
 
-  const isPositiveRegime = (data?.regime ?? '').toLowerCase().includes('positive');
+  const regimeText = (data?.regime ?? '').toLowerCase();
+  const isPositiveRegime = regimeText.includes('positive');
+  // 'none' means the chain carried no gamma at all — neither a positive nor a
+  // negative read, so it must not render with a direction arrow.
+  const hasRegime = regimeText !== '' && regimeText !== 'none';
 
   return (
     <AppShell>
@@ -187,7 +191,7 @@ export default function GEXPage() {
                   textTransform: 'uppercase',
                 }}
               >
-                {isPositiveRegime ? '\u25B2' : '\u25BC'} {data.regime}
+                {hasRegime ? `${isPositiveRegime ? '\u25B2' : '\u25BC'} ${data.regime}` : 'No gamma in chain'}
               </div>
             </div>
 

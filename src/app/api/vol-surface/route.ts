@@ -7,6 +7,7 @@ import {
   findMispricing,
 } from '@/lib/volatility-surface';
 import { getQuote } from '@/lib/fmp-client';
+import { withRateLimit, RATE } from '@/lib/api-rate-limit';
 
 const FMP_KEY = process.env.FMP_API_KEY;
 
@@ -100,7 +101,7 @@ function generateHistoricalOptions(
   return generateSyntheticOptions(spotPrice, riskFreeRate, baseVol);
 }
 
-export async function GET(request: NextRequest) {
+async function GET_impl(request: NextRequest) {
   try {
     const { searchParams } = new URL(request.url);
     const symbol = (searchParams.get('symbol') || 'AAPL').toUpperCase();
@@ -183,3 +184,7 @@ export async function GET(request: NextRequest) {
     );
   }
 }
+
+// Durable, session-keyed rate limiting (CLAUDE.md rule 6). See
+// src/lib/api-rate-limit.ts — the old in-memory limiter was per-lambda.
+export const GET = withRateLimit('vol-surface', RATE.UPSTREAM, GET_impl);

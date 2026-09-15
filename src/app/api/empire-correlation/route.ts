@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { createServiceClient } from '@/lib/supabase';
 import { loadWealthSnapshot } from '@/lib/hedge/rsu-analyzer';
 import { getCached, setCache } from '@/lib/server-cache';
+import { withRateLimit, RATE } from '@/lib/api-rate-limit';
 
 // Live-data endpoint — never let Next static-optimize this at build time
 export const dynamic = 'force-dynamic';
@@ -43,7 +44,7 @@ interface StormAlertRow {
   created_at: string;
 }
 
-export async function GET() {
+async function GET_impl() {
   const cacheKey = 'empire-correlation:v1';
   const cached = getCached<unknown>(cacheKey);
   if (cached) return NextResponse.json(cached);
@@ -148,3 +149,7 @@ export async function GET() {
     }, { status: 500 });
   }
 }
+
+// Durable, session-keyed rate limiting (CLAUDE.md rule 6). See
+// src/lib/api-rate-limit.ts — the old in-memory limiter was per-lambda.
+export const GET = withRateLimit('empire-correlation', RATE.EXPENSIVE, GET_impl);

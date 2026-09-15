@@ -12,11 +12,14 @@ interface MonthData {
   inflows: number;
   outflows: number;
   net: number;
-  balance: number;
+  /** null when the opening balance is unknown — a projection with no anchor. */
+  balance: number | null;
 }
 
 interface CashflowData {
-  current_cash: number;
+  /** null when no cash asset is on record. Never treat as 0. */
+  current_cash: number | null;
+  opening_balance_known?: boolean;
   monthly_burn_rate: number;
   runway_months: number | null;
   total_inflows_12m: number;
@@ -55,14 +58,20 @@ export default function CashflowPage() {
     net: m.inflows * scenarioMultiplier - m.outflows * (scenario === 'conservative' ? 1.1 : scenario === 'optimistic' ? 0.9 : 1),
   })) || [];
 
-  // Recalculate running balance
-  let runBal = data?.current_cash || 0;
+  // Balances are only projectable from a known opening cash position. Without
+  // one there is nothing to run forward, so the balance column and the runway
+  // are suppressed rather than anchored to an invented starting figure.
+  const openingKnown = data?.opening_balance_known !== false && data?.current_cash != null;
+  let runBal = data?.current_cash ?? 0;
   const balanceMonths = adjustedMonths.map(m => {
     runBal += m.net;
-    return { ...m, balance: runBal };
+    return { ...m, balance: openingKnown ? runBal : null };
   });
 
-  const maxVal = Math.max(...balanceMonths.map(m => Math.max(m.inflows, m.outflows, m.balance)), 1);
+  const maxVal = Math.max(
+    ...balanceMonths.map(m => Math.max(m.inflows, m.outflows, m.balance ?? 0)),
+    1,
+  );
 
   return (
     <AppShell>
@@ -81,7 +90,7 @@ export default function CashflowPage() {
                 inflows: m.inflows.toFixed(2),
                 outflows: m.outflows.toFixed(2),
                 net: m.net.toFixed(2),
-                balance: m.balance.toFixed(2),
+                balance: m.balance != null ? m.balance.toFixed(2) : '',
               })), 'cashflow-forecast');
             }}
             style={{
@@ -115,9 +124,11 @@ export default function CashflowPage() {
             {/* Top Cards */}
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 12, marginBottom: 28 }}>
               {[
-                { label: 'Current Cash', value: data?.current_cash || 0, icon: Wallet, color: '#4ade80' },
+                { label: 'Current Cash', value: data?.current_cash ?? 0, icon: Wallet, color: '#4ade80',
+                  format: (v: number) => (openingKnown ? formatCurrency(v) : 'Not on record') },
                 { label: 'Monthly Burn Rate', value: data?.monthly_burn_rate || 0, icon: TrendingDown, color: '#f87171' },
-                { label: 'Runway', value: data?.runway_months ?? Infinity, icon: Clock, color: '#22d3ee', format: (v: number) => (Number.isFinite(v) ? `${v} months` : '∞ — no burn') },
+                { label: 'Runway', value: data?.runway_months ?? Infinity, icon: Clock, color: '#22d3ee',
+                  format: (v: number) => (!openingKnown ? '—' : Number.isFinite(v) ? `${v} months` : '∞ — no burn') },
                 { label: '12M Net Cash Flow', value: (data?.total_inflows_12m || 0) - (data?.total_outflows_12m || 0), icon: TrendingUp, color: '#8a5cf6' },
               ].map((card) => (
                 <div key={card.label} style={{
@@ -228,9 +239,9 @@ export default function CashflowPage() {
                       </td>
                       <td style={{
                         padding: '12px 16px', textAlign: 'right', fontFamily: "'JetBrains Mono', monospace", fontSize: 12,
-                        fontWeight: 600, color: m.balance < 25000 ? '#f87171' : '#e8e8f0',
+                        fontWeight: 600, color: m.balance != null && m.balance < 25000 ? '#f87171' : '#e8e8f0',
                       }}>
-                        {formatCurrency(m.balance)}
+                        {m.balance != null ? formatCurrency(m.balance) : '—'}
                       </td>
                     </tr>
                   ))}
@@ -238,18 +249,28 @@ export default function CashflowPage() {
               </table>
             </div>
 
-            {/* Keisha Insight */}
-            <div style={{
-              marginTop: 24, background: 'rgba(240,198,116,0.03)', border: '1px solid rgba(240,198,116,0.15)',
-              borderRadius: 14, padding: 20,
-            }}>
-              <div style={{ color: '#f0c674', fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.08em', fontWeight: 600, marginBottom: 8, fontFamily: "'JetBrains Mono', monospace" }}>
-                Keisha Insight
+            {/* The "Keisha Insight" that used to sit here was a hardcoded
+                paragraph of specific financial advice — a $373K vest, $100K
+                into covered calls, $273K held for taxes — rendered
+                unconditionally and unrelated to the fetched data, under an
+                AI-analysis label. Removed rather than faked. When there is
+                nothing to project, say that. */}
+            {!openingKnown && (
+              <div style={{
+                marginTop: 24, background: 'rgba(240,198,116,0.03)', border: '1px solid rgba(240,198,116,0.15)',
+                borderRadius: 14, padding: 20,
+              }}>
+                <div style={{ color: '#f0c674', fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.08em', fontWeight: 600, marginBottom: 8, fontFamily: "'JetBrains Mono', monospace" }}>
+                  Projection unavailable
+                </div>
+                <div style={{ color: '#e8e8f0', fontSize: 13, lineHeight: 1.6 }}>
+                  No cash asset is on record, so balances and runway cannot be projected.
+                  Inflows and outflows below are still accurate. Add a cash row to
+                  <code style={{ margin: '0 4px', fontFamily: "'JetBrains Mono', monospace" }}>wealth_assets</code>
+                  to enable the balance forecast.
+                </div>
               </div>
-              <div style={{ color: '#e8e8f0', fontSize: 13, lineHeight: 1.6 }}>
-                Your Q3 RSU vest of ~$373K arrives in July. Consider deploying $100K into covered calls for premium income and holding $273K for your estimated Q3 tax payment. Add cash flow items via the Supabase dashboard to see your full projection.
-              </div>
-            </div>
+            )}
           </>
         )}
       </div>

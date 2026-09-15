@@ -5,7 +5,7 @@ import { AppShell } from '@/components/layout/AppShell';
 import { ErrorBoundary } from '@/components/ErrorBoundary';
 import { LoadingState } from '@/components/LoadingState';
 import { useNotifications } from '@/contexts/NotificationProvider';
-import { Bell, Plus, Trash2, Zap, Eye, MessageSquare, Volume2, VolumeX } from 'lucide-react';
+import { Bell, Plus, Trash2, Zap, Eye, MessageSquare, Volume2, VolumeX, AlertTriangle } from 'lucide-react';
 import { z } from 'zod';
 import { alertsResponseSchema, fetchParsed } from '@/lib/api-schemas';
 
@@ -81,6 +81,10 @@ export default function AlertsPage() {
   const [newAction, setNewAction] = useState('notify');
   const [notifPermission, setNotifPermission] = useState<NotificationPermission>('default');
   const [recentlyTriggered, setRecentlyTriggered] = useState<Set<string>>(new Set());
+  /** Set when a create/toggle write is refused, so a failed mutation is visible. */
+  const [mutationError, setMutationError] = useState<string | null>(null);
+  /** True when the alert store itself is unreachable — the list is not "empty". */
+  const [storeUnavailable, setStoreUnavailable] = useState(false);
   const { addNotification } = useNotifications();
 
   // Check notification permission
@@ -100,10 +104,20 @@ export default function AlertsPage() {
   useEffect(() => {
     const fetchAlerts = async () => {
       try {
+        // fetchParsed returns null on a non-2xx, which is exactly what the
+        // route now sends when the store is down. "No alerts" and "we cannot
+        // read your alerts" must not look the same.
         const data = await fetchParsed('/api/alerts', alertsResponseSchema);
-        if (data) setAlerts(data.alerts);
+        if (data) {
+          setAlerts(data.alerts);
+          setStoreUnavailable(false);
+        } else {
+          setAlerts([]);
+          setStoreUnavailable(true);
+        }
       } catch {
-        // Use empty
+        setAlerts([]);
+        setStoreUnavailable(true);
       } finally {
         setLoading(false);
       }
@@ -177,21 +191,38 @@ export default function AlertsPage() {
         setShowBuilder(false);
         setNewName('');
         setNewConditions([{ id: 1, symbol: '', metric: 'price', operator: '>', value: 0 }]);
+        setMutationError(null);
+      } else {
+        // The API used to fabricate a saved-looking alert on a failed insert.
+        // Now it reports the failure, so say so rather than showing a phantom.
+        setMutationError('Alert was not saved — the alert store rejected it. Nothing is armed.');
       }
     } catch (err) {
       console.error('Create alert error:', err);
+      setMutationError('Alert was not saved — could not reach the alert store.');
     }
   };
 
   const toggleAlert = async (id: string, active: boolean) => {
+    // Optimistic flip, but it must be REVERTED if the write does not land.
+    // The server now reports failures instead of always answering
+    // `{ success: true }`, so a stuck-armed alert can no longer read as off.
     setAlerts(prev => prev.map(a => a.id === id ? { ...a, is_active: active } : a));
+    const revert = () => {
+      setAlerts(prev => prev.map(a => a.id === id ? { ...a, is_active: !active } : a));
+      setMutationError(`Could not ${active ? 'enable' : 'disable'} that alert — it is still ${active ? 'off' : 'active'}.`);
+    };
     try {
-      await fetch('/api/alerts', {
+      const res = await fetch('/api/alerts', {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ id, is_active: active }),
       });
-    } catch { /* best effort */ }
+      if (!res.ok) revert();
+      else setMutationError(null);
+    } catch {
+      revert();
+    }
   };
 
   const timeAgo = (dateStr: string) => {
@@ -206,6 +237,21 @@ export default function AlertsPage() {
     <AppShell>
       <ErrorBoundary label="Alerts">
       <div>
+        {(storeUnavailable || mutationError) && (
+          <div role="alert" style={{
+            display: 'flex', alignItems: 'flex-start', gap: 8,
+            padding: '10px 14px', borderRadius: 8, marginBottom: 16,
+            background: 'rgba(248,113,113,0.10)', border: '1px solid rgba(248,113,113,0.30)',
+            color: '#f87171', fontSize: 13,
+          }}>
+            <AlertTriangle size={16} style={{ flexShrink: 0, marginTop: 1 }} />
+            <span>
+              {storeUnavailable
+                ? 'Alert store unavailable — this list is not your alerts. Nothing shown here is armed.'
+                : mutationError}
+            </span>
+          </div>
+        )}
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 24 }}>
           <div>
             <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 4 }}>

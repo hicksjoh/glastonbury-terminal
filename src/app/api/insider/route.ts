@@ -11,8 +11,9 @@ import {
 } from '@/lib/fmp-client';
 import { buildMeta, type ApiMeta } from '@/lib/api-meta';
 import { getQuiverCongressTrades, getQuiverInsiderTrades } from '@/lib/quiver';
+import { withRateLimit, RATE } from '@/lib/api-rate-limit';
 
-export async function GET(req: NextRequest) {
+async function GET_impl(req: NextRequest) {
   try {
     const symbol = req.nextUrl.searchParams.get('symbol') || '';
     const type = req.nextUrl.searchParams.get('type') || 'all';
@@ -191,3 +192,7 @@ function generateSignals(
 
   return signals;
 }
+
+// Durable, session-keyed rate limiting (CLAUDE.md rule 6). See
+// src/lib/api-rate-limit.ts — the old in-memory limiter was per-lambda.
+export const GET = withRateLimit('insider', RATE.UPSTREAM, GET_impl);

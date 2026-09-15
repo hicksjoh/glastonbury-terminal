@@ -93,7 +93,12 @@ describe('OAuth access tokens — P0-2 resource binding', () => {
     expect(payload).toBeNull();
   });
 
-  it('verifyAccessToken accepts a legacy-aud token during rollout window', async () => {
+  it('verifyAccessToken REJECTS a legacy-aud token once a resource is expected', async () => {
+    // The rollout window that allowed aud='terminal-mcp' alongside the real
+    // resource URL is closed. While it stood, a legacy-aud token was valid at
+    // ANY MCP resource signed with the same SESSION_SECRET — production,
+    // preview, another instance — which is exactly the cross-resource replay
+    // RFC 8707 binding exists to prevent.
     const { token } = await createAccessToken({
       sub: 'wes',
       client_id: 'gt_test_client',
@@ -104,8 +109,7 @@ describe('OAuth access tokens — P0-2 resource binding', () => {
       token,
       'https://terminal.johnwesleyhicks.com/api/mcp',
     );
-    expect(payload).not.toBeNull();
-    expect(payload!.resource).toBe('terminal-mcp');
+    expect(payload).toBeNull();
   });
 
   it('verifyAccessToken (no expectedResource arg) accepts only legacy-aud tokens', async () => {

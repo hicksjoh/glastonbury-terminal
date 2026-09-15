@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { validateEquitySymbol } from '@/lib/sanitize';
+import { withRateLimit, RATE } from '@/lib/api-rate-limit';
 
 // Live options data — never serve a build-time snapshot.
 export const dynamic = 'force-dynamic';
@@ -11,7 +12,7 @@ const alpacaHeaders = {
   'APCA-API-SECRET-KEY': process.env.ALPACA_SECRET_KEY!,
 };
 
-export async function GET(
+async function GET_impl(
   _req: NextRequest,
   { params }: { params: Promise<{ symbol: string }> }
 ) {
@@ -120,3 +121,7 @@ function generateStandardExpirations(): { date: string; dte: number; category: s
 
   return results;
 }
+
+// Durable, session-keyed rate limiting (CLAUDE.md rule 6). See
+// src/lib/api-rate-limit.ts — the old in-memory limiter was per-lambda.
+export const GET = withRateLimit('options/expirations/[symbol]', RATE.UPSTREAM, GET_impl);

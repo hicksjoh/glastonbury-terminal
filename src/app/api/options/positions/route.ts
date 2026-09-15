@@ -4,6 +4,7 @@ import { calculateGreeks } from '@/lib/options/greeks';
 import { captureRouteError } from '@/lib/api-error';
 import { loggerFor } from '@/lib/request-id';
 import { ALPACA_BASE_URL } from '@/lib/alpaca';
+import { withRateLimit, RATE } from '@/lib/api-rate-limit';
 
 const ALPACA_DATA_URL = 'https://data.alpaca.markets';
 
@@ -12,7 +13,7 @@ const alpacaHeaders = {
   'APCA-API-SECRET-KEY': process.env.ALPACA_SECRET_KEY!,
 };
 
-export async function GET(request: Request) {
+async function GET_impl(request: Request) {
   const { log, request_id } = loggerFor(request, { route: 'options/positions' });
   try {
     // Fetch all positions from Alpaca
@@ -64,7 +65,12 @@ export async function GET(request: Request) {
         const sign = direction === 'long' ? 1 : -1;
         greeks = {
           delta: calc.delta * qty * sign,
-          gamma: calc.gamma * qty,
+          // `sign` was missing here while every sibling greek applied it, so a
+          // short call reported +gamma instead of -gamma. Gamma is the one
+          // greek whose sign IS the risk: long gamma profits from movement,
+          // short gamma is the position that blows up. Reporting the wrong
+          // sign inverts the meaning of the net-convexity figure.
+          gamma: calc.gamma * qty * sign,
           theta: calc.theta * qty * 100 * sign,
           vega: calc.vega * qty * sign,
         };
@@ -109,3 +115,7 @@ export async function GET(request: Request) {
     return NextResponse.json({ positions: [], greeks: null, error: 'Failed', sentry_event_id: eventId });
   }
 }
+
+// Durable, session-keyed rate limiting (CLAUDE.md rule 6). See
+// src/lib/api-rate-limit.ts — the old in-memory limiter was per-lambda.
+export const GET = withRateLimit('options/positions', RATE.UPSTREAM, GET_impl);

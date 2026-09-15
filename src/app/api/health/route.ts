@@ -4,6 +4,7 @@ import { getAllCircuitStats } from '@/lib/circuit-breaker';
 import { checkEnvironment } from '@/lib/env-check';
 import { getCached, setCache } from '@/lib/server-cache';
 import { getDurable } from '@/lib/durable-cache';
+import { withRateLimit, RATE } from '@/lib/api-rate-limit';
 
 // Without this, Next static-optimizes the route and Vercel serves a payload
 // frozen at build time — a health check that never changes is worse than none.
@@ -19,7 +20,7 @@ type ServiceStatus = 'ok' | 'error' | 'unconfigured' | 'degraded';
 const HEALTH_CACHE_KEY = 'health:full';
 const HEALTH_CACHE_TTL_MS = 60 * 1000;
 
-export async function GET() {
+async function GET_impl() {
   const cached = getCached<unknown>(HEALTH_CACHE_KEY);
   if (cached) {
     return NextResponse.json(cached, { status: 200 });
@@ -189,3 +190,7 @@ export async function GET() {
   setCache(HEALTH_CACHE_KEY, payload, HEALTH_CACHE_TTL_MS);
   return NextResponse.json(payload, { status: status === 'critical' ? 503 : 200 });
 }
+
+// Durable, session-keyed rate limiting (CLAUDE.md rule 6). See
+// src/lib/api-rate-limit.ts — the old in-memory limiter was per-lambda.
+export const GET = withRateLimit('health', RATE.READ, GET_impl);

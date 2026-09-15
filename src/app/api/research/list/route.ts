@@ -2,11 +2,12 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createServiceClient } from '@/lib/supabase';
 import { captureRouteError } from '@/lib/api-error';
 import { loggerFor } from '@/lib/request-id';
+import { withRateLimit, RATE } from '@/lib/api-rate-limit';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
-export async function GET(req: NextRequest) {
+async function GET_impl(req: NextRequest) {
   const { log, request_id } = loggerFor(req, { route: 'research/list' });
   const userId = req.nextUrl.searchParams.get('user') ?? 'wes';
   const limit = Math.min(50, Math.max(1, Number(req.nextUrl.searchParams.get('limit') ?? '20')));
@@ -31,3 +32,7 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: 'Failed to list memos', sentry_event_id: eventId, memos: [] }, { status: 500 });
   }
 }
+
+// Durable, session-keyed rate limiting (CLAUDE.md rule 6). See
+// src/lib/api-rate-limit.ts — the old in-memory limiter was per-lambda.
+export const GET = withRateLimit('research/list', RATE.POLL, GET_impl);

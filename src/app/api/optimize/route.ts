@@ -4,6 +4,7 @@ import { correlationMatrix, isUsableReturnSeries } from '@/lib/correlation';
 import { anthropic, CLAUDE_MODEL_FALLBACK } from '@/lib/claude';
 import { tagAnthropicCall } from '@/lib/anthropic-cost';
 import { getHistoricalPrices } from '@/lib/fmp-client';
+import { withRateLimit, RATE } from '@/lib/api-rate-limit';
 
 const ALPACA_BASE_URL = process.env.ALPACA_BASE_URL || 'https://paper-api.alpaca.markets';
 const FMP_KEY = process.env.FMP_API_KEY;
@@ -109,7 +110,7 @@ async function generateAIViews(
   symbols: string[],
   eqReturns: number[],
   covMatrix: number[][]
-): Promise<{ views: View[]; viewConfidences: number[]; aiViewDetails: Array<{ symbol: string; view: string; confidence: number; reasoning: string }> }> {
+): Promise<{ views: View[]; viewConfidences: number[]; aiViewDetails: Array<{ symbol: string; view: string; confidence: number; reasoning: string }>; viewSource: 'ai' | 'prior-only' }> {
   try {
     const prompt = `You are a quantitative finance analyst. Given the following portfolio assets and their equilibrium expected annual returns derived from market cap weights via the Black-Litterman model, provide your views on expected returns.
 
@@ -176,38 +177,22 @@ Respond ONLY with a JSON array, no other text.`;
       });
     }
 
-    return { views, viewConfidences, aiViewDetails };
+    return { views, viewConfidences, aiViewDetails, viewSource: 'ai' };
   } catch (error) {
-    // Fallback: use equilibrium returns with small perturbations as views
-    console.warn('AI views generation failed, using perturbation fallback:', error);
-    const views: View[] = [];
-    const viewConfidences: number[] = [];
-    const aiViewDetails: Array<{ symbol: string; view: string; confidence: number; reasoning: string }> = [];
-
-    for (let i = 0; i < symbols.length; i++) {
-      const perturbation = (Math.random() - 0.5) * 0.02; // +/- 1%
-      const P = Array(symbols.length).fill(0);
-      P[i] = 1;
-
-      views.push({
-        assets: P,
-        expectedReturn: eqReturns[i] + perturbation,
-      });
-      viewConfidences.push(0.3);
-
-      aiViewDetails.push({
-        symbol: symbols[i],
-        view: `fallback - expected ${((eqReturns[i] + perturbation) * 100).toFixed(2)}% annual return`,
-        confidence: 0.3,
-        reasoning: 'AI analysis unavailable; using equilibrium with small perturbation',
-      });
-    }
-
-    return { views, viewConfidences, aiViewDetails };
+    // AI views unavailable -> fall back to the PRIOR, not to invented dispersion.
+    //
+    // This used to synthesise one view per asset at `eqReturns[i] + (Math.random()
+    // - 0.5) * 0.02`, i.e. a random +/-1pp nudge presented to Black-Litterman as
+    // a real opinion. The optimiser then emitted BUY/SELL instructions that
+    // differed run to run on identical inputs. Manufacturing a view to fill the
+    // gap is strictly worse than holding none: with no views the posterior is the
+    // equilibrium allocation, which is the correct answer to "I have no opinion".
+    console.warn('AI views generation failed; returning prior-only optimisation:', error);
+    return { views: [], viewConfidences: [], aiViewDetails: [], viewSource: 'prior-only' };
   }
 }
 
-export async function POST(request: NextRequest) {
+async function POST_impl(request: NextRequest) {
   try {
     const body: OptimizeRequest = await request.json();
     const { useAIViews = false, riskAversion = 2.5 } = body;
@@ -272,20 +257,30 @@ export async function POST(request: NextRequest) {
     let views: View[] = [];
     let viewConfidences: number[] = [];
     let aiViewDetails: Array<{ symbol: string; view: string; confidence: number; reasoning: string }> = [];
+    // How the posterior was formed, so the UI can say so instead of presenting
+    // a prior-only run as if it were an AI-informed one.
+    let viewSource: 'ai' | 'prior-only' = 'prior-only';
 
     if (useAIViews) {
       const result = await generateAIViews(symbols, eqReturns, covMatrix);
       views = result.views;
       viewConfidences = result.viewConfidences;
       aiViewDetails = result.aiViewDetails;
+      viewSource = result.viewSource;
     } else {
-      // Use equilibrium returns as views with moderate confidence
-      for (let i = 0; i < symbols.length; i++) {
-        const P = Array(symbols.length).fill(0);
-        P[i] = 1;
-        views.push({ assets: P, expectedReturn: eqReturns[i] * (1 + (Math.random() - 0.5) * 0.1) });
-        viewConfidences.push(0.5);
-      }
+      // Prior-only: no views at all.
+      //
+      // This branch used to push one view per asset at
+      // `eqReturns[i] * (1 + (Math.random() - 0.5) * 0.1)` — a +/-5% random
+      // jitter on every expected return. Black-Litterman then "blended" the
+      // prior with noise, so the same unchanged portfolio produced different
+      // optimal weights and different BUY/SELL instructions on every click.
+      //
+      // With an empty view set the posterior equals the prior, which is the
+      // correct meaning of "I hold no views": return the equilibrium
+      // allocation, deterministically.
+      views = [];
+      viewConfidences = [];
     }
 
     // 8. Run Black-Litterman
@@ -361,6 +356,8 @@ export async function POST(request: NextRequest) {
         sharpe: pt.sharpe,
       })),
       aiViews: aiViewDetails,
+      viewSource,
+      aiViewsRequested: useAIViews,
       rebalanceInstructions,
       correlationMatrix: corrMatrix,
     });
@@ -370,3 +367,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: message }, { status: 500 });
   }
 }
+
+// Durable, session-keyed rate limiting (CLAUDE.md rule 6). See
+// src/lib/api-rate-limit.ts — the old in-memory limiter was per-lambda.
+export const POST = withRateLimit('optimize', RATE.EXPENSIVE, POST_impl);

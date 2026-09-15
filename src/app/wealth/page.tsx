@@ -5,26 +5,48 @@ import { AppShell } from '@/components/layout/AppShell';
 import { ErrorBoundary } from '@/components/ErrorBoundary';
 import { LoadingState } from '@/components/LoadingState';
 import { TrendingUp, TrendingDown, DollarSign, Percent, Building2, Home, Briefcase, Banknote } from 'lucide-react';
+import { DataAge } from '@/components/ui/DataAge';
 
 interface WealthData {
   total_net_worth: number;
   total_assets: number;
-  liabilities: number;
+  /** null when liabilities are not tracked — see `liabilities_tracked`. */
+  liabilities: number | null;
+  liabilities_tracked?: boolean;
+  /** false when a source (currently only the brokerage) failed to resolve. */
+  complete?: boolean;
+  trading_mode?: 'paper' | 'live';
+  simulated_equity_excluded?: number;
   liquidity_ratio: number;
   breakdown: {
-    investments: { value: number; positions: number };
+    investments: { value: number; positions: number; simulated?: boolean; unavailable?: boolean };
     franchise: { value: number; cost_basis: number };
     real_estate: { value: number; cost_basis: number };
     rsus: { value: number; details: { name: string; current_value: number }[] };
     cash: { value: number };
   };
-  assets: { id: string; asset_class: string; name: string; current_value: number; cost_basis: number }[];
+  assets: { id: string; asset_class: string; name: string; current_value: number; cost_basis: number; last_updated?: string | null }[];
 }
 
 function formatCurrency(n: number) {
   if (Math.abs(n) >= 1e6) return `$${(n / 1e6).toFixed(2)}M`;
   if (Math.abs(n) >= 1e3) return `$${(n / 1e3).toFixed(0)}K`;
   return `$${n.toFixed(0)}`;
+}
+
+/** A single inline data-quality caveat. Warn = known limitation, bad = failure. */
+function Caveat({ tone, children }: { tone: 'warn' | 'bad'; children: React.ReactNode }) {
+  const c = tone === 'bad'
+    ? { fg: '#f87171', bg: 'rgba(248,113,113,0.10)', bd: 'rgba(248,113,113,0.30)' }
+    : { fg: '#f0c674', bg: 'rgba(240,198,116,0.08)', bd: 'rgba(240,198,116,0.25)' };
+  return (
+    <span style={{
+      display: 'inline-flex', alignItems: 'center', padding: '4px 10px', borderRadius: 6,
+      background: c.bg, border: `1px solid ${c.bd}`, color: c.fg, fontSize: 12, lineHeight: 1.4,
+    }}>
+      {children}
+    </span>
+  );
 }
 
 function GlassCard({ children, style }: { children: React.ReactNode; style?: React.CSSProperties }) {
@@ -79,6 +101,15 @@ export default function WealthPage() {
   const b = data?.breakdown;
   const total = data?.total_net_worth || 0;
 
+  // Most recent valuation date across the manually-maintained asset rows.
+  // These are hand-entered marks that can sit untouched for months, so the
+  // page shows how old the newest one is rather than implying live values.
+  const newestAssetTs = (data?.assets || [])
+    .map(a => a.last_updated)
+    .filter((t): t is string => typeof t === 'string' && t.length > 0)
+    .sort()
+    .pop() ?? null;
+
   const assetClasses = [
     { key: 'investments', label: 'Investment Portfolio', value: b?.investments.value || 0, costBasis: 0 },
     { key: 'franchise', label: 'CR3 Franchise Equity', value: b?.franchise.value || 0, costBasis: b?.franchise.cost_basis || 0 },
@@ -103,9 +134,39 @@ export default function WealthPage() {
     <AppShell>
       <div>
         <h1 style={{ fontSize: 28, fontWeight: 700, color: '#fff', margin: '0 0 4px' }}>Total Wealth</h1>
-        <p style={{ color: '#8888a8', fontSize: 14, margin: '0 0 28px' }}>
-          Complete financial picture across all asset classes
+        <p style={{ color: '#8888a8', fontSize: 14, margin: '0 0 12px' }}>
+          Tracked asset classes{data?.liabilities_tracked === false ? ' · liabilities not tracked' : ''}
         </p>
+
+        {/* Honesty strip. The page used to promise a "complete financial
+            picture" while silently counting paper-trading money as real and
+            assuming zero debt. Each caveat that actually applies is stated. */}
+        {data && (
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginBottom: 24 }}>
+            {data.liabilities_tracked === false && (
+              <Caveat tone="warn">
+                Gross assets — no liabilities recorded, so any mortgage or loan is not subtracted
+              </Caveat>
+            )}
+            {data.breakdown?.investments?.simulated && (
+              <Caveat tone="warn">
+                Paper trading: {formatCurrency(data.simulated_equity_excluded || 0)} of simulated
+                brokerage equity is excluded from this total
+              </Caveat>
+            )}
+            {data.breakdown?.investments?.unavailable && (
+              <Caveat tone="bad">Brokerage unreachable — this total is partial</Caveat>
+            )}
+            {newestAssetTs && (
+              <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                <span style={{ color: '#555570', fontSize: 11, fontFamily: "'JetBrains Mono', monospace" }}>
+                  valued
+                </span>
+                <DataAge ts={newestAssetTs} warnAfterMs={30 * 24 * 3600_000} staleAfterMs={90 * 24 * 3600_000} />
+              </span>
+            )}
+          </div>
+        )}
 
         {/* Top Row — Big Numbers */}
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 12, marginBottom: 28 }}>

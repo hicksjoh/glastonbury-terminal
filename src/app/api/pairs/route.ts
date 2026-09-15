@@ -9,6 +9,7 @@ import {
 import { getHistoricalPrices } from '@/lib/fmp-client';
 import { captureRouteError } from '@/lib/api-error';
 import { loggerFor } from '@/lib/request-id';
+import { withRateLimit, RATE } from '@/lib/api-rate-limit';
 
 const FMP_KEY = process.env.FMP_API_KEY;
 
@@ -93,7 +94,7 @@ async function handleDetail(a: string, b: string, lookback: number) {
 
 // ─── GET Handler ─────────────────────────────────────────────────────────────
 
-export async function GET(request: NextRequest) {
+async function GET_impl(request: NextRequest) {
   const { log, request_id } = loggerFor(request, { route: 'pairs' });
   try {
     if (!FMP_KEY) {
@@ -144,3 +145,7 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: 'Pairs analysis failed', sentry_event_id: eventId }, { status: 500 });
   }
 }
+
+// Durable, session-keyed rate limiting (CLAUDE.md rule 6). See
+// src/lib/api-rate-limit.ts — the old in-memory limiter was per-lambda.
+export const GET = withRateLimit('pairs', RATE.UPSTREAM, GET_impl);

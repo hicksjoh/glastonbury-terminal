@@ -3,6 +3,18 @@ import { test, expect } from '@playwright/test';
 const TEN_MINUTES_MS = 10 * 60 * 1000;
 const ONE_DAY_MS = 24 * 60 * 60 * 1000;
 
+/**
+ * Tolerance for clock skew between the test runner and the server.
+ *
+ * `expect(age).toBeGreaterThanOrEqual(0)` used to fail whenever the server's
+ * clock was even marginally ahead of the runner's — a real run failed at
+ * age = -77ms, i.e. 77 MILLISECONDS of skew on a perfectly fresh response.
+ * A watchdog that reddens at random is a watchdog nobody reads, which is how
+ * the suite rotted from May to August. The assertion still catches a genuinely
+ * bogus future timestamp; it just no longer trips over NTP jitter.
+ */
+const CLOCK_SKEW_TOLERANCE_MS = 60 * 1000;
+
 function ageMs(timestamp: unknown): number {
   expect(typeof timestamp).toBe('string');
   const parsed = Date.parse(timestamp as string);
@@ -25,7 +37,7 @@ test.describe('@freshness live-data freshness', () => {
 
     const body = await res.json();
     const age = ageMs(body.timestamp);
-    expect(age).toBeGreaterThanOrEqual(0);
+    expect(age).toBeGreaterThan(-CLOCK_SKEW_TOLERANCE_MS);
     expect(age).toBeLessThan(TEN_MINUTES_MS);
   });
 
@@ -35,7 +47,7 @@ test.describe('@freshness live-data freshness', () => {
 
     const body = await res.json();
     const age = ageMs(body.timestamp);
-    expect(age).toBeGreaterThanOrEqual(0);
+    expect(age).toBeGreaterThan(-CLOCK_SKEW_TOLERANCE_MS);
     if (isWeekdayInNewYork()) {
       expect(age).toBeLessThan(ONE_DAY_MS);
     }

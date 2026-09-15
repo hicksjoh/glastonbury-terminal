@@ -9,9 +9,13 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 //  Invariants the autopilot cron MUST preserve:
 //    (1) Paper mode + non-paper URL → refuse (mode/URL drift)
 //    (2) Live mode + AUTOPILOT_ALLOW_LIVE unset → refuse (explicit opt-in)
-//    (3) Live mode + AUTOPILOT_ALLOW_LIVE=true + live URL → fire
+//    (3) Live mode + AUTOPILOT_ALLOW_LIVE=true + live URL, but NO session
+//        x-live-ack → still refuse. The env flag is a precondition, not an
+//        authorization. (This case previously asserted the opposite: that the
+//        env flag alone was sufficient to fire a live market order. That was
+//        the bug, written down as the spec.)
 //    (4) Live mode + AUTOPILOT_ALLOW_LIVE=true + paper URL → refuse
-//    (5) The autopilot module still imports the guard from @/lib/alpaca
+//    (5) The autopilot module still routes through the shared live-order gate
 // ═══════════════════════════════════════════════════════════════════════════
 
 const ORIGINAL_ENV = { ...process.env };
@@ -133,7 +137,14 @@ describe('autopilot live-mode explicit opt-in', () => {
     expect(res.status).toBeGreaterThanOrEqual(400);
   });
 
-  it('live mode + AUTOPILOT_ALLOW_LIVE=true + live URL: does fire /v2/orders', async () => {
+  it('live mode + AUTOPILOT_ALLOW_LIVE=true + live URL, but no x-live-ack: STILL refuses', async () => {
+    // The env flag says "this deployment is permitted to autotrade". It does
+    // not say "this particular request is authorized to move this much money".
+    // Every other order path (alpaca/orders, options/order, multi-leg, Keisha
+    // place_order) additionally requires a session-bound x-live-ack token and
+    // typed notional confirmation; autopilot used to require neither, so with
+    // both env flags set an authenticated POST of
+    // {"action":"execute","shares":100000} was an unbounded live market order.
     process.env.TRADING_MODE = 'live';
     process.env.AUTOPILOT_ALLOW_LIVE = 'true';
     process.env.ALPACA_BASE_URL = 'https://api.alpaca.markets';
@@ -151,12 +162,31 @@ describe('autopilot live-mode explicit opt-in', () => {
       const u = typeof url === 'string' ? url : url instanceof URL ? url.href : (url as Request).url;
       return /\/v2\/orders\b/.test(u);
     });
-    // In live-mode with explicit opt-in, the guard MUST let the call through.
+    expect(orderCalls).toHaveLength(0);
+    expect(res.status).toBeGreaterThanOrEqual(400);
+  });
+
+  it('paper mode + paper URL: fires normally (the gate is a no-op off-live)', async () => {
+    // The counterweight to the case above — proving the new gate did not just
+    // break autopilot outright. Paper trading must still work end to end.
+    process.env.TRADING_MODE = 'paper';
+    process.env.ALPACA_BASE_URL = 'https://paper-api.alpaca.markets';
+    stubDeps();
+
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response(JSON.stringify({ id: 'test-order', status: 'accepted' }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }),
+    );
+
+    const res = await callExecute('SPY', 1, 'buy');
+    const orderCalls = fetchSpy.mock.calls.filter(([url]) => {
+      const u = typeof url === 'string' ? url : url instanceof URL ? url.href : (url as Request).url;
+      return /\/v2\/orders\b/.test(u);
+    });
     expect(orderCalls.length).toBeGreaterThanOrEqual(1);
-    // Fired against the live host, not paper.
-    const orderUrl = String(orderCalls[0][0]);
-    expect(orderUrl).toContain('api.alpaca.markets');
-    expect(orderUrl).not.toContain('paper-api.alpaca.markets');
+    expect(String(orderCalls[0][0])).toContain('paper-api.alpaca.markets');
     expect(res.status).toBeLessThan(400);
   });
 });
@@ -171,7 +201,8 @@ describe('autopilot wiring guard', () => {
       path.resolve(__dirname, '../route.ts'),
       'utf8',
     );
-    expect(src).toMatch(/from\s+['"]@\/lib\/alpaca['"]/);
-    expect(src).toMatch(/assertOrderSubmissionAllowed|assertPaperTrading/);
+    expect(src).toMatch(/from\s+['"]@\/lib\/live-order-safety['"]/);
+    // The full four-gate check, not just mode/URL alignment.
+    expect(src).toMatch(/assertLiveOrderAllowed/);
   });
 });

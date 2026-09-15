@@ -104,7 +104,10 @@ export const flowResponseSchema = z.object({
     flowType: z.enum(['sweep', 'block', 'unusual']),
   }).passthrough()),
   summary: z.object({
-    totalFlows: z.number(), bullishPct: z.number(), bearishPct: z.number(),
+    totalFlows: z.number(),
+    // null when there are zero flows — the route no longer invents 0%/100%
+    // out of a 0/0 division, so the schema must admit the honest value.
+    bullishPct: z.number().nullable(), bearishPct: z.number().nullable(),
     topSymbols: z.array(z.string()), scannedSymbols: z.array(z.string()).optional(),
   }).passthrough(),
   _meta: apiMetaSchema.optional(),

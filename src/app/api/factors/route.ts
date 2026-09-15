@@ -2,11 +2,12 @@ import { NextRequest, NextResponse } from 'next/server';
 import { analyzeFactorExposure } from '@/lib/factor-engine';
 import { buildMeta } from '@/lib/api-meta';
 import { ALPACA_BASE_URL } from '@/lib/alpaca';
+import { withRateLimit, RATE } from '@/lib/api-rate-limit';
 
 // Live portfolio factor exposure — never serve a build-time snapshot.
 export const dynamic = 'force-dynamic';
 
-export async function GET(req: NextRequest) {
+async function GET_impl(req: NextRequest) {
   try {
     // Get portfolio positions from Alpaca (mode-aware URL — respects TRADING_MODE)
     const alpacaKey = process.env.ALPACA_API_KEY;
@@ -78,3 +79,7 @@ export async function GET(req: NextRequest) {
     }, { status: 500 });
   }
 }
+
+// Durable, session-keyed rate limiting (CLAUDE.md rule 6). See
+// src/lib/api-rate-limit.ts — the old in-memory limiter was per-lambda.
+export const GET = withRateLimit('factors', RATE.UPSTREAM, GET_impl);

@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { withRateLimit, RATE } from '@/lib/api-rate-limit';
 
 const FMP_BASE = 'https://financialmodelingprep.com/stable';
 const FMP_KEY = process.env.FMP_API_KEY || '';
@@ -8,7 +9,7 @@ interface HistoricalPrice {
   close: number;
 }
 
-export async function POST(req: NextRequest) {
+async function POST_impl(req: NextRequest) {
   try {
     if (!FMP_KEY) {
       return NextResponse.json({ error: 'FMP API key not configured' }, { status: 400 });
@@ -198,3 +199,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Calculation failed' }, { status: 500 });
   }
 }
+
+// Durable, session-keyed rate limiting (CLAUDE.md rule 6). See
+// src/lib/api-rate-limit.ts — the old in-memory limiter was per-lambda.
+export const POST = withRateLimit('risk', RATE.UPSTREAM, POST_impl);

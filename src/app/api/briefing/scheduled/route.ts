@@ -16,6 +16,7 @@ import { sendPushNotification } from '@/lib/web-push';
 import type { PushSubscriptionData } from '@/lib/web-push';
 import { captureRouteError } from '@/lib/api-error';
 import { loggerFor } from '@/lib/request-id';
+import { withRateLimit, RATE } from '@/lib/api-rate-limit';
 
 const HC_SLUG = 'briefing-scheduled';
 const JOB_NAME = 'briefing-scheduled';
@@ -288,10 +289,15 @@ async function runScheduledBriefing(req: NextRequest) {
 
 // Vercel cron jobs dispatch GET requests; external triggers may use POST.
 // Both invoke the same handler so the schedule actually fires.
-export async function GET(req: NextRequest) {
+async function GET_impl(req: NextRequest) {
   return runScheduledBriefing(req);
 }
 
-export async function POST(req: NextRequest) {
+async function POST_impl(req: NextRequest) {
   return runScheduledBriefing(req);
 }
+
+// Durable, session-keyed rate limiting (CLAUDE.md rule 6). See
+// src/lib/api-rate-limit.ts — the old in-memory limiter was per-lambda.
+export const GET = withRateLimit('briefing/scheduled', RATE.EXPENSIVE, GET_impl);
+export const POST = withRateLimit('briefing/scheduled', RATE.EXPENSIVE, POST_impl);

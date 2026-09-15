@@ -21,6 +21,7 @@ import {
   calculateSection1256Tax,
   estimateQuarterlyPayment,
   getTaxBracketInfo,
+  getTaxYearData,
 } from '@/lib/tax-engine';
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip as RTooltip, ResponsiveContainer,
@@ -28,6 +29,7 @@ import {
 } from 'recharts';
 import type { HarvestSummary } from '@/lib/tax-loss-harvester';
 import TaxAlertBanner from '@/components/tax/TaxAlertBanner';
+import { getEtDateParts } from '@/lib/et-clock';
 import {
   calculateSection179,
   calculateMileageDeduction,
@@ -195,7 +197,16 @@ export default function TaxPage() {
   const [bizNetSE, setBizNetSE] = useState(0);
   const [exportingCPA, setExportingCPA] = useState(false);
 
-  const currentYear = new Date().getFullYear();
+  // The heading used to be `new Date().getFullYear()` while every figure below
+  // came from ACTIVE_TAX_YEAR, so the page announced "2026 Tax Intelligence"
+  // over 2025 brackets, deductions, limits and mileage rate. The year shown is
+  // now the year the engine is actually computing with.
+  const calendarYear = getEtDateParts().year;
+  const engineYear = ACTIVE_TAX_YEAR.year;
+  const lawIsCurrent = getTaxYearData(calendarYear) !== null;
+  // Filenames and "no trades for X" copy track the realized-activity year,
+  // which is the calendar year — those are not tax-law claims.
+  const currentYear = calendarYear;
 
   // ── Data Fetching ──
   useEffect(() => {
@@ -397,13 +408,26 @@ export default function TaxPage() {
     <ErrorBoundary label="Tax">
     <AppShell>
       <div>
+        {/* Say plainly when the engine's law year is behind the calendar. */}
+        {!lawIsCurrent && (
+          <div role="alert" style={{
+            padding: '10px 14px', borderRadius: 8, marginBottom: 12, fontSize: 13,
+            background: 'rgba(240,198,116,0.08)', border: '1px solid rgba(240,198,116,0.25)',
+            color: '#f0c674',
+          }}>
+            Calculated with <strong>{engineYear}</strong> tax law — {calendarYear} brackets,
+            deduction and contribution limits are not loaded yet. Treat {calendarYear} figures
+            as estimates and confirm with your CPA before filing.
+          </div>
+        )}
+
         {/* ═══ HEADER + DISCLAIMER ═══ */}
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 12 }}>
           <div>
             <h1 style={{ fontSize: 28, fontWeight: 700, color: '#fff', margin: '0 0 4px' }}>
               Tax Center
             </h1>
-            <p style={{ color: '#8888a8', fontSize: 14, margin: 0 }}>{currentYear} Tax Intelligence</p>
+            <p style={{ color: '#8888a8', fontSize: 14, margin: 0 }}>{engineYear} tax law</p>
           </div>
           <div style={{ display: 'flex', gap: 8 }}>
             {/* Filing Status Selector */}

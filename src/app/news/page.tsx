@@ -174,8 +174,12 @@ export default function NewsPage() {
   const [scoringSentiment, setScoringSentiment] = useState(false);
   const [savedIds, setSavedIds] = useState<Set<string>>(new Set());
   const [activeTab, setActiveTab] = useState<'feed' | 'saved'>('feed');
-  const [lastUpdated, setLastUpdated] = useState<number>(Date.now());
-  const [nowTick, setNowTick] = useState<number>(Date.now());
+  // 0 until mounted. `Date.now()` in a useState initializer runs during SSR
+  // (and gets baked into the static prerender), then again in the browser at a
+  // different instant — the same freeze-then-mismatch class as the dashboard
+  // greeting. The "updated Xs ago" label is derived from these below.
+  const [lastUpdated, setLastUpdated] = useState<number>(0);
+  const [nowTick, setNowTick] = useState<number>(0);
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
   const [relevantOnly, setRelevantOnly] = useState<boolean>(false);
   const articlesRef = useRef<NewsArticle[]>([]);
@@ -184,6 +188,9 @@ export default function NewsPage() {
   useEffect(() => { setSavedIds(loadSaved()); }, []);
 
   useEffect(() => {
+    // Seed immediately — the interval alone would leave nowTick at its
+    // mount-safe 0 for the first 30s, blanking the "updated Xs ago" label.
+    setNowTick(Date.now());
     const id = setInterval(() => setNowTick(Date.now()), 30_000);
     return () => clearInterval(id);
   }, []);
@@ -380,6 +387,7 @@ export default function NewsPage() {
   };
 
   const lastUpdatedLabel = useMemo(() => {
+    if (!lastUpdated || !nowTick) return '';
     const diffSec = Math.max(0, Math.floor((nowTick - lastUpdated) / 1000));
     if (diffSec < 10) return 'Updated just now';
     if (diffSec < 60) return `Updated ${diffSec}s ago`;

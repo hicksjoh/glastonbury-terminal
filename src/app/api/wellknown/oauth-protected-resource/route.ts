@@ -4,6 +4,7 @@ import {
   buildProtectedResourceMetadata,
   getIssuer,
 } from '@/lib/oauth/metadata';
+import { withRateLimit, RATE } from '@/lib/api-rate-limit';
 
 // RFC 9728 OAuth 2.0 Protected Resource Metadata.
 // Tells MCP clients that the protected resource is /api/mcp and points
@@ -12,7 +13,7 @@ import {
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
-export function GET(req: NextRequest) {
+function GET_impl(req: NextRequest) {
   const issuer = getIssuer(req);
   const body = buildProtectedResourceMetadata(issuer);
   return NextResponse.json(body, {
@@ -33,3 +34,7 @@ export function OPTIONS() {
     },
   });
 }
+
+// Durable, session-keyed rate limiting (CLAUDE.md rule 6). See
+// src/lib/api-rate-limit.ts — the old in-memory limiter was per-lambda.
+export const GET = withRateLimit('wellknown/oauth-protected-resource', RATE.READ, GET_impl);

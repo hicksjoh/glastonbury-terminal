@@ -3,6 +3,7 @@ import { findUnusualFlow, type FlowCandidate } from '@/lib/alpaca-options';
 import { createServiceClient } from '@/lib/supabase';
 import { buildMeta } from '@/lib/api-meta';
 import { getCached, setCache } from '@/lib/server-cache';
+import { withRateLimit, RATE } from '@/lib/api-rate-limit';
 
 // F5 — Free options flow (Alpaca snapshots + watchlist scan)
 //
@@ -27,7 +28,7 @@ async function loadWatchlistSymbols(fallback: string[]): Promise<string[]> {
   return fallback;
 }
 
-export async function GET(req: NextRequest) {
+async function GET_impl(req: NextRequest) {
   const minPremium = Number(req.nextUrl.searchParams.get('minPremium') || 50_000);
   const minVolOI = Number(req.nextUrl.searchParams.get('minVolOI') || 2);
   const typeFilter = req.nextUrl.searchParams.get('type') || '';
@@ -59,7 +60,11 @@ export async function GET(req: NextRequest) {
     }
 
     const bullish = flows.filter(f => f.direction === 'bullish').length;
-    const total = flows.length || 1;
+    // `flows.length || 1` used to stand in here as a divide-by-zero guard, which
+    // made the `total > 0` check below always true: with zero flows it computed
+    // 0/1 bullish and 1/1 bearish and reported a confident "100% bearish" on no
+    // data at all. Guard on the real count and report null instead.
+    const total = flows.length;
     const symCounts: Record<string, number> = {};
     for (const f of flows) symCounts[f.underlying] = (symCounts[f.underlying] ?? 0) + 1;
     const topSymbols = Object.entries(symCounts)
@@ -71,8 +76,8 @@ export async function GET(req: NextRequest) {
       flows,
       summary: {
         totalFlows: flows.length,
-        bullishPct: total > 0 ? Math.round((bullish / total) * 100) : 0,
-        bearishPct: total > 0 ? Math.round(((total - bullish) / total) * 100) : 0,
+        bullishPct: total > 0 ? Math.round((bullish / total) * 100) : null,
+        bearishPct: total > 0 ? Math.round(((total - bullish) / total) * 100) : null,
         topSymbols,
         scannedSymbols: symbols,
       },
@@ -92,3 +97,7 @@ export async function GET(req: NextRequest) {
     }, { status: 500 });
   }
 }
+
+// Durable, session-keyed rate limiting (CLAUDE.md rule 6). See
+// src/lib/api-rate-limit.ts — the old in-memory limiter was per-lambda.
+export const GET = withRateLimit('flow', RATE.UPSTREAM, GET_impl);

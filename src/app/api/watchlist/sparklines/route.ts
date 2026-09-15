@@ -1,9 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { withRateLimit, RATE } from '@/lib/api-rate-limit';
 
 const FMP_BASE = 'https://financialmodelingprep.com/stable';
 const FMP_KEY = process.env.FMP_API_KEY || '';
 
-export async function GET(req: NextRequest) {
+async function GET_impl(req: NextRequest) {
   try {
     const symbols = req.nextUrl.searchParams.get('symbols') || '';
     if (!symbols || !FMP_KEY) {
@@ -50,3 +51,7 @@ function getDateNDaysAgo(n: number): string {
   d.setDate(d.getDate() - n);
   return d.toISOString().split('T')[0];
 }
+
+// Durable, session-keyed rate limiting (CLAUDE.md rule 6). See
+// src/lib/api-rate-limit.ts — the old in-memory limiter was per-lambda.
+export const GET = withRateLimit('watchlist/sparklines', RATE.UPSTREAM, GET_impl);

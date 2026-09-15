@@ -10,6 +10,7 @@ import {
   getMarketGainers,
   getMarketLosers,
 } from '@/lib/market-intel';
+import { withRateLimit, RATE } from '@/lib/api-rate-limit';
 
 // GET /api/market-intel?action=news&symbols=AAPL,NVDA
 // GET /api/market-intel?action=profile&symbol=AAPL
@@ -17,7 +18,7 @@ import {
 // GET /api/market-intel?action=earnings&symbol=AAPL
 // GET /api/market-intel?action=metrics&symbol=AAPL
 // GET /api/market-intel?action=movers
-export async function GET(req: NextRequest) {
+async function GET_impl(req: NextRequest) {
   try {
     const action = req.nextUrl.searchParams.get('action');
     const symbol = req.nextUrl.searchParams.get('symbol') || '';
@@ -72,3 +73,7 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: msg }, { status: 500 });
   }
 }
+
+// Durable, session-keyed rate limiting (CLAUDE.md rule 6). See
+// src/lib/api-rate-limit.ts — the old in-memory limiter was per-lambda.
+export const GET = withRateLimit('market-intel', RATE.EXPENSIVE, GET_impl);

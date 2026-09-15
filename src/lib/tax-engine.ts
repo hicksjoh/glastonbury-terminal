@@ -164,8 +164,38 @@ export const TAX_2025: TaxYearData = {
   },
 };
 
+/**
+ * Every tax year this engine actually has verified IRS constants for.
+ *
+ * Add a year here ONLY with figures checked against the relevant IRS Revenue
+ * Procedure — brackets, standard deduction, contribution limits, mileage rate.
+ * Nothing in this file may be extrapolated or inflation-guessed: a plausible
+ * wrong bracket is worse than an honest "unsupported year".
+ */
+export const SUPPORTED_TAX_YEARS: Record<number, TaxYearData> = {
+  2025: TAX_2025,
+};
+
 /** Active tax year pointer — update this when new year data is added */
 export const ACTIVE_TAX_YEAR = TAX_2025;
+
+/**
+ * Resolve the data for a calendar year, or null when this engine has no
+ * verified constants for it.
+ *
+ * The tax page used to render `new Date().getFullYear()` as its heading while
+ * every number underneath came from ACTIVE_TAX_YEAR, so in 2026 it announced
+ * "2026 Tax Intelligence" over 2025 brackets, deductions and limits. Callers
+ * must now handle null rather than silently computing against the wrong law.
+ */
+export function getTaxYearData(year: number): TaxYearData | null {
+  return SUPPORTED_TAX_YEARS[year] ?? null;
+}
+
+/** The most recent year this engine has verified data for. */
+export function latestSupportedTaxYear(): number {
+  return Math.max(...Object.keys(SUPPORTED_TAX_YEARS).map(Number));
+}
 
 // ============================================================
 // CORE CALCULATION FUNCTIONS

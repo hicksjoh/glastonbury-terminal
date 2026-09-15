@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { createServiceClient } from '@/lib/supabase';
 import { getQuote } from '@/lib/fmp-client';
+import { withRateLimit, RATE } from '@/lib/api-rate-limit';
 
 // Live-data endpoint — never let Next static-optimize this at build time
 export const dynamic = 'force-dynamic';
@@ -25,7 +26,7 @@ function detectRegime(vix: number | null, momentum: number | null): { regime: st
   return { regime: 'bear_high_vol', confidence: 0.7 + Math.min(0.2, (v - 30) / 100) };
 }
 
-export async function GET() {
+async function GET_impl() {
   try {
     const supabase = createServiceClient();
 
@@ -78,3 +79,7 @@ export async function GET() {
     });
   }
 }
+
+// Durable, session-keyed rate limiting (CLAUDE.md rule 6). See
+// src/lib/api-rate-limit.ts — the old in-memory limiter was per-lambda.
+export const GET = withRateLimit('regime', RATE.UPSTREAM, GET_impl);

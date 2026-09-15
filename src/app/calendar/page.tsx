@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { AppShell } from '@/components/layout/AppShell';
+import { getEtDayKey } from '@/lib/et-clock';
 import { ErrorBoundary } from '@/components/ErrorBoundary';
 import { LoadingState } from '@/components/LoadingState';
 import { ChevronLeft, ChevronRight, Check } from 'lucide-react';
@@ -104,11 +105,16 @@ export default function CalendarPage() {
     return filteredEvents.filter(e => e.date === dateStr);
   };
 
+  // Resolved once per render from the ET calendar, not the server's UTC clock.
+  const etToday = getEtDayKey(); // prerender-safe: date-only ET key, identical on server and client within a day
   const prevMonth = () => setCurrentDate(new Date(year, month - 1, 1));
   const nextMonth = () => setCurrentDate(new Date(year, month + 1, 1));
 
+  // `new Date().toISOString().slice(0,10)` is the UTC date. Vercel runs in UTC
+  // and the user reads in ET, so after ~8pm ET "today" already rolled over and
+  // today's remaining events silently dropped out of the agenda.
   const agendaEvents = filteredEvents
-    .filter(e => e.date >= new Date().toISOString().slice(0, 10))
+    .filter(e => e.date >= etToday)
     .sort((a, b) => a.date.localeCompare(b.date))
     .slice(0, 30);
 

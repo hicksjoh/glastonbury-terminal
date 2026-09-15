@@ -1,11 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createServiceClient } from '@/lib/supabase';
+import { withRateLimit, RATE } from '@/lib/api-rate-limit';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
 // POST /api/debate/decision  body: { id, decision, linkedTradeId? }
-export async function POST(req: NextRequest) {
+async function POST_impl(req: NextRequest) {
   let body: { id?: string; decision?: 'took_trade' | 'passed' | 'modified' | 'deferred'; linkedTradeId?: string };
   try { body = await req.json(); } catch { return NextResponse.json({ error: 'Bad JSON' }, { status: 400 }); }
   if (!body.id) return NextResponse.json({ error: 'Missing id' }, { status: 400 });
@@ -20,3 +21,7 @@ export async function POST(req: NextRequest) {
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
   return NextResponse.json({ updated: true });
 }
+
+// Durable, session-keyed rate limiting (CLAUDE.md rule 6). See
+// src/lib/api-rate-limit.ts — the old in-memory limiter was per-lambda.
+export const POST = withRateLimit('debate/decision', RATE.EXPENSIVE, POST_impl);

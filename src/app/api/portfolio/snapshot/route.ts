@@ -4,11 +4,12 @@ import { createServiceClient } from '@/lib/supabase';
 import { pingHealthcheck } from '@/lib/healthchecks';
 import { verifySessionJwt, SESSION_COOKIE_NAME } from '@/lib/session';
 import { cronIsAuthorized } from '@/lib/cron-auth';
+import { withRateLimit, RATE } from '@/lib/api-rate-limit';
 
 const HC_SLUG = 'portfolio-snapshot';
 
 // ─── POST: Take a snapshot of current portfolio state ─────
-export async function POST(req: NextRequest) {
+async function POST_impl(req: NextRequest) {
   if (!(await cronIsAuthorized(req, { routeName: 'portfolio-snapshot' }))) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
@@ -111,7 +112,7 @@ export async function POST(req: NextRequest) {
 // NOTE: This route is in PUBLIC_API_ROUTES so middleware can let cron POSTs
 // through (they auth via CRON_SECRET below). For human GET traffic we therefore
 // must verify the session JWT here ourselves — middleware never sees us.
-export async function GET(req: NextRequest) {
+async function GET_impl(req: NextRequest) {
   const authCookie = req.cookies.get(SESSION_COOKIE_NAME);
   const session = await verifySessionJwt(authCookie?.value);
   if (!session) {
@@ -152,3 +153,8 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: msg }, { status: 500 });
   }
 }
+
+// Durable, session-keyed rate limiting (CLAUDE.md rule 6). See
+// src/lib/api-rate-limit.ts — the old in-memory limiter was per-lambda.
+export const POST = withRateLimit('portfolio/snapshot', RATE.WRITE, POST_impl);
+export const GET = withRateLimit('portfolio/snapshot', RATE.WRITE, GET_impl);

@@ -1,9 +1,10 @@
 import { NextResponse } from 'next/server';
 import { getAccount, getPositions } from '@/lib/alpaca';
+import { withRateLimit, RATE } from '@/lib/api-rate-limit';
 
 export const revalidate = 30;
 
-export async function GET() {
+async function GET_impl() {
   try {
     const [account, positions] = await Promise.all([
       getAccount().catch(() => null),
@@ -46,3 +47,7 @@ export async function GET() {
     return NextResponse.json({ success: false, error: 'Failed to fetch portfolio data' }, { status: 500 });
   }
 }
+
+// Durable, session-keyed rate limiting (CLAUDE.md rule 6). See
+// src/lib/api-rate-limit.ts — the old in-memory limiter was per-lambda.
+export const GET = withRateLimit('portfolio', RATE.UPSTREAM, GET_impl);

@@ -1,5 +1,6 @@
 import React from 'react';
 import { color, font, radius, size as sz, space } from '@/lib/design-tokens';
+import { APP_TIME_ZONE } from '@/lib/et-clock';
 
 export interface DataAgeProps {
   ts: string | number | null | undefined;
@@ -31,6 +32,7 @@ export function DataAge({
     label = `${Math.floor(ageMs / HOUR_MS)}h ago`;
   } else {
     label = date.toLocaleString('en-US', {
+      timeZone: APP_TIME_ZONE,
       weekday: 'short',
       month: 'short',
       day: 'numeric',
@@ -47,7 +49,7 @@ export function DataAge({
   return (
     <time
       dateTime={date.toISOString()}
-      title={date.toLocaleString()}
+      title={date.toLocaleString('en-US', { timeZone: APP_TIME_ZONE, timeZoneName: 'short' })}
       style={{
         display: 'inline-flex',
         alignItems: 'center',

@@ -1,11 +1,12 @@
 import { NextResponse } from 'next/server';
 import { createServiceClient } from '@/lib/supabase';
+import { withRateLimit, RATE } from '@/lib/api-rate-limit';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
 // GET /api/storm/status — returns most recent storm_alert rows + territory threat map
-export async function GET() {
+async function GET_impl() {
   const sb = createServiceClient();
   const since = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
 
@@ -53,3 +54,7 @@ export async function GET() {
     territories: territoriesRes.data ?? [],
   });
 }
+
+// Durable, session-keyed rate limiting (CLAUDE.md rule 6). See
+// src/lib/api-rate-limit.ts — the old in-memory limiter was per-lambda.
+export const GET = withRateLimit('storm/status', RATE.READ, GET_impl);

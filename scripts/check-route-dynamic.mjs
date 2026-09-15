@@ -20,6 +20,7 @@ import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 
 const API_ROOT = 'src/app/api';
+const APP_ROOT = 'src/app';
 
 function walk(dir, out = []) {
   for (const name of readdirSync(dir)) {
@@ -84,9 +85,20 @@ function getExportShape(src) {
   m = src.match(/export\s+const\s+GET\s*=\s*(?:async\s*)?(?:function\s*)?\(([^)]*)\)/);
   if (m) return readsRequest(src, m[1], m.index + m[0].length) ? 'has-params' : 'paramless';
 
-  // export const GET = someIdentifier  OR  export { someIdentifier as GET }
+  // export const GET = someIdentifier
+  // export { someIdentifier as GET }
+  // export const GET = withRateLimit('slug', RATE.X, someIdentifier)  <- the
+  //   rate-limit wrapper. Without this case every wrapped route parsed as
+  //   "no recognised GET export" and was skipped entirely, silently switching
+  //   this guard off for 89 routes the moment the wrapper was introduced.
   const aliasMatch =
     src.match(/export\s+const\s+GET\s*=\s*([A-Za-z_$][\w$]*)\s*;/) ||
+    // Any wrapper call, however nested or member-qualified, whose LAST
+    // identifier argument is the handler:
+    //   withRateLimit('x', RATE.READ, GET_impl)
+    //   authed(withRateLimit('x', RATE.READ, GET_impl))
+    //   wrappers.withRateLimit('x', specFor('read'), GET_impl)
+    src.match(/export\s+const\s+GET\s*=[\s\S]*?,\s*([A-Za-z_$][\w$]*)\s*\)+\s*;/) ||
     src.match(/export\s*\{[^}]*\b([A-Za-z_$][\w$]*)\s+as\s+GET\b[^}]*\}/);
   if (aliasMatch) {
     const name = aliasMatch[1];
@@ -98,7 +110,123 @@ function getExportShape(src) {
     return readsRequest(src, decl[1], decl.index + decl[0].length) ? 'has-params' : 'paramless';
   }
 
+  // A GET export exists but matched none of the shapes above. Returning null
+  // here — which is what this did — made the file invisible to the guard.
+  // Any unrecognised shape must fail closed and demand an explicit opt-out,
+  // otherwise a new wrapper style silently switches the check off, exactly as
+  // introducing withRateLimit() did for 89 routes.
+  if (/export\s+(const|async\s+function|function)\s+GET\b|\bas\s+GET\b/.test(src)) {
+    return 'paramless';
+  }
+
   return null;
+}
+
+// ── Part 2: pages that bake a clock reading into their prerender ──────────
+//
+// The original guard scanned src/app/api only, and the exact same bug class
+// then shipped one directory over: src/app/page.tsx computed `new Date()` in
+// its render body, Next statically prerendered the page at build time, and
+// production served an HTML snapshot reading "Wednesday, September 9, 2026"
+// for five days straight. The browser hydrated with the real date, which is
+// React #425 on every single load.
+//
+// A clock/random reading in a page's RENDER path (as opposed to inside a hook
+// callback, where it runs per-mount on the client) is either frozen at build
+// time or divergent between the server and the browser. Both are bugs. Opt out
+// per line with a trailing `// prerender-safe: <reason>` when the call
+// genuinely cannot reach the prerendered output.
+const CLOCK_CALL = /\b(new Date\(\s*\)|Date\.now\(\)|Math\.random\(\))/;
+const PAGE_OPT_OUT = /\/\/\s*prerender-safe:/;
+
+function walkPages(dir, out = []) {
+  for (const name of readdirSync(dir)) {
+    const p = join(dir, name);
+    if (statSync(p).isDirectory()) walkPages(p, out);
+    else if (name === 'page.tsx') out.push(p);
+  }
+  return out;
+}
+
+/**
+ * Report clock/random calls that execute on EVERY render of the page component
+ * — i.e. in the component body itself, outside any nested function.
+ *
+ * Deliberately narrow. Calls inside module-level helpers (`timeAgo`), event
+ * handlers, hook callbacks and `.map()` bodies either never run during SSR or
+ * only run against data that arrives after mount, so flagging them produces
+ * noise — and a guard that cries wolf gets silenced, which is how the last one
+ * rotted. Only the render-body case can be frozen into the prerendered HTML.
+ *
+ * Opt out per line with a trailing `// prerender-safe: <reason>`.
+ */
+function clockCallsInRenderPath(src) {
+  // Locate the default-exported component, whatever form it takes. Matching
+  // only `export default function` skipped every arrow-function page
+  // (`const Page = () => {...}; export default Page;` and
+  // `export default () => {...}`), which is a false negative in the guard
+  // itself — strictly worse than a false positive, since it reports green.
+  let m = src.match(/export\s+default\s+(?:async\s+)?function\s+\w*\s*\([^)]*\)\s*\{/);
+
+  if (!m) {
+    // export default () => { ... }   /   export default async (props) => { ... }
+    m = src.match(/export\s+default\s+(?:async\s*)?\([^)]*\)\s*=>\s*\{/);
+  }
+
+  if (!m) {
+    // export default Identifier  ->  resolve the declaration in this file.
+    const named = src.match(/export\s+default\s+([A-Za-z_$][\w$]*)\s*;/);
+    if (named) {
+      const n = named[1];
+      m = src.match(new RegExp(`(?:async\\s+)?function\\s+${n}\\s*\\([^)]*\\)\\s*\\{`))
+        || src.match(new RegExp(`const\\s+${n}\\s*(?::[^=]+)?=\\s*(?:async\\s*)?\\([^)]*\\)\\s*=>\\s*\\{`))
+        || src.match(new RegExp(`const\\s+${n}\\s*(?::[^=]+)?=\\s*(?:async\\s+)?function\\s*\\([^)]*\\)\\s*\\{`));
+    }
+  }
+
+  // Still unresolved: report it rather than silently passing. A page whose
+  // component this cannot find is a page this guard is not protecting.
+  if (!m) {
+    return CLOCK_CALL.test(src.replace(/\/\/.*$/gm, ''))
+      ? [{ line: 0, text: '(could not locate the default-exported component; clock/random call present somewhere in this file — verify by hand or annotate)' }]
+      : [];
+  }
+
+  const bodyStart = m.index + m[0].length;
+  const hits = [];
+  let depth = 0;          // brace depth relative to the component body
+  let nestedFnAt = null;  // depth at which the innermost nested function opened
+
+  const lines = src.slice(bodyStart).split('\n');
+  const lineOffset = src.slice(0, bodyStart).split('\n').length;
+
+  for (let i = 0; i < lines.length; i++) {
+    const raw = lines[i];
+    const code = raw.replace(/\/\/.*$/, '');
+
+    if (depth === 0 && nestedFnAt === null
+        && CLOCK_CALL.test(code) && !PAGE_OPT_OUT.test(raw)) {
+      hits.push({ line: lineOffset + i, text: raw.trim() });
+    }
+
+    // A line that opens a callback or function literal starts a nested scope.
+    const opensNested = /(=>\s*\{|\bfunction\b[^;]*\{)/.test(code);
+    const opens = (code.match(/\{/g) || []).length;
+    const closes = (code.match(/\}/g) || []).length;
+
+    if (opensNested && nestedFnAt === null) nestedFnAt = depth;
+    depth += opens - closes;
+    if (nestedFnAt !== null && depth <= nestedFnAt) nestedFnAt = null;
+    if (depth < 0) break; // walked out of the component body
+  }
+  return hits;
+}
+
+const pageOffenders = [];
+for (const file of walkPages(APP_ROOT)) {
+  if (file.includes(`${APP_ROOT}/api/`)) continue;
+  const hits = clockCallsInRenderPath(readFileSync(file, 'utf8'));
+  if (hits.length > 0) pageOffenders.push({ file, hits });
 }
 
 const offenders = [];
@@ -109,11 +237,27 @@ for (const file of walk(API_ROOT)) {
   if (shape === 'paramless' && !optedOut) offenders.push(file);
 }
 
+let failed = false;
+
 if (offenders.length > 0) {
+  failed = true;
   console.error('✗ Routes whose GET never reads the request and has no dynamic/revalidate export');
   console.error('  (these will be FROZEN at build time on Vercel):\n');
   for (const f of offenders) console.error(`  - ${f}`);
   console.error("\n  Fix: add `export const dynamic = 'force-dynamic';` to each route.");
-  process.exit(1);
 }
-console.log('✓ No static-cache-vulnerable API routes.');
+
+if (pageOffenders.length > 0) {
+  failed = true;
+  console.error('\n✗ Pages reading the clock (or Math.random) in the render path');
+  console.error('  (frozen at build time in the prerender, then mismatched on hydration):\n');
+  for (const { file, hits } of pageOffenders) {
+    for (const h of hits) console.error(`  - ${file}:${h.line}  ${h.text}`);
+  }
+  console.error('\n  Fix: compute it in a useEffect and render a placeholder until mounted');
+  console.error('  (see the greeting in src/app/page.tsx, or MarketStatusChip),');
+  console.error('  or annotate the line `// prerender-safe: <reason>` if it truly cannot reach SSR.');
+}
+
+if (failed) process.exit(1);
+console.log(`✓ No static-cache-vulnerable API routes; no clock reads in ${walkPages(APP_ROOT).filter(f => !f.includes(`${APP_ROOT}/api/`)).length} page render paths.`);

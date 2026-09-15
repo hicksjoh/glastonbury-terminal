@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { getCached, setCache, TTL } from '@/lib/server-cache';
+import { withRateLimit, RATE } from '@/lib/api-rate-limit';
 
 // Live-data endpoint — never let Next static-optimize this at build time
 export const dynamic = 'force-dynamic';
@@ -24,7 +25,7 @@ const TICKER_SYMBOLS = [
   { symbol: 'BTCUSD', label: 'BTC' },
 ];
 
-export async function GET() {
+async function GET_impl() {
   try {
     if (!FMP_KEY) {
       return NextResponse.json({ tickers: [] });
@@ -69,3 +70,7 @@ export async function GET() {
     return NextResponse.json({ tickers: [] });
   }
 }
+
+// Durable, session-keyed rate limiting (CLAUDE.md rule 6). See
+// src/lib/api-rate-limit.ts — the old in-memory limiter was per-lambda.
+export const GET = withRateLimit('market-ticker', RATE.UPSTREAM, GET_impl);
