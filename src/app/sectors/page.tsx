@@ -20,6 +20,18 @@ interface SectorStock {
   sector: string;
 }
 
+/** Why the sector feed is empty, in the user's terms rather than the route's. */
+const DEGRADED_COPY: Record<string, string> = {
+  fmp_rate_limited:
+    'Sector data unavailable — the market-data provider (FMP) daily request quota is exhausted. It resets on the provider\u2019s schedule; this is not a market signal.',
+  fmp_unavailable:
+    'Sector data unavailable — the market-data provider is not responding. This is an outage, not flat sectors.',
+  route_error:
+    'Sector data unavailable — the server errored while assembling it.',
+  unreachable:
+    'Sector data unavailable — could not reach the terminal\u2019s own API.',
+};
+
 export default function SectorsPage() {
   const [sectors, setSectors] = useState<SectorData[]>([]);
   const [stocks, setStocks] = useState<SectorStock[]>([]);
@@ -28,6 +40,8 @@ export default function SectorsPage() {
   const [loadingStocks, setLoadingStocks] = useState(false);
   const [noApiKey, setNoApiKey] = useState(false);
   const [viewMode, setViewMode] = useState<'grid' | 'treemap'>('grid');
+  /** Non-null when the route said it could not get usable upstream data. */
+  const [degradedReason, setDegradedReason] = useState<string | null>(null);
 
   useEffect(() => {
     const fetchData = async () => {
@@ -37,9 +51,17 @@ export default function SectorsPage() {
           const d = await sectorRes.json();
           setSectors(d.sectors || []);
           if (d.noKey) setNoApiKey(true);
+          // The route reports FOUR degraded reasons; the page only ever
+          // handled `no_api_key`. The other three rendered as a silent empty
+          // heatmap, so a blown provider quota was indistinguishable from
+          // "every sector is flat".
+          setDegradedReason(d.degraded && !d.noKey ? (d.reason || 'unknown') : null);
+        } else {
+          setDegradedReason('unreachable');
         }
       } catch (err) {
         console.error('Sectors fetch error:', err);
+        setDegradedReason('unreachable');
       } finally {
         setLoading(false);
       }
@@ -116,6 +138,14 @@ export default function SectorsPage() {
                 borderRadius: 8, padding: '10px 16px', marginBottom: 16, fontSize: 12, color: '#f59e0b',
               }}>
                 FMP API key not configured — sector data requires a valid API key to display real-time performance
+              </div>
+            )}
+            {degradedReason && (
+              <div role="alert" style={{
+                background: 'rgba(245, 158, 11, 0.08)', border: '1px solid rgba(245, 158, 11, 0.2)',
+                borderRadius: 8, padding: '10px 16px', marginBottom: 16, fontSize: 12, color: '#f59e0b',
+              }}>
+                {DEGRADED_COPY[degradedReason] ?? 'Sector data unavailable — the upstream provider returned nothing usable.'}
               </div>
             )}
             {/* Sector Grid / Treemap */}
@@ -240,7 +270,12 @@ export default function SectorsPage() {
                   </table>
                 ) : (
                   <div style={{ padding: 32, textAlign: 'center', color: '#666', fontSize: 13 }}>
-                    Market data unavailable — try during trading hours
+                    {/* "try during trading hours" was the only explanation offered,
+                        and it is the wrong one whenever the real cause is a blown
+                        provider quota or an outage. */}
+                    {degradedReason
+                      ? (DEGRADED_COPY[degradedReason] ?? 'Market data unavailable.')
+                      : 'No market data for this sector right now.'}
                   </div>
                 )}
               </div>
