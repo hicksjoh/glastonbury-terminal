@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { getHistoricalPrices } from '@/lib/fmp-client';
+import { withRateLimit, RATE } from '@/lib/api-rate-limit';
 
 // ── Types ──────────────────────────────────────────────────────────
 interface BacktestRequest {
@@ -362,7 +363,7 @@ function runBuyAndHold(
 
 // ── POST handler ───────────────────────────────────────────────────
 
-export async function POST(request: Request) {
+async function POST_impl(request: Request) {
   try {
     const body = (await request.json()) as BacktestRequest;
     const { symbol, strategy, period, positionSize } = body;
@@ -467,3 +468,7 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: message }, { status: 500 });
   }
 }
+
+// Durable, session-keyed rate limiting (CLAUDE.md rule 6). See
+// src/lib/api-rate-limit.ts — the old in-memory limiter was per-lambda.
+export const POST = withRateLimit('backtest', RATE.EXPENSIVE, POST_impl);

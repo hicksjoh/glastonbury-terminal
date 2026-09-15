@@ -1,11 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createServiceClient } from '@/lib/supabase';
+import { withRateLimit, RATE } from '@/lib/api-rate-limit';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
 // GET /api/earnings/live/session/[id] — return session + chunks (since=seq) + memo if any
-export async function GET(req: NextRequest, ctx: { params: { id: string } }) {
+async function GET_impl(req: NextRequest, ctx: { params: { id: string } }) {
   const id = ctx.params.id;
   const since = Number(req.nextUrl.searchParams.get('since') ?? '-1');
 
@@ -33,3 +34,7 @@ export async function GET(req: NextRequest, ctx: { params: { id: string } }) {
     return NextResponse.json({ error: (err as Error).message }, { status: 500 });
   }
 }
+
+// Durable, session-keyed rate limiting (CLAUDE.md rule 6). See
+// src/lib/api-rate-limit.ts — the old in-memory limiter was per-lambda.
+export const GET = withRateLimit('earnings/live/session/[id]', RATE.UPSTREAM, GET_impl);

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { captureRouteError } from '@/lib/api-error';
 import { loggerFor } from '@/lib/request-id';
+import { withRateLimit, RATE } from '@/lib/api-rate-limit';
 
 const ALPACA_DATA_URL = 'https://data.alpaca.markets';
 const ALPACA_TRADING_URL = process.env.ALPACA_BASE_URL || 'https://paper-api.alpaca.markets';
@@ -47,7 +48,7 @@ interface ScreenerResult {
   stockPrice: number;
 }
 
-export async function POST(req: NextRequest) {
+async function POST_impl(req: NextRequest) {
   const { log, request_id } = loggerFor(req, { route: 'options/screener' });
   try {
     const filters: ScreenerFilter = await req.json();
@@ -200,3 +201,7 @@ async function scanSymbol(symbol: string, filters: ScreenerFilter): Promise<Scre
     return [];
   }
 }
+
+// Durable, session-keyed rate limiting (CLAUDE.md rule 6). See
+// src/lib/api-rate-limit.ts — the old in-memory limiter was per-lambda.
+export const POST = withRateLimit('options/screener', RATE.UPSTREAM, POST_impl);

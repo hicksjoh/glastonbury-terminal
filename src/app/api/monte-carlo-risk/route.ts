@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { runMonteCarlo, stressTest, MCPosition } from '@/lib/monte-carlo-risk';
 import { createServiceClient } from '@/lib/supabase';
 import { getHistoricalPrices } from '@/lib/fmp-client';
+import { withRateLimit, RATE } from '@/lib/api-rate-limit';
 
 const ALPACA_BASE = process.env.ALPACA_BASE_URL || 'https://paper-api.alpaca.markets';
 const ALPACA_KEY = process.env.ALPACA_API_KEY_ID || '';
@@ -19,7 +20,7 @@ interface FMPHistorical {
   historical: Array<{ date: string; close: number }>;
 }
 
-export async function POST(req: NextRequest) {
+async function POST_impl(req: NextRequest) {
   try {
     const body = await req.json().catch(() => ({}));
     let symbols: string[] = body.symbols || [];
@@ -238,3 +239,7 @@ export async function POST(req: NextRequest) {
     );
   }
 }
+
+// Durable, session-keyed rate limiting (CLAUDE.md rule 6). See
+// src/lib/api-rate-limit.ts — the old in-memory limiter was per-lambda.
+export const POST = withRateLimit('monte-carlo-risk', RATE.EXPENSIVE, POST_impl);

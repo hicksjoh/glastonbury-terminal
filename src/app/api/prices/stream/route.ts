@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { log as baseLog } from '@/lib/logger';
+import { withRateLimit, RATE } from '@/lib/api-rate-limit';
 
 const priceLog = baseLog.child({ component: 'prices/stream' });
 
@@ -94,7 +95,7 @@ async function fetchFMPQuotes(symbols: string[]): Promise<Record<string, PriceRe
   return results;
 }
 
-export async function GET(req: NextRequest) {
+async function GET_impl(req: NextRequest) {
   const { searchParams } = new URL(req.url);
   const symbolsParam = searchParams.get('symbols') || '';
   const symbols = symbolsParam.split(',').map(s => s.trim()).filter(Boolean);
@@ -124,3 +125,7 @@ export async function GET(req: NextRequest) {
     }
   );
 }
+
+// Durable, session-keyed rate limiting (CLAUDE.md rule 6). See
+// src/lib/api-rate-limit.ts — the old in-memory limiter was per-lambda.
+export const GET = withRateLimit('prices/stream', RATE.READ, GET_impl);

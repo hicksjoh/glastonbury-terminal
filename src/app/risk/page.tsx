@@ -46,6 +46,8 @@ export default function RiskPage() {
       try {
         // First check if user has open positions via Alpaca
         let positionSymbols: string[] = [];
+        // Market value per symbol, so risk is weighted by actual exposure.
+        let positionValues: number[] = [];
         try {
           const posRes = await fetch('/api/alpaca/positions');
           if (posRes.ok) {
@@ -53,6 +55,10 @@ export default function RiskPage() {
             // Alpaca returns array directly, or may have error field
             const positions = Array.isArray(posData) ? posData : [];
             positionSymbols = positions.map((p: { symbol: string }) => p.symbol);
+            positionValues = positions.map((p: { market_value?: string }) => {
+              const v = Math.abs(parseFloat(p.market_value ?? ''));
+              return Number.isFinite(v) ? v : 0;
+            });
           }
         } catch {
           // Alpaca unavailable — fall back to defaults
@@ -68,7 +74,18 @@ export default function RiskPage() {
         setHasPositions(true);
         setSymbols(positionSymbols);
 
-        const weights = positionSymbols.map(() => 1 / positionSymbols.length);
+        // Weight by market value, not 1/n.
+        //
+        // Equal weighting told the risk engine that a $90k AAPL / $10k TLT book
+        // was 50/50. A -10% AAPL day then modelled as -5% portfolio instead of
+        // -9%, and VaR, beta, Sharpe, stress results and every
+        // correlation-to-portfolio inherited the error. Falls back to equal
+        // weights only when no market values came back at all, which at least
+        // keeps the call from failing outright.
+        const grossExposure = positionValues.reduce((sum, v) => sum + v, 0);
+        const weights = grossExposure > 0
+          ? positionValues.map(v => v / grossExposure)
+          : positionSymbols.map(() => 1 / positionSymbols.length);
         const res = await fetch('/api/risk', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },

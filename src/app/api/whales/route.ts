@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { WHALES, findWhale } from '@/lib/whales/roster';
 import { list13FHR, fetchHoldings, diffHoldings } from '@/lib/whales/edgar';
 import { getCached, setCache } from '@/lib/server-cache';
+import { withRateLimit, RATE } from '@/lib/api-rate-limit';
 
 // F6 — 13F whale mirror via SEC EDGAR
 //
@@ -14,7 +15,7 @@ import { getCached, setCache } from '@/lib/server-cache';
 
 const CACHE_TTL_MS = 6 * 60 * 60 * 1000;
 
-export async function GET(req: NextRequest) {
+async function GET_impl(req: NextRequest) {
   const slug = req.nextUrl.searchParams.get('slug');
   const wantDiff = req.nextUrl.searchParams.get('diff') === 'true';
 
@@ -90,3 +91,7 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: msg, whale }, { status: 500 });
   }
 }
+
+// Durable, session-keyed rate limiting (CLAUDE.md rule 6). See
+// src/lib/api-rate-limit.ts — the old in-memory limiter was per-lambda.
+export const GET = withRateLimit('whales', RATE.UPSTREAM, GET_impl);

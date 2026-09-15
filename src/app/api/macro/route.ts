@@ -9,6 +9,7 @@ import {
   type EconomicEventRow,
 } from '@/lib/fmp-client';
 import { buildMeta, type ApiMeta } from '@/lib/api-meta';
+import { withRateLimit, RATE } from '@/lib/api-rate-limit';
 
 // Live macro regime data — never serve a build-time snapshot.
 export const dynamic = 'force-dynamic';
@@ -104,7 +105,7 @@ async function fetchFmpCalendar(): Promise<ApiResult<EconomicEventRow[]>> {
 // GET /api/macro
 // ---------------------------------------------------------------------------
 
-export async function GET(_req: NextRequest) {
+async function GET_impl(_req: NextRequest) {
   try {
     const hasFred = !!process.env.FRED_API_KEY;
     const sources: string[] = [];
@@ -272,3 +273,7 @@ export async function GET(_req: NextRequest) {
     );
   }
 }
+
+// Durable, session-keyed rate limiting (CLAUDE.md rule 6). See
+// src/lib/api-rate-limit.ts — the old in-memory limiter was per-lambda.
+export const GET = withRateLimit('macro', RATE.UPSTREAM, GET_impl);

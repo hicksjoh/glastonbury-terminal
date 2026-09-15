@@ -2,9 +2,10 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createServiceClient } from '@/lib/supabase';
 import { captureRouteError } from '@/lib/api-error';
 import { loggerFor } from '@/lib/request-id';
+import { withRateLimit, RATE } from '@/lib/api-rate-limit';
 
 // GET: Fetch full conversation by ID
-export async function GET(
+async function GET_impl(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
@@ -34,7 +35,7 @@ export async function GET(
 }
 
 // PUT: Update conversation (add messages, update title)
-export async function PUT(
+async function PUT_impl(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
@@ -79,7 +80,7 @@ export async function PUT(
 }
 
 // DELETE: Delete a single conversation
-export async function DELETE(
+async function DELETE_impl(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
@@ -106,3 +107,9 @@ export async function DELETE(
     return NextResponse.json({ error: 'Failed to delete conversation', sentry_event_id: eventId }, { status: 500 });
   }
 }
+
+// Durable, session-keyed rate limiting (CLAUDE.md rule 6). See
+// src/lib/api-rate-limit.ts — the old in-memory limiter was per-lambda.
+export const GET = withRateLimit('keisha/conversations/[id]', RATE.EXPENSIVE, GET_impl);
+export const PUT = withRateLimit('keisha/conversations/[id]', RATE.EXPENSIVE, PUT_impl);
+export const DELETE = withRateLimit('keisha/conversations/[id]', RATE.EXPENSIVE, DELETE_impl);

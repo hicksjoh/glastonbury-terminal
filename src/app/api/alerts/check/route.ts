@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { createServiceClient } from '@/lib/supabase';
 import { sendPushNotification, PushSubscriptionData } from '@/lib/web-push';
+import { withRateLimit, RATE } from '@/lib/api-rate-limit';
 
 // Live-data endpoint — never let Next static-optimize this at build time
 export const dynamic = 'force-dynamic';
@@ -110,7 +111,7 @@ function evaluateCondition(condition: AlertCondition, marketData: PriceData): bo
   }
 }
 
-export async function GET() {
+async function GET_impl() {
   try {
     const supabase = createServiceClient();
     const { data: alerts, error } = await supabase
@@ -235,3 +236,7 @@ export async function GET() {
     return NextResponse.json({ triggered: [], checked: 0, error: 'Check failed' });
   }
 }
+
+// Durable, session-keyed rate limiting (CLAUDE.md rule 6). See
+// src/lib/api-rate-limit.ts — the old in-memory limiter was per-lambda.
+export const GET = withRateLimit('alerts/check', RATE.WRITE, GET_impl);

@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createServiceClient } from '@/lib/supabase';
 import { captureRouteError } from '@/lib/api-error';
 import { loggerFor } from '@/lib/request-id';
+import { withRateLimit, RATE } from '@/lib/api-rate-limit';
 
 function meaningfulTitle(value: unknown): string | null {
   if (typeof value !== 'string') return null;
@@ -11,7 +12,7 @@ function meaningfulTitle(value: unknown): string | null {
 }
 
 // GET: List all conversations, optionally filtered by persona
-export async function GET(req: NextRequest) {
+async function GET_impl(req: NextRequest) {
   const { log, request_id } = loggerFor(req, { route: 'keisha/conversations' });
   try {
     const supabase = createServiceClient();
@@ -64,7 +65,7 @@ export async function GET(req: NextRequest) {
 }
 
 // POST: Create a new conversation
-export async function POST(req: NextRequest) {
+async function POST_impl(req: NextRequest) {
   const { log, request_id } = loggerFor(req, { route: 'keisha/conversations' });
   try {
     const supabase = createServiceClient();
@@ -95,7 +96,7 @@ export async function POST(req: NextRequest) {
 }
 
 // DELETE: Delete all conversations for a persona
-export async function DELETE(req: NextRequest) {
+async function DELETE_impl(req: NextRequest) {
   const { log, request_id } = loggerFor(req, { route: 'keisha/conversations' });
   try {
     const supabase = createServiceClient();
@@ -123,3 +124,9 @@ export async function DELETE(req: NextRequest) {
     return NextResponse.json({ error: 'Failed to delete conversations', sentry_event_id: eventId }, { status: 500 });
   }
 }
+
+// Durable, session-keyed rate limiting (CLAUDE.md rule 6). See
+// src/lib/api-rate-limit.ts — the old in-memory limiter was per-lambda.
+export const GET = withRateLimit('keisha/conversations', RATE.EXPENSIVE, GET_impl);
+export const POST = withRateLimit('keisha/conversations', RATE.EXPENSIVE, POST_impl);
+export const DELETE = withRateLimit('keisha/conversations', RATE.EXPENSIVE, DELETE_impl);

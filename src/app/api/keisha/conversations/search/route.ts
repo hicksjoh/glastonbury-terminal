@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createServiceClient } from '@/lib/supabase';
+import { withRateLimit, RATE } from '@/lib/api-rate-limit';
 
-export async function GET(req: NextRequest) {
+async function GET_impl(req: NextRequest) {
   const { searchParams } = new URL(req.url);
   const query = searchParams.get('q')?.trim();
   const persona = searchParams.get('persona');
@@ -67,3 +68,7 @@ function highlightMatch(text: string, query: string): string {
   if (end < text.length) snippet = snippet + '...';
   return snippet;
 }
+
+// Durable, session-keyed rate limiting (CLAUDE.md rule 6). See
+// src/lib/api-rate-limit.ts — the old in-memory limiter was per-lambda.
+export const GET = withRateLimit('keisha/conversations/search', RATE.EXPENSIVE, GET_impl);

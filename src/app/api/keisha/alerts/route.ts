@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { createServiceClient } from '@/lib/supabase';
 import { captureRouteError } from '@/lib/api-error';
 import { loggerFor } from '@/lib/request-id';
+import { withRateLimit, RATE } from '@/lib/api-rate-limit';
 
 interface Alert {
   type: 'opportunity' | 'warning';
@@ -19,7 +20,7 @@ function getBaseUrl(): string {
     : 'http://localhost:3000';
 }
 
-export async function GET(request: Request) {
+async function GET_impl(request: Request) {
   const { log, request_id } = loggerFor(request, { route: 'keisha/alerts' });
   try {
     const baseUrl = getBaseUrl();
@@ -123,3 +124,7 @@ export async function GET(request: Request) {
     return NextResponse.json({ error: 'Failed to compute alerts', alerts: [], count: 0, sentry_event_id: eventId }, { status: 500 });
   }
 }
+
+// Durable, session-keyed rate limiting (CLAUDE.md rule 6). See
+// src/lib/api-rate-limit.ts — the old in-memory limiter was per-lambda.
+export const GET = withRateLimit('keisha/alerts', RATE.EXPENSIVE, GET_impl);

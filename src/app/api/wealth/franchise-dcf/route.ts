@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { runFranchiseDcf, type DcfInputs } from '@/lib/wealth/franchise-dcf';
 import { getCached, setCache } from '@/lib/server-cache';
+import { withRateLimit, RATE } from '@/lib/api-rate-limit';
 
 // F4a — CR3 franchise DCF model.
 //
@@ -21,7 +22,7 @@ function num(value: string | null, fallback: number): number {
   return Number.isFinite(n) ? n : fallback;
 }
 
-export async function GET(req: NextRequest) {
+async function GET_impl(req: NextRequest) {
   const sp = req.nextUrl.searchParams;
   const overrides: Partial<DcfInputs> = {
     territories: num(sp.get('territories'), 23),
@@ -43,3 +44,7 @@ export async function GET(req: NextRequest) {
   setCache(cacheKey, result, CACHE_TTL_MS);
   return NextResponse.json(result);
 }
+
+// Durable, session-keyed rate limiting (CLAUDE.md rule 6). See
+// src/lib/api-rate-limit.ts — the old in-memory limiter was per-lambda.
+export const GET = withRateLimit('wealth/franchise-dcf', RATE.UPSTREAM, GET_impl);

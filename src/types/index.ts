@@ -111,7 +111,10 @@ export interface AlpacaPosition {
   market_value: string;
   cost_basis: string;
   unrealized_pl: string;
+  /** LIFETIME return vs cost basis, as a decimal fraction. Not today's move. */
   unrealized_plpc: string;
+  /** TODAY's move as a decimal fraction. This is what a "Day" column wants. */
+  change_today: string;
   current_price: string;
   side: string;
 }

@@ -1,7 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
+import type { AutopilotCandidate, AutopilotResponse } from '@/lib/autopilot-contract';
+import { normalizeExecutionRow } from '@/lib/autopilot-contract';
 import { createServiceClient } from '@/lib/supabase';
 import { rateLimit } from '@/lib/rate-limit';
-import { ALPACA_BASE_URL, assertOrderSubmissionAllowed } from '@/lib/alpaca';
+import { ALPACA_BASE_URL } from '@/lib/alpaca';
+import { assertLiveOrderAllowed, formatLiveOrderRejection, resolveNotionalUsd } from '@/lib/live-order-safety';
 import { getServerTradingMode, LiveOrderRejectedError } from '@/lib/trading-mode';
 import * as Sentry from '@sentry/nextjs';
 
@@ -15,26 +18,9 @@ const ALPACA_HEADERS = {
 };
 
 // In-memory store for latest pipeline run
-let lastPipelineRun: PipelineResult | null = null;
+let lastPipelineRun: AutopilotResponse | null = null;
 
-interface PipelineCandidate {
-  symbol: string;
-  signalScore: number;
-  crewConsensus: string;
-  guardResult: { passed: boolean; violations: string[] };
-  kellySize: number | null;
-  status: 'approved' | 'rejected' | 'guard_blocked';
-  reason?: string;
-}
-
-interface PipelineResult {
-  pipelineId: string;
-  stage: string;
-  candidates: PipelineCandidate[];
-  executed: PipelineCandidate[];
-  rejected: PipelineCandidate[];
-  timestamp: string;
-}
+type PipelineCandidate = AutopilotCandidate;
 
 function generatePipelineId(): string {
   return `ap-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
@@ -51,7 +37,6 @@ async function handleScan(): Promise<NextResponse> {
   const pipelineId = generatePipelineId();
   const baseUrl = getBaseUrl();
   const candidates: PipelineCandidate[] = [];
-  const executed: PipelineCandidate[] = [];
   const rejected: PipelineCandidate[] = [];
 
   try {
@@ -73,7 +58,7 @@ async function handleScan(): Promise<NextResponse> {
     const topSignals = strongSignals.slice(0, 5);
 
     if (topSignals.length === 0) {
-      const result: PipelineResult = {
+      const result: AutopilotResponse = {
         pipelineId,
         stage: 'scan_complete',
         candidates: [],
@@ -188,7 +173,6 @@ async function handleScan(): Promise<NextResponse> {
           status: 'approved',
         };
         candidates.push(candidate);
-        executed.push(candidate);
       } catch (err) {
         rejected.push({
           symbol,
@@ -202,11 +186,13 @@ async function handleScan(): Promise<NextResponse> {
       }
     }
 
-    const result: PipelineResult = {
+    const result: AutopilotResponse = {
       pipelineId,
       stage: 'scan_complete',
       candidates,
-      executed,
+      // A scan places no orders. Approved candidates live in `candidates`
+      // with status 'approved'; `executed` is broker fills only.
+      executed: [],
       rejected,
       timestamp: new Date().toISOString(),
     };
@@ -220,7 +206,7 @@ async function handleScan(): Promise<NextResponse> {
         stage: 'error',
         error: (err as Error).message,
         candidates,
-        executed,
+        executed: [],
         rejected,
         timestamp: new Date().toISOString(),
       },
@@ -230,17 +216,19 @@ async function handleScan(): Promise<NextResponse> {
 }
 
 // ── Execute: Submit Paper Trade ────────────────────────────────────────────
-async function handleExecute(body: {
+async function handleExecute(req: NextRequest, body: {
   symbol: string;
   shares: number;
   side: string;
+  /** Typed notional confirmation, required in live mode above the threshold. */
+  typedConfirm?: string;
 }): Promise<NextResponse> {
   // CRITICAL SAFETY CHECK: Autopilot in live mode requires an EXPLICIT
   // opt-in (AUTOPILOT_ALLOW_LIVE=true). This is a second env flag on top
-  // of TRADING_MODE=live so the cron never fires real money on the
-  // strength of a single flipped variable. Cron ≠ interactive session,
-  // so the standard live-ack + typed-confirm layer doesn't apply here —
-  // this env is the sole gate.
+  // of TRADING_MODE=live so a single flipped variable can never fire real
+  // money. It is a PRECONDITION, not a substitute for the per-request gates —
+  // this handler is reachable by any authenticated caller, not only a cron,
+  // so assertLiveOrderAllowed() runs below as well.
   const mode = getServerTradingMode();
   if (mode === 'live') {
     const allowLive = ['true', '1', 'yes'].includes(
@@ -268,16 +256,43 @@ async function handleExecute(body: {
     );
   }
 
-  // Mode/URL alignment — refuses to fire if ALPACA_BASE_URL and
-  // TRADING_MODE disagree. Runs in both paper and live modes.
+  // Full live-order safety layer — the same four gates every other order path
+  // enforces, not just mode/URL alignment.
+  //
+  // This used to call `assertOrderSubmissionAllowed()` alone, so autopilot
+  // satisfied gate (a) and the AUTOPILOT_ALLOW_LIVE env flag, but never gate
+  // (b) the session-bound x-live-ack token or gate (c) typed notional
+  // confirmation. A deploy-wide env flag is not a per-request authorisation:
+  // with TRADING_MODE=live and AUTOPILOT_ALLOW_LIVE=true, an authenticated
+  // POST of {"action":"execute","shares":100000} became an unbounded live
+  // market order. /api/alpaca/orders, /api/options/order, the multi-leg route
+  // and Keisha's place_order all go through assertLiveOrderAllowed; this is
+  // now the fifth.
+  //
+  // resolveNotionalUsd fetches a live quote for market orders, so a market
+  // order cannot slip the typed-confirm threshold by having no limit price.
+  //
+  // Only resolved in live mode: resolveNotionalUsd fetches a quote, and
+  // assertLiveOrderAllowed ignores the notional entirely off-live, so doing it
+  // unconditionally would spend an Alpaca call and its latency on every paper
+  // trade for a number nothing reads.
+  const notionalUsd = mode === 'live'
+    ? await resolveNotionalUsd({ symbol: String(symbol), qty: Number(shares) })
+    : 0;
   try {
-    assertOrderSubmissionAllowed();
+    await assertLiveOrderAllowed({
+      request: req,
+      typedConfirm: typeof body.typedConfirm === 'string' ? body.typedConfirm : undefined,
+      notionalUsd,
+      auditContext: { route: 'autopilot/execute', symbol: String(symbol), side: String(side), qty: Number(shares) },
+    });
   } catch (lockErr) {
-    const msg = lockErr instanceof Error ? lockErr.message : 'trading-mode guard engaged';
-    console.error('Autopilot order blocked by trading-mode guard:', msg);
     if (lockErr instanceof LiveOrderRejectedError) {
-      return NextResponse.json({ error: lockErr.message, code: lockErr.code }, { status: lockErr.status() });
+      const [rejBody, rejInit] = formatLiveOrderRejection(lockErr);
+      return NextResponse.json(rejBody, rejInit);
     }
+    const msg = lockErr instanceof Error ? lockErr.message : 'trading-mode guard engaged';
+    console.error('Autopilot order blocked by safety layer:', msg);
     return NextResponse.json({ error: `Order blocked by safety layer: ${msg}` }, { status: 500 });
   }
 
@@ -334,13 +349,17 @@ async function handleExecute(body: {
       pipelineId: lastPipelineRun?.pipelineId || null,
       stage: 'executed',
       candidates: [],
-      executed: [{
+      executed: [normalizeExecutionRow({
+        id: orderData.id,
         symbol: symbol.toUpperCase(),
         shares,
         side,
-        orderId: orderData.id,
-        orderStatus: orderData.status,
-      }],
+        order_id: orderData.id,
+        status: orderData.status,
+        filled_avg_price: orderData.filled_avg_price,
+        pipeline_id: lastPipelineRun?.pipelineId ?? null,
+        created_at: new Date().toISOString(),
+      })],
       rejected: [],
       timestamp: new Date().toISOString(),
     });
@@ -373,7 +392,7 @@ async function handleStatus(): Promise<NextResponse> {
       pipelineId: data?.[0]?.pipeline_id || null,
       stage: 'last_known',
       candidates: [],
-      executed: data || [],
+      executed: (data || []).map(normalizeExecutionRow),
       rejected: [],
       timestamp: data?.[0]?.created_at || new Date().toISOString(),
     });
@@ -405,7 +424,7 @@ async function handleHistory(): Promise<NextResponse> {
       pipelineId: null,
       stage: 'history',
       candidates: [],
-      executed: data || [],
+      executed: (data || []).map(normalizeExecutionRow),
       rejected: [],
       timestamp: new Date().toISOString(),
     });
@@ -431,7 +450,7 @@ export async function POST(req: NextRequest) {
       case 'scan':
         return handleScan();
       case 'execute':
-        return handleExecute(body);
+        return handleExecute(req, body);
       case 'status':
         return handleStatus();
       case 'history':

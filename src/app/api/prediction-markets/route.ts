@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { fetchLatestSnapshots, takePredictionSnapshot } from '@/lib/prediction-markets';
 import { getCached, setCache } from '@/lib/server-cache';
+import { withRateLimit, RATE } from '@/lib/api-rate-limit';
 
 // F8 — Polymarket + Kalshi event-odds overlay.
 //
@@ -15,7 +16,7 @@ import { getCached, setCache } from '@/lib/server-cache';
 
 const CACHE_TTL_MS = 5 * 60 * 1000;
 
-export async function GET(req: NextRequest) {
+async function GET_impl(req: NextRequest) {
   const refresh = req.nextUrl.searchParams.get('refresh') === 'true';
   const cacheKey = 'prediction-markets:latest';
 
@@ -84,3 +85,7 @@ export async function GET(req: NextRequest) {
     }, { status: 500 });
   }
 }
+
+// Durable, session-keyed rate limiting (CLAUDE.md rule 6). See
+// src/lib/api-rate-limit.ts — the old in-memory limiter was per-lambda.
+export const GET = withRateLimit('prediction-markets', RATE.UPSTREAM, GET_impl);

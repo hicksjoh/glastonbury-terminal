@@ -1,8 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { runAllStressTests, STRESS_SCENARIOS } from '@/lib/stress-test-engine';
 import { buildMeta } from '@/lib/api-meta';
+import { withRateLimit, RATE } from '@/lib/api-rate-limit';
 
-export async function GET(req: NextRequest) {
+async function GET_impl(req: NextRequest) {
   try {
     const scenario = req.nextUrl.searchParams.get('scenario');
 
@@ -83,3 +84,7 @@ export async function GET(req: NextRequest) {
     }, { status: 500 });
   }
 }
+
+// Durable, session-keyed rate limiting (CLAUDE.md rule 6). See
+// src/lib/api-rate-limit.ts — the old in-memory limiter was per-lambda.
+export const GET = withRateLimit('stress', RATE.EXPENSIVE, GET_impl);

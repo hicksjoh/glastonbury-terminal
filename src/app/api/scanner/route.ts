@@ -13,6 +13,7 @@ import {
   type InsiderTradingRow,
 } from '@/lib/fmp-client';
 import { buildMeta, type ApiMeta } from '@/lib/api-meta';
+import { withRateLimit, RATE } from '@/lib/api-rate-limit';
 
 interface SignalResult {
   symbol: string;
@@ -53,7 +54,7 @@ async function fetchInsiderFeed(): Promise<FmpResult<InsiderTradingRow>> {
   return { rows, meta: fmpMeta(rows) };
 }
 
-export async function GET(req: NextRequest) {
+async function GET_impl(req: NextRequest) {
   try {
     const preset = req.nextUrl.searchParams.get('preset') || 'confluence';
     let signals: SignalResult[] = [];
@@ -315,3 +316,7 @@ async function getMarketRegime(): Promise<{ regime: string; regimeMeta: ApiMeta 
     };
   }
 }
+
+// Durable, session-keyed rate limiting (CLAUDE.md rule 6). See
+// src/lib/api-rate-limit.ts — the old in-memory limiter was per-lambda.
+export const GET = withRateLimit('scanner', RATE.UPSTREAM, GET_impl);

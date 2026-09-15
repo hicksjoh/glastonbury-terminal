@@ -1,11 +1,12 @@
 import { NextResponse } from 'next/server';
 import { captureRouteError } from '@/lib/api-error';
 import { loggerFor } from '@/lib/request-id';
+import { withRateLimit, RATE } from '@/lib/api-rate-limit';
 
 const FMP_BASE = 'https://financialmodelingprep.com/stable';
 const FMP_KEY = process.env.FMP_API_KEY || '';
 
-export async function GET(request: Request) {
+async function GET_impl(request: Request) {
   const { log, request_id } = loggerFor(request, { route: 'economic-calendar' });
   try {
     if (!FMP_KEY) return NextResponse.json({ events: [] });
@@ -55,3 +56,7 @@ export async function GET(request: Request) {
     return NextResponse.json({ events: [], sentry_event_id: eventId });
   }
 }
+
+// Durable, session-keyed rate limiting (CLAUDE.md rule 6). See
+// src/lib/api-rate-limit.ts — the old in-memory limiter was per-lambda.
+export const GET = withRateLimit('economic-calendar', RATE.UPSTREAM, GET_impl);

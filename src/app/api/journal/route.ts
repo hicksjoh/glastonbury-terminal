@@ -2,8 +2,9 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createServiceClient } from '@/lib/supabase';
 import { captureRouteError } from '@/lib/api-error';
 import { loggerFor } from '@/lib/request-id';
+import { withRateLimit, RATE } from '@/lib/api-rate-limit';
 
-export async function GET(req: NextRequest) {
+async function GET_impl(req: NextRequest) {
   const { log, request_id } = loggerFor(req, { route: 'journal' });
   try {
     const supabase = createServiceClient();
@@ -44,7 +45,7 @@ export async function GET(req: NextRequest) {
   }
 }
 
-export async function POST(req: NextRequest) {
+async function POST_impl(req: NextRequest) {
   const { log, request_id } = loggerFor(req, { route: 'journal' });
   try {
     const supabase = createServiceClient();
@@ -86,3 +87,8 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ success: false, error: 'Failed to create journal entry' }, { status: 500 });
   }
 }
+
+// Durable, session-keyed rate limiting (CLAUDE.md rule 6). See
+// src/lib/api-rate-limit.ts — the old in-memory limiter was per-lambda.
+export const GET = withRateLimit('journal', RATE.WRITE, GET_impl);
+export const POST = withRateLimit('journal', RATE.WRITE, POST_impl);

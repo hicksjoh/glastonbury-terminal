@@ -5,8 +5,9 @@ import {
   getHistoricalEarnings,
 } from '@/lib/fmp-client';
 import { buildMeta } from '@/lib/api-meta';
+import { withRateLimit, RATE } from '@/lib/api-rate-limit';
 
-export async function GET(req: NextRequest) {
+async function GET_impl(req: NextRequest) {
   try {
     const range = req.nextUrl.searchParams.get('range') || 'this_week';
     const detailSymbol = req.nextUrl.searchParams.get('symbol');
@@ -142,3 +143,7 @@ function generatePlayRec(beatRate: number, avgMove: number, avgSurprise: number)
   }
   return `Neutral setup — ${beatRate}% beat rate, avg move ±${avgMove.toFixed(1)}%. Consider selling premium if IV is elevated.`;
 }
+
+// Durable, session-keyed rate limiting (CLAUDE.md rule 6). See
+// src/lib/api-rate-limit.ts — the old in-memory limiter was per-lambda.
+export const GET = withRateLimit('earnings', RATE.UPSTREAM, GET_impl);

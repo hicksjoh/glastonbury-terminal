@@ -1,10 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { captureRouteError } from '@/lib/api-error';
 import { loggerFor } from '@/lib/request-id';
+import { withRateLimit, RATE } from '@/lib/api-rate-limit';
 
 const ALPACA_BASE = process.env.ALPACA_BASE_URL || 'https://paper-api.alpaca.markets';
 
-export async function GET(req: NextRequest) {
+async function GET_impl(req: NextRequest) {
   const { log, request_id } = loggerFor(req, { route: 'portfolio-history' });
   try {
     const period = req.nextUrl.searchParams.get('period') || '1M';
@@ -59,3 +60,7 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ history: [], sentry_event_id: eventId });
   }
 }
+
+// Durable, session-keyed rate limiting (CLAUDE.md rule 6). See
+// src/lib/api-rate-limit.ts — the old in-memory limiter was per-lambda.
+export const GET = withRateLimit('portfolio-history', RATE.UPSTREAM, GET_impl);

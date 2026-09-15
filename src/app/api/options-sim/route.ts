@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { bsPrice, bsDelta, bsTheta, bsGamma, normalCDF } from '@/lib/black-scholes';
+import { withRateLimit, RATE } from '@/lib/api-rate-limit';
 
 const RISK_FREE_RATE = 0.05;
 
@@ -14,7 +15,7 @@ interface SimLeg {
   iv?: number;
 }
 
-export async function POST(req: NextRequest) {
+async function POST_impl(req: NextRequest) {
   try {
     const body = await req.json();
     const {
@@ -190,3 +191,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: msg }, { status: 500 });
   }
 }
+
+// Durable, session-keyed rate limiting (CLAUDE.md rule 6). See
+// src/lib/api-rate-limit.ts — the old in-memory limiter was per-lambda.
+export const POST = withRateLimit('options-sim', RATE.EXPENSIVE, POST_impl);

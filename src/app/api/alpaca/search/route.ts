@@ -1,8 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { searchAssets, getSnapshot } from '@/lib/alpaca';
 import { sanitizeSymbol } from '@/lib/sanitize';
+import { withRateLimit, RATE } from '@/lib/api-rate-limit';
 
-export async function GET(req: NextRequest) {
+async function GET_impl(req: NextRequest) {
   try {
     const rawQuery = req.nextUrl.searchParams.get('q');
     const query = rawQuery ? sanitizeSymbol(rawQuery) : null;
@@ -33,3 +34,7 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: msg, results: [] }, { status: 500 });
   }
 }
+
+// Durable, session-keyed rate limiting (CLAUDE.md rule 6). See
+// src/lib/api-rate-limit.ts — the old in-memory limiter was per-lambda.
+export const GET = withRateLimit('alpaca/search', RATE.UPSTREAM, GET_impl);

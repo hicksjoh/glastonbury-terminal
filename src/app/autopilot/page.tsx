@@ -3,21 +3,16 @@
 import { useState, useEffect, useCallback } from 'react';
 import { AppShell } from '@/components/layout/AppShell';
 import { ErrorBoundary } from '@/components/ErrorBoundary';
-import { Bot, Play, AlertTriangle, ChevronDown, ChevronUp, Loader2, Activity, Shield, TrendingUp, BarChart3 } from 'lucide-react';
+import { Bot, Play, AlertTriangle, Loader2, Activity, Shield, TrendingUp, BarChart3 } from 'lucide-react';
+import type { AutopilotCandidate, AutopilotExecution } from '@/lib/autopilot-contract';
+import { APP_TIME_ZONE } from '@/lib/et-clock';
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
-interface Candidate {
-  symbol: string;
-  score: number;
-  crewVerdict: 'BUY' | 'HOLD' | 'REJECT';
-  crewConfidence: number;
-  guardPass: boolean;
-  guardReason?: string;
-  kellySize: number;
-  kellyShares: number;
-  kellyDollars: number;
-}
+// Shapes come from the route via a shared module now — see
+// src/lib/autopilot-contract.ts for why these were redeclared (and wrong).
+type Candidate = AutopilotCandidate;
+type ExecutionRecord = AutopilotExecution;
 
 interface PipelineCounts {
   scanned: number;
@@ -28,19 +23,6 @@ interface PipelineCounts {
   executed: number;
 }
 
-interface ExecutionRecord {
-  id: string;
-  date: string;
-  symbol: string;
-  action: 'BUY' | 'SELL';
-  shares: number;
-  price: number;
-  score: number;
-  crewVerdict: string;
-  outcome?: 'WIN' | 'LOSS' | 'OPEN';
-  pnl?: number;
-  decisionChain?: string[];
-}
 
 interface PerformanceSummary {
   wins: number;
@@ -78,13 +60,14 @@ function getVerdictStyle(verdict: string): { bg: string; color: string } {
   }
 }
 
-function getOutcomeStyle(outcome?: string): { bg: string; color: string } {
-  switch (outcome) {
-    case 'WIN': return { bg: 'rgba(74,222,128,0.15)', color: COLORS.green };
-    case 'LOSS': return { bg: 'rgba(248,113,113,0.15)', color: COLORS.red };
-    case 'OPEN': return { bg: 'rgba(34,211,238,0.15)', color: COLORS.cyan };
-    default: return { bg: 'rgba(255,255,255,0.05)', color: COLORS.textSecondary };
-  }
+/** Execution timestamps are ISO UTC; the terminal reads in ET everywhere. */
+function formatExecutedAt(iso: string): string {
+  const d = new Date(iso);
+  if (!Number.isFinite(d.getTime())) return '—';
+  return d.toLocaleString('en-US', {
+    timeZone: APP_TIME_ZONE,
+    month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit',
+  });
 }
 
 // ── Component ──────────────────────────────────────────────────────────────────
@@ -99,7 +82,6 @@ export default function AutoPilotPage() {
   const [pipelineCounts, setPipelineCounts] = useState<PipelineCounts | null>(null);
   const [executions, setExecutions] = useState<ExecutionRecord[]>([]);
   const [performance, setPerformance] = useState<PerformanceSummary | null>(null);
-  const [expandedRow, setExpandedRow] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [executing, setExecuting] = useState<string | null>(null);
 
@@ -135,7 +117,7 @@ export default function AutoPilotPage() {
       });
       if (res.ok) {
         const data = await res.json();
-        if (data.executions) setExecutions(data.executions);
+        if (data.executed) setExecutions(data.executed);
         if (data.performance) setPerformance(data.performance);
         if (data.candidates) setCandidates(data.candidates);
         if (data.pipelineCounts) setPipelineCounts(data.pipelineCounts);
@@ -176,7 +158,7 @@ export default function AutoPilotPage() {
         const data = await res.json();
         if (data.candidates) setCandidates(data.candidates);
         if (data.pipelineCounts) setPipelineCounts(data.pipelineCounts);
-        if (data.executions) setExecutions(data.executions);
+        if (data.executed) setExecutions(data.executed);
         if (data.performance) setPerformance(data.performance);
       }
     } catch {
@@ -198,7 +180,7 @@ export default function AutoPilotPage() {
       });
       if (res.ok) {
         const data = await res.json();
-        if (data.executions) setExecutions(data.executions);
+        if (data.executed) setExecutions(data.executed);
         if (data.performance) setPerformance(data.performance);
       }
     } catch {
@@ -442,37 +424,43 @@ export default function AutoPilotPage() {
                 </thead>
                 <tbody>
                   {candidates.map((c) => {
-                    const approved = c.crewVerdict === 'BUY' && c.guardPass;
-                    const vs = getVerdictStyle(c.crewVerdict);
+                    const approved = c.status === 'approved';
+                    const vs = getVerdictStyle(c.crewConsensus);
                     return (
                       <tr key={c.symbol} style={{
-                        background: approved ? 'rgba(74,222,128,0.04)' : c.crewVerdict === 'REJECT' ? 'rgba(248,113,113,0.04)' : 'transparent',
+                        background: approved ? 'rgba(74,222,128,0.04)' : c.status === 'rejected' ? 'rgba(248,113,113,0.04)' : 'transparent',
                       }}>
                         <td style={{ padding: '12px 14px', fontWeight: 700, color: COLORS.textPrimary, fontSize: 14 }}>
                           {c.symbol}
                         </td>
-                        <td style={{ padding: '12px 14px', fontFamily: 'JetBrains Mono, monospace', fontWeight: 700, color: c.score >= 70 ? COLORS.green : c.score >= 50 ? COLORS.gold : COLORS.red, fontSize: 14 }}>
-                          {c.score}
+                        <td style={{ padding: '12px 14px', fontFamily: 'JetBrains Mono, monospace', fontWeight: 700, color: c.signalScore >= 70 ? COLORS.green : c.signalScore >= 50 ? COLORS.gold : COLORS.red, fontSize: 14 }}>
+                          {c.signalScore}
                         </td>
                         <td style={{ padding: '12px 14px' }}>
                           <span style={{
                             display: 'inline-block', padding: '3px 10px', borderRadius: 6, fontSize: 11, fontWeight: 700,
                             background: vs.bg, color: vs.color,
                           }}>
-                            {c.crewVerdict} ({Math.round(c.crewConfidence * 100)}%)
+                            {c.crewConsensus}
                           </span>
                         </td>
                         <td style={{ padding: '12px 14px' }}>
                           <span style={{
                             display: 'inline-block', padding: '3px 10px', borderRadius: 6, fontSize: 11, fontWeight: 700,
-                            background: c.guardPass ? 'rgba(74,222,128,0.15)' : 'rgba(248,113,113,0.15)',
-                            color: c.guardPass ? COLORS.green : COLORS.red,
+                            background: c.guardResult?.passed ? 'rgba(74,222,128,0.15)' : 'rgba(248,113,113,0.15)',
+                            color: c.guardResult?.passed ? COLORS.green : COLORS.red,
                           }}>
-                            {c.guardPass ? 'PASS' : 'FAIL'}
+                            {c.guardResult?.passed ? 'PASS' : 'FAIL'}
                           </span>
                         </td>
                         <td style={{ padding: '12px 14px', fontFamily: 'JetBrains Mono, monospace', fontSize: 13, color: COLORS.textPrimary }}>
-                          {c.kellyShares} shr (${c.kellyDollars.toLocaleString()})
+                          {/* kellySize is dollars at risk and is null whenever
+                              the sizer failed closed. The old code rendered
+                              `c.kellyDollars.toLocaleString()` on a field the
+                              API never sent, which threw on the first row. */}
+                          {c.kellySize != null
+                            ? `$${Math.round(c.kellySize).toLocaleString()}`
+                            : '—'}
                         </td>
                         <td style={{ padding: '12px 14px' }}>
                           {approved && (
@@ -524,7 +512,11 @@ export default function AutoPilotPage() {
               <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                 <thead>
                   <tr>
-                    {['Date', 'Symbol', 'Action', 'Shares', 'Price', 'Score', 'Crew', 'Outcome', ''].map(h => (
+                    {/* Score / Crew / Outcome / P&L used to be columns here, but
+                        `autopilot_executions` stores none of them — they could only
+                        ever render blank. Showing what the broker actually
+                        returned instead. */}
+                    {['Executed', 'Symbol', 'Side', 'Shares', 'Fill', 'Order status'].map(h => (
                       <th key={h} style={{
                         textAlign: 'left', padding: '10px 14px', fontSize: 11, fontWeight: 600,
                         color: COLORS.textSecondary, textTransform: 'uppercase', letterSpacing: 1,
@@ -536,79 +528,35 @@ export default function AutoPilotPage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {executions.map((ex) => {
-                    const os = getOutcomeStyle(ex.outcome);
-                    const isExpanded = expandedRow === ex.id;
-                    return (
-                      <>
-                        <tr key={ex.id} style={{ cursor: 'pointer' }} onClick={() => setExpandedRow(isExpanded ? null : ex.id)}>
-                          <td style={{ padding: '12px 14px', fontSize: 13, color: COLORS.textSecondary, fontFamily: 'JetBrains Mono, monospace' }}>
-                            {ex.date}
-                          </td>
-                          <td style={{ padding: '12px 14px', fontWeight: 700, color: COLORS.textPrimary, fontSize: 14 }}>
-                            {ex.symbol}
-                          </td>
-                          <td style={{ padding: '12px 14px' }}>
-                            <span style={{
-                              display: 'inline-block', padding: '3px 10px', borderRadius: 6, fontSize: 11, fontWeight: 700,
-                              background: ex.action === 'BUY' ? 'rgba(74,222,128,0.15)' : 'rgba(248,113,113,0.15)',
-                              color: ex.action === 'BUY' ? COLORS.green : COLORS.red,
-                            }}>
-                              {ex.action}
-                            </span>
-                          </td>
-                          <td style={{ padding: '12px 14px', fontFamily: 'JetBrains Mono, monospace', fontSize: 13, color: COLORS.textPrimary }}>
-                            {ex.shares}
-                          </td>
-                          <td style={{ padding: '12px 14px', fontFamily: 'JetBrains Mono, monospace', fontSize: 13, color: COLORS.textPrimary }}>
-                            ${ex.price.toFixed(2)}
-                          </td>
-                          <td style={{ padding: '12px 14px', fontFamily: 'JetBrains Mono, monospace', fontSize: 13, fontWeight: 700, color: ex.score >= 70 ? COLORS.green : ex.score >= 50 ? COLORS.gold : COLORS.red }}>
-                            {ex.score}
-                          </td>
-                          <td style={{ padding: '12px 14px', fontSize: 12, color: COLORS.textSecondary }}>
-                            {ex.crewVerdict}
-                          </td>
-                          <td style={{ padding: '12px 14px' }}>
-                            {ex.outcome && (
-                              <span style={{
-                                display: 'inline-flex', alignItems: 'center', gap: 4,
-                                padding: '3px 10px', borderRadius: 6, fontSize: 11, fontWeight: 700,
-                                background: os.bg, color: os.color,
-                              }}>
-                                {ex.outcome}
-                                {ex.pnl !== undefined && (
-                                  <span style={{ fontFamily: 'JetBrains Mono, monospace' }}>
-                                    {ex.pnl >= 0 ? '+' : ''}{ex.pnl.toFixed(2)}
-                                  </span>
-                                )}
-                              </span>
-                            )}
-                          </td>
-                          <td style={{ padding: '12px 14px' }}>
-                            {isExpanded ? <ChevronUp size={14} color={COLORS.textSecondary} /> : <ChevronDown size={14} color={COLORS.textSecondary} />}
-                          </td>
-                        </tr>
-                        {isExpanded && ex.decisionChain && (
-                          <tr key={`${ex.id}-detail`}>
-                            <td colSpan={9} style={{ padding: '0 14px 16px', background: 'rgba(255,255,255,0.02)' }}>
-                              <div style={{ padding: '12px 16px', borderRadius: 8, background: COLORS.bg, border: `1px solid ${COLORS.border}` }}>
-                                <p style={{ fontSize: 11, fontWeight: 600, color: COLORS.textSecondary, margin: '0 0 8px', textTransform: 'uppercase', letterSpacing: 1 }}>
-                                  Decision Chain
-                                </p>
-                                {ex.decisionChain.map((step, si) => (
-                                  <div key={si} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '4px 0' }}>
-                                    <div style={{ width: 6, height: 6, borderRadius: 3, background: COLORS.purple, flexShrink: 0 }} />
-                                    <span style={{ fontSize: 12, color: COLORS.textPrimary }}>{step}</span>
-                                  </div>
-                                ))}
-                              </div>
-                            </td>
-                          </tr>
-                        )}
-                      </>
-                    );
-                  })}
+                  {executions.map((ex) => (
+                    <tr key={ex.id}>
+                      <td style={{ padding: '12px 14px', fontSize: 13, color: COLORS.textSecondary, fontFamily: 'JetBrains Mono, monospace' }}>
+                        {formatExecutedAt(ex.executedAt)}
+                      </td>
+                      <td style={{ padding: '12px 14px', fontWeight: 700, color: COLORS.textPrimary, fontSize: 14 }}>
+                        {ex.symbol}
+                      </td>
+                      <td style={{ padding: '12px 14px' }}>
+                        <span style={{
+                          display: 'inline-block', padding: '3px 10px', borderRadius: 6, fontSize: 11, fontWeight: 700,
+                          background: ex.side === 'buy' ? 'rgba(74,222,128,0.15)' : 'rgba(248,113,113,0.15)',
+                          color: ex.side === 'buy' ? COLORS.green : COLORS.red,
+                        }}>
+                          {ex.side.toUpperCase()}
+                        </span>
+                      </td>
+                      <td style={{ padding: '12px 14px', fontFamily: 'JetBrains Mono, monospace', fontSize: 13, color: COLORS.textPrimary }}>
+                        {ex.shares}
+                      </td>
+                      <td style={{ padding: '12px 14px', fontFamily: 'JetBrains Mono, monospace', fontSize: 13, color: COLORS.textPrimary }}>
+                        {/* null until the order fills — never format it blind. */}
+                        {ex.price != null ? `$${ex.price.toFixed(2)}` : '—'}
+                      </td>
+                      <td style={{ padding: '12px 14px', fontSize: 12, color: COLORS.textSecondary }}>
+                        {ex.orderStatus ?? '—'}
+                      </td>
+                    </tr>
+                  ))}
                 </tbody>
               </table>
             </div>

@@ -2,10 +2,11 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getCached, setCache, TTL } from '@/lib/server-cache';
 import { buildMeta } from '@/lib/api-meta';
 import { signImageUrl } from '@/lib/img-proxy';
+import { withRateLimit, RATE } from '@/lib/api-rate-limit';
 
 const ALPACA_DATA_URL = 'https://data.alpaca.markets';
 
-export async function GET(req: NextRequest) {
+async function GET_impl(req: NextRequest) {
   try {
     const limit = req.nextUrl.searchParams.get('limit') || '20';
     const symbols = req.nextUrl.searchParams.get('symbols') || '';
@@ -63,3 +64,7 @@ export async function GET(req: NextRequest) {
     });
   }
 }
+
+// Durable, session-keyed rate limiting (CLAUDE.md rule 6). See
+// src/lib/api-rate-limit.ts — the old in-memory limiter was per-lambda.
+export const GET = withRateLimit('news', RATE.UPSTREAM, GET_impl);

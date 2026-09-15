@@ -1,8 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getRecentFilings, get13FHoldings, get13DFilings, get8KEvents, searchFilings } from '@/lib/edgar-client';
 import { buildMeta } from '@/lib/api-meta';
+import { withRateLimit, RATE } from '@/lib/api-rate-limit';
 
-export async function GET(req: NextRequest) {
+async function GET_impl(req: NextRequest) {
   try {
     const symbol = req.nextUrl.searchParams.get('symbol');
     const type = req.nextUrl.searchParams.get('type') || 'all';
@@ -51,3 +52,7 @@ export async function GET(req: NextRequest) {
     }, { status: 500 });
   }
 }
+
+// Durable, session-keyed rate limiting (CLAUDE.md rule 6). See
+// src/lib/api-rate-limit.ts — the old in-memory limiter was per-lambda.
+export const GET = withRateLimit('edgar', RATE.UPSTREAM, GET_impl);

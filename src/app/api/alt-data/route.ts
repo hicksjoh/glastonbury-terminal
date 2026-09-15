@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { fetchTradeIndicators } from '@/lib/alt-data/fred-trade';
 import { getCached, setCache } from '@/lib/server-cache';
+import { withRateLimit, RATE } from '@/lib/api-rate-limit';
 
 // Live-data endpoint — never let Next static-optimize this at build time
 export const dynamic = 'force-dynamic';
@@ -16,7 +17,7 @@ export const dynamic = 'force-dynamic';
 
 const CACHE_TTL_MS = 60 * 60 * 1000;
 
-export async function GET() {
+async function GET_impl() {
   const cacheKey = 'alt-data:trade-indicators';
   const cached = getCached<unknown>(cacheKey);
   if (cached) return NextResponse.json(cached);
@@ -51,3 +52,7 @@ export async function GET() {
     }, { status: 500 });
   }
 }
+
+// Durable, session-keyed rate limiting (CLAUDE.md rule 6). See
+// src/lib/api-rate-limit.ts — the old in-memory limiter was per-lambda.
+export const GET = withRateLimit('alt-data', RATE.UPSTREAM, GET_impl);

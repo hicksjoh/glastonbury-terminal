@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getSupabase } from '@/lib/supabase';
+import { withRateLimit, RATE } from '@/lib/api-rate-limit';
 
 interface WatchlistRow {
   symbol: string;
@@ -11,7 +12,7 @@ interface WatchlistRow {
 const FMP_BASE = 'https://financialmodelingprep.com/stable';
 const FMP_KEY = process.env.FMP_API_KEY || '';
 
-export async function GET(req: NextRequest) {
+async function GET_impl(req: NextRequest) {
   try {
     const symbols = req.nextUrl.searchParams.get('symbols') || '';
     if (!symbols || !FMP_KEY) {
@@ -77,7 +78,7 @@ export async function GET(req: NextRequest) {
   }
 }
 
-export async function PATCH(req: NextRequest) {
+async function PATCH_impl(req: NextRequest) {
   try {
     const body = await req.json();
     const { symbol, notes, buyTarget, sellTarget } = body;
@@ -119,3 +120,8 @@ export async function PATCH(req: NextRequest) {
     return NextResponse.json({ error: 'Failed to update' }, { status: 500 });
   }
 }
+
+// Durable, session-keyed rate limiting (CLAUDE.md rule 6). See
+// src/lib/api-rate-limit.ts — the old in-memory limiter was per-lambda.
+export const GET = withRateLimit('watchlist', RATE.UPSTREAM, GET_impl);
+export const PATCH = withRateLimit('watchlist', RATE.UPSTREAM, PATCH_impl);

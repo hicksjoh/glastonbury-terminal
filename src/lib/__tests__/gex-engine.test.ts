@@ -131,9 +131,14 @@ describe('findGEXLevels', () => {
       .toBe('negative');
   });
 
-  it('treats exactly zero net GEX as negative (documented tie-break)', () => {
+  it("reports exactly zero net GEX as 'none', not negative", () => {
+    // Zero net gamma means the chain carried no gamma to measure — a weekend,
+    // an empty feed, or perfectly offsetting books. It is NOT a bearish dealer
+    // regime. Production served netGEX 0 with all 100 strikes at 0 and still
+    // narrated "Moderate negative gamma: dealer hedging adds fuel to
+    // directional moves" with _meta.live true.
     const flat = [item({ strike: 100, callOI: 1000, callGamma: 0.05, putOI: 1000, putGamma: 0.05 })];
-    expect(calculateGEX(flat, 100).levels.regime).toBe('negative');
+    expect(calculateGEX(flat, 100).levels.regime).toBe('none');
   });
 
   it('reports zeroed levels for an empty book without crashing', () => {

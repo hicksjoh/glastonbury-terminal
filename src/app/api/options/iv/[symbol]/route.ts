@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { validateEquitySymbol } from '@/lib/sanitize';
 import type { IVData } from '@/lib/options/types';
+import { withRateLimit, RATE } from '@/lib/api-rate-limit';
 
 // Live implied-vol data — never serve a build-time snapshot.
 export const dynamic = 'force-dynamic';
@@ -14,7 +15,7 @@ const alpacaHeaders = {
   'APCA-API-SECRET-KEY': process.env.ALPACA_SECRET_KEY!,
 };
 
-export async function GET(
+async function GET_impl(
   _req: NextRequest,
   { params }: { params: Promise<{ symbol: string }> }
 ) {
@@ -170,3 +171,7 @@ async function fetchHistoricalVolatility(symbol: string): Promise<number> {
     return 25;
   }
 }
+
+// Durable, session-keyed rate limiting (CLAUDE.md rule 6). See
+// src/lib/api-rate-limit.ts — the old in-memory limiter was per-lambda.
+export const GET = withRateLimit('options/iv/[symbol]', RATE.UPSTREAM, GET_impl);

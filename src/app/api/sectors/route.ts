@@ -7,6 +7,7 @@ import {
 } from '@/lib/fmp-client';
 import { captureRouteError } from '@/lib/api-error';
 import { loggerFor } from '@/lib/request-id';
+import { withRateLimit, RATE } from '@/lib/api-rate-limit';
 
 // NOTE: FMP retired all /api/v3 endpoints for this account tier as of
 // Aug 31 2025 (they return 403 "Legacy Endpoint"). Quote calls are routed
@@ -82,7 +83,7 @@ async function fetchSectorPerformance(): Promise<{ sector: string; changesPercen
   }));
 }
 
-export async function GET(req: NextRequest) {
+async function GET_impl(req: NextRequest) {
   const { log, request_id } = loggerFor(req, { route: 'sectors' });
   try {
     if (!FMP_KEY) {
@@ -187,3 +188,7 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ sectors: [], stocks: [], degraded: true, reason: 'route_error' });
   }
 }
+
+// Durable, session-keyed rate limiting (CLAUDE.md rule 6). See
+// src/lib/api-rate-limit.ts — the old in-memory limiter was per-lambda.
+export const GET = withRateLimit('sectors', RATE.UPSTREAM, GET_impl);

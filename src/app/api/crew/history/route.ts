@@ -1,12 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createServiceClient } from '@/lib/supabase';
+import { withRateLimit, RATE } from '@/lib/api-rate-limit';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
 const PAGE_SIZE = 10;
 
-export async function GET(req: NextRequest) {
+async function GET_impl(req: NextRequest) {
   const page = Math.max(0, Number(req.nextUrl.searchParams.get('page') ?? '0'));
   const userId = req.nextUrl.searchParams.get('user') ?? 'wes';
 
@@ -36,3 +37,7 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: message, runs: [], page, total: 0 }, { status: 500 });
   }
 }
+
+// Durable, session-keyed rate limiting (CLAUDE.md rule 6). See
+// src/lib/api-rate-limit.ts — the old in-memory limiter was per-lambda.
+export const GET = withRateLimit('crew/history', RATE.EXPENSIVE, GET_impl);

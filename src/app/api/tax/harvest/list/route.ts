@@ -1,10 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createServiceClient } from '@/lib/supabase';
+import { withRateLimit, RATE } from '@/lib/api-rate-limit';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
-export async function GET(req: NextRequest) {
+async function GET_impl(req: NextRequest) {
   const userId = req.nextUrl.searchParams.get('user') ?? 'wes';
   const weekOf = req.nextUrl.searchParams.get('week');
 
@@ -20,3 +21,7 @@ export async function GET(req: NextRequest) {
   if (error) return NextResponse.json({ error: error.message, suggestions: [] }, { status: 500 });
   return NextResponse.json({ suggestions: data ?? [] });
 }
+
+// Durable, session-keyed rate limiting (CLAUDE.md rule 6). See
+// src/lib/api-rate-limit.ts — the old in-memory limiter was per-lambda.
+export const GET = withRateLimit('tax/harvest/list', RATE.READ, GET_impl);

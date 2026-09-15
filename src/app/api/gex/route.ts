@@ -6,6 +6,7 @@ import {
 import { apiFetchWithFallback, type ApiResult } from '@/lib/api-client';
 import { getQuote } from '@/lib/fmp-client';
 import { buildMeta, type ApiMeta } from '@/lib/api-meta';
+import { withRateLimit, RATE } from '@/lib/api-rate-limit';
 
 function roundTo(n: number, d: number): number {
   const f = Math.pow(10, d);
@@ -223,7 +224,7 @@ async function fetchSpotPrice(symbol: string): Promise<ApiResult<number>> {
 // GET /api/gex
 // ---------------------------------------------------------------------------
 
-export async function GET(request: NextRequest) {
+async function GET_impl(request: NextRequest) {
   try {
     const symbol = (request.nextUrl.searchParams.get('symbol') ?? 'SPY').toUpperCase();
     const spotResult = await fetchSpotPrice(symbol);
@@ -307,3 +308,7 @@ export async function GET(request: NextRequest) {
     }, { status: 500 });
   }
 }
+
+// Durable, session-keyed rate limiting (CLAUDE.md rule 6). See
+// src/lib/api-rate-limit.ts — the old in-memory limiter was per-lambda.
+export const GET = withRateLimit('gex', RATE.UPSTREAM, GET_impl);

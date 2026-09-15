@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { anthropic, CLAUDE_MODEL_FALLBACK } from '@/lib/claude';
 import { tagAnthropicCall } from '@/lib/anthropic-cost';
 import { getSupabase } from '@/lib/supabase';
+import { withRateLimit, RATE } from '@/lib/api-rate-limit';
 
 const FMP_KEY = process.env.FMP_API_KEY;
 
@@ -40,7 +41,7 @@ function fallbackKeywordAnalysis(transcript: string, symbol: string, quarter: nu
   };
 }
 
-export async function GET(req: NextRequest) {
+async function GET_impl(req: NextRequest) {
   try {
     if (!FMP_KEY) {
       return NextResponse.json({ error: 'FMP_API_KEY not configured' }, { status: 500 });
@@ -212,3 +213,7 @@ ${transcript.slice(0, 80000)}`,
     );
   }
 }
+
+// Durable, session-keyed rate limiting (CLAUDE.md rule 6). See
+// src/lib/api-rate-limit.ts — the old in-memory limiter was per-lambda.
+export const GET = withRateLimit('earnings-tone', RATE.EXPENSIVE, GET_impl);

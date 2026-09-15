@@ -3,6 +3,7 @@ import { fetchFedMonetaryFeed, fetchPressReleaseBody } from '@/lib/fed/feed';
 import { scoreFedStatement } from '@/lib/fed/scorer';
 import { createServiceClient } from '@/lib/supabase';
 import { getCached, setCache } from '@/lib/server-cache';
+import { withRateLimit, RATE } from '@/lib/api-rate-limit';
 
 // F7 — AI Fed hawkish/dovish sentiment scorer
 //
@@ -100,7 +101,7 @@ async function scoreMissing(maxToScore: number): Promise<{ scored: number; skipp
   return { scored, skipped };
 }
 
-export async function GET(req: NextRequest) {
+async function GET_impl(req: NextRequest) {
   const rescore = req.nextUrl.searchParams.get('rescore') === 'true';
   const limit = Math.min(Number(req.nextUrl.searchParams.get('limit') || 10), 50);
 
@@ -147,3 +148,7 @@ export async function GET(req: NextRequest) {
   if (!rescore) setCache(cacheKey, payload, LIST_CACHE_TTL_MS);
   return NextResponse.json(payload);
 }
+
+// Durable, session-keyed rate limiting (CLAUDE.md rule 6). See
+// src/lib/api-rate-limit.ts — the old in-memory limiter was per-lambda.
+export const GET = withRateLimit('fed-sentiment', RATE.EXPENSIVE, GET_impl);

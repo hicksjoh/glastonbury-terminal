@@ -3,6 +3,7 @@ import { calculateGreeks } from '@/lib/options/greeks';
 import { buildOCCSymbol } from '@/lib/options/symbols';
 import { validateEquitySymbol } from '@/lib/sanitize';
 import type { OptionChainEntry } from '@/lib/options/types';
+import { withRateLimit, RATE } from '@/lib/api-rate-limit';
 
 const ALPACA_DATA_URL = 'https://data.alpaca.markets';
 const ALPACA_TRADING_URL = process.env.ALPACA_BASE_URL || 'https://paper-api.alpaca.markets';
@@ -228,7 +229,7 @@ async function fetchFMPChain(symbol: string, expiration?: string): Promise<Optio
   }
 }
 
-export async function GET(
+async function GET_impl(
   req: NextRequest,
   { params }: { params: Promise<{ symbol: string }> }
 ) {
@@ -268,3 +269,7 @@ export async function GET(
     count: chain.length,
   });
 }
+
+// Durable, session-keyed rate limiting (CLAUDE.md rule 6). See
+// src/lib/api-rate-limit.ts — the old in-memory limiter was per-lambda.
+export const GET = withRateLimit('options/chain/[symbol]', RATE.UPSTREAM, GET_impl);

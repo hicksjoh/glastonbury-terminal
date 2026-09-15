@@ -2,11 +2,12 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createServiceClient } from '@/lib/supabase';
 import { captureRouteError } from '@/lib/api-error';
 import { loggerFor } from '@/lib/request-id';
+import { withRateLimit, RATE } from '@/lib/api-rate-limit';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
-export async function GET(req: NextRequest, ctx: { params: { id: string } }) {
+async function GET_impl(req: NextRequest, ctx: { params: { id: string } }) {
   const { log, request_id } = loggerFor(req, { route: 'research/[id]' });
   try {
     const sb = createServiceClient();
@@ -22,3 +23,7 @@ export async function GET(req: NextRequest, ctx: { params: { id: string } }) {
     return NextResponse.json({ error: 'Failed to load memo', sentry_event_id: eventId }, { status: 500 });
   }
 }
+
+// Durable, session-keyed rate limiting (CLAUDE.md rule 6). See
+// src/lib/api-rate-limit.ts — the old in-memory limiter was per-lambda.
+export const GET = withRateLimit('research/[id]', RATE.EXPENSIVE, GET_impl);

@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { validateEquitySymbol } from '@/lib/sanitize';
+import { withRateLimit, RATE } from '@/lib/api-rate-limit';
 
 const FMP_BASE = 'https://financialmodelingprep.com/stable';
 const FMP_KEY = process.env.FMP_API_KEY || '';
@@ -16,7 +17,7 @@ function getStartDate(daysAgo: number): string {
   return d.toISOString().split('T')[0] + 'T00:00:00Z';
 }
 
-export async function GET(
+async function GET_impl(
   req: NextRequest,
   { params }: { params: Promise<{ symbol: string }> }
 ) {
@@ -97,3 +98,7 @@ export async function GET(
     return NextResponse.json({ profile: null, quote: null, historicalPrices: [], news: [] });
   }
 }
+
+// Durable, session-keyed rate limiting (CLAUDE.md rule 6). See
+// src/lib/api-rate-limit.ts — the old in-memory limiter was per-lambda.
+export const GET = withRateLimit('stock/[symbol]', RATE.UPSTREAM, GET_impl);

@@ -99,6 +99,7 @@ const WEALTH_SEGMENTS = [
   { label: 'Miami Shores',         key: 'miamiShoresProperty' as const, colorToken: color.info },
   { label: 'Investment Portfolio', key: 'alpacaEquity' as const,        colorToken: color.gold },
   { label: 'Anthropic RSUs',       key: 'anthropicRSUs' as const,       colorToken: color.warning },
+  { label: 'Cash',                 key: 'cashReserves' as const,        colorToken: color.textDim },
 ];
 
 // ─── Quick actions — single treatment, gold accent, tone by role ─
@@ -111,7 +112,7 @@ const QUICK_ACTIONS: Array<{ icon: string; label: string; href: string; tone: 'g
   { icon: '🔍', label: '⌘K Search',    href: '',           tone: 'neutral' },
 ];
 
-interface PositionData { symbol: string; qty: number; marketValue: number; allocation: number; dailyChange: number; }
+interface PositionData { symbol: string; qty: number; marketValue: number; allocation: number; dailyChange: number; unrealizedPct: number; }
 interface MoverData { symbol: string; name: string; changePercentage: number; }
 
 // ─── Top Positions table (HairlineTable showcase) ───────────────
@@ -139,7 +140,15 @@ export default function DashboardPage() {
   const [cr3, setCr3] = useState(0);
   const [rsus, setRsus] = useState(0);
   const [miami, setMiami] = useState(0);
-  const totalNetWorth = equity + cr3 + rsus + miami;
+  const [wealthCash, setWealthCash] = useState(0);
+  const [investments, setInvestments] = useState(0);
+  // Authoritative total from /api/wealth. The dashboard used to re-derive net
+  // worth here as `equity + cr3 + rsus + miami`, which silently dropped the
+  // cash row — so this page reported $3.32M while /wealth reported $3.39M off
+  // the same data. One source of truth; the local sum is only an offline
+  // fallback for when /api/wealth is unreachable.
+  const [apiNetWorth, setApiNetWorth] = useState<number | null>(null);
+  const totalNetWorth = apiNetWorth ?? (investments + cr3 + rsus + miami + wealthCash);
 
   const [vix, setVix] = useState(0);
   const [gainers, setGainers] = useState<MoverData[]>([]);
@@ -161,13 +170,12 @@ export default function DashboardPage() {
   const [strategyCount, setStrategyCount] = useState(0);
   const [strategyPaused, setStrategyPaused] = useState(0);
   const [regimeConfig, setRegimeConfig] = useState<RegimeUIConfig | null>(null);
-  const [insightChips, setInsightChips] = useState<Array<{ icon: string; text: string }>>([
-    { icon: '📈', text: 'RSU vest: ~$373K next quarter' },
-    { icon: '🎯', text: '2026 Foundation Year — building base' },
-    { icon: '💰', text: '$100K cash ready to deploy' },
-    { icon: '📋', text: '23 CR3 territories signed' },
-    { icon: '🏠', text: 'Miami Shores: $580K equity' },
-  ]);
+  // Seeded empty on purpose. These chips used to ship hardcoded dollar figures
+  // ("$100K cash ready to deploy", "Miami Shores: $580K equity") that rendered
+  // before any fetch resolved and stayed put if the fetch failed — fabricated
+  // financial facts presented as live. Chips are now derived only from data
+  // that actually arrived.
+  const [insightChips, setInsightChips] = useState<Array<{ icon: string; text: string }>>([]);
 
   const animatedNetWorth = useCountUp(totalNetWorth, 1200, !loading);
   const animatedCash     = useCountUp(cash, 1000, !loading);
@@ -217,12 +225,17 @@ export default function DashboardPage() {
       setPositionCount(positionsRes.length);
       setTotalInvested(totalMV);
       const posData: PositionData[] = positionsRes
-        .map((p: { symbol: string; qty: string; market_value: string; unrealized_plpc: string }) => ({
+        .map((p: { symbol: string; qty: string; market_value: string; unrealized_plpc: string; change_today: string }) => ({
           symbol: p.symbol,
           qty: parseFloat(p.qty) || 0,
           marketValue: parseFloat(p.market_value) || 0,
           allocation: totalMV > 0 ? (parseFloat(p.market_value) / totalMV) * 100 : 0,
-          dailyChange: (() => { const rawPct = (parseFloat(p.unrealized_plpc) || 0) * 100; return isFinite(rawPct) ? rawPct : 0; })(),
+          // Alpaca's `change_today` is the day's move; `unrealized_plpc` is
+          // lifetime return against cost basis. This column is labelled "Day",
+          // so it must use the former — it previously used the latter, which
+          // showed +20.00% on a position whose actual day move was +0.84%.
+          dailyChange: (() => { const rawPct = (parseFloat(p.change_today) || 0) * 100; return isFinite(rawPct) ? rawPct : 0; })(),
+          unrealizedPct: (() => { const rawPct = (parseFloat(p.unrealized_plpc) || 0) * 100; return isFinite(rawPct) ? rawPct : 0; })(),
         }))
         .sort((a: PositionData, b: PositionData) => b.marketValue - a.marketValue)
         .slice(0, 5);
@@ -259,7 +272,10 @@ export default function DashboardPage() {
       if (alertsRes?.alerts?.length > 0) setKeishaAlerts(alertsRes.alerts);
     } catch { /* alerts optional */ }
 
-    let wealthRes: { success?: boolean; data?: { breakdown?: Record<string, { value?: number }> } } | null = null;
+    let wealthRes: {
+      success?: boolean;
+      data?: { total_net_worth?: number; breakdown?: Record<string, { value?: number }> };
+    } | null = null;
     try {
       wealthRes = await fetch('/api/wealth').then(r => r.ok ? r.json() : null).catch(() => null);
       if (wealthRes?.success && wealthRes.data) {
@@ -267,6 +283,11 @@ export default function DashboardPage() {
         if (d?.franchise?.value)    setCr3(d.franchise.value);
         if (d?.rsus?.value)         setRsus(d.rsus.value);
         if (d?.real_estate?.value)  setMiami(d.real_estate.value);
+        if (d?.cash?.value != null)        setWealthCash(d.cash.value);
+        if (d?.investments?.value != null) setInvestments(d.investments.value);
+        if (typeof wealthRes.data.total_net_worth === 'number') {
+          setApiNetWorth(wealthRes.data.total_net_worth);
+        }
       }
     } catch { /* wealth optional */ }
 
@@ -285,11 +306,22 @@ export default function DashboardPage() {
       if (ca > 0) chips.push({ icon: '💰', text: `$${Math.round(ca / 1000)}K cash ready to deploy` });
       if (eq > 0) chips.push({ icon: '📈', text: `Portfolio: ${formatCurrency(eq)}` });
     }
-    chips.push({ icon: '📋', text: '23 CR3 territories signed' });
-    const freshMiami = wealthRes?.success ? (wealthRes.data?.breakdown?.real_estate?.value || 580000) : 580000;
-    chips.push({ icon: '🏠', text: `Miami Shores: ${formatCurrency(freshMiami)} equity` });
-    chips.push({ icon: '🎯', text: '2026 Foundation Year — building base' });
-    if (chips.length > 0) setInsightChips(chips);
+    // Only chip what actually came back. The territory count and the Miami
+    // equity figure used to be hardcoded (and the Miami one fell back to a
+    // literal 580000 whenever the wealth call failed), so a dead API still
+    // rendered confident dollar amounts.
+    try {
+      const terrRes = await fetch('/api/territories').then(r => r.ok ? r.json() : null).catch(() => null);
+      const terrTotal = terrRes?.summary?.total ?? terrRes?.total;
+      if (typeof terrTotal === 'number' && terrTotal > 0) {
+        chips.push({ icon: '📋', text: `${terrTotal} CR3 territories signed` });
+      }
+    } catch { /* territories optional */ }
+    const freshMiami = wealthRes?.data?.breakdown?.real_estate?.value;
+    if (typeof freshMiami === 'number' && freshMiami > 0) {
+      chips.push({ icon: '🏠', text: `Miami Shores: ${formatCurrency(freshMiami)} equity` });
+    }
+    setInsightChips(chips);
 
     setLoading(false);
   }, []);
@@ -310,13 +342,22 @@ export default function DashboardPage() {
   }, [fetchDashboardData, fetchRegime]);
 
   // ─── Greeting + progress ─────────────────────────────────────
-  // Pinned to ET: the server renders in UTC and the browser hydrates in local
-  // time, so an ambient-timezone clock here mismatches on every load (React #425).
-  // One instant for both, so a render straddling ET midnight can't pair
-  // yesterday's greeting with today's date.
-  const renderedAt = new Date();
-  const greeting = getGreeting(renderedAt);
-  const dateStr = getLongDateLabel(renderedAt);
+  // Pinned to ET so the label never depends on the viewer's ambient timezone,
+  // AND deferred to after mount. Pinning alone was not enough: this page is
+  // statically prerendered, so `new Date()` in the render body was frozen at
+  // BUILD time and shipped inside the HTML. Production served a five-day-old
+  // "Wednesday, September 9, 2026" to every visitor, and the client hydrated
+  // with the real date — React #425 on every load. Computing it in an effect
+  // means the server emits a neutral placeholder and the browser fills in the
+  // real, current ET date. Same pattern as MarketStatusChip.
+  const [nowEt, setNowEt] = useState<Date | null>(null);
+  useEffect(() => {
+    setNowEt(new Date());
+    const id = setInterval(() => setNowEt(new Date()), 60_000);
+    return () => clearInterval(id);
+  }, []);
+  const greeting = nowEt ? getGreeting(nowEt) : 'Welcome';
+  const dateStr = nowEt ? getLongDateLabel(nowEt) : '';
   const fiftyMPct = (totalNetWorth / 50000000) * 100;
 
   // VIX tone
@@ -334,8 +375,12 @@ export default function DashboardPage() {
         subtitle={dateStr}
         metric={formatCurrency(animatedNetWorth)}
         right={
+          // No synthetic fallback series. This used to draw a hardcoded
+          // 98000→100000 rising line whenever real history was missing — an
+          // invented +2.04% trend sitting next to the net-worth figure.
+          // Sparkline already returns null below 2 points.
           <Sparkline
-            data={historyPoints.length > 2 ? historyPoints : [98000, 99000, 99500, 100000, 100200, 99800, 100500, 101000, 100800, 100000]}
+            data={historyPoints}
             stroke={todayPL >= 0 ? color.positive : color.negative}
           />
         }
@@ -667,7 +712,8 @@ export default function DashboardPage() {
               {WEALTH_SEGMENTS.map(seg => {
                 const val = seg.key === 'cr3Equity' ? cr3
                   : seg.key === 'miamiShoresProperty' ? miami
-                  : seg.key === 'alpacaEquity' ? equity : rsus;
+                  : seg.key === 'alpacaEquity' ? investments
+                  : seg.key === 'cashReserves' ? wealthCash : rsus;
                 const pct = totalNetWorth > 0 ? (val / totalNetWorth) * 100 : 0;
                 return (
                   <div key={seg.key} style={{
@@ -682,7 +728,8 @@ export default function DashboardPage() {
               {WEALTH_SEGMENTS.map(seg => {
                 const val = seg.key === 'cr3Equity' ? cr3
                   : seg.key === 'miamiShoresProperty' ? miami
-                  : seg.key === 'alpacaEquity' ? equity : rsus;
+                  : seg.key === 'alpacaEquity' ? investments
+                  : seg.key === 'cashReserves' ? wealthCash : rsus;
                 const pct = totalNetWorth > 0 ? (val / totalNetWorth) * 100 : 0;
                 return (
                   <div key={seg.key} style={{ display: 'flex', alignItems: 'center', gap: space[2] }}>

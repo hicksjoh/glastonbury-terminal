@@ -35,6 +35,23 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Too many requests' }, { status: 429, headers: { 'x-request-id': request_id } });
   }
 
+  // FAIL CLOSED on limiter degradation — before the password is ever compared.
+  //
+  // checkRateLimitDurable falls back to a per-instance in-memory counter when
+  // the durable store is unreachable. On Vercel that multiplies the effective
+  // allowance by the number of warm lambdas and resets on every cold start, so
+  // the "global 60 / 5 min" bucket stops being global exactly when the backing
+  // store is degraded — i.e. login becomes brute-forceable precisely during an
+  // incident. /api/trading/live-ack already refuses to operate in this state;
+  // password authentication deserves at least the same treatment.
+  if (ipLimit.source === 'memory-fallback' || globalLimit.source === 'memory-fallback') {
+    log.error({ ip_source: ipLimit.source, global_source: globalLimit.source }, 'login blocked: rate-limit store degraded');
+    return NextResponse.json(
+      { error: 'Sign-in is temporarily unavailable (rate-limit store degraded). Retry shortly.' },
+      { status: 503, headers: { 'x-request-id': request_id, 'retry-after': '30' } },
+    );
+  }
+
   try {
     // p6-2: cap body at 1KB. The legitimate payload is { password: <string> },
     // realistically < 200 bytes. Anything bigger is either a probe or an

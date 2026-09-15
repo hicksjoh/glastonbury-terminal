@@ -11,14 +11,20 @@ type SendArgs = {
   to?: string | string[];
 };
 
-export async function sendResendEmail(args: SendArgs): Promise<{ ok: boolean; id?: string; error?: string }> {
+/**
+ * `notConfigured` separates "this deployment has no mailer" from "the mailer
+ * rejected us". Callers should skip cleanly on the former and alarm on the
+ * latter — two cron routes used to 502 on every single run because an unset
+ * RESEND_API_KEY was reported identically to a real send failure.
+ */
+export async function sendResendEmail(args: SendArgs): Promise<{ ok: boolean; id?: string; error?: string; notConfigured?: boolean }> {
   const key = process.env.RESEND_API_KEY;
   const from = process.env.RESEND_FROM_EMAIL;
   const defaultTo = process.env.RESEND_TO_EMAIL;
-  if (!key || !from) return { ok: false, error: 'RESEND not configured' };
+  if (!key || !from) return { ok: false, error: 'RESEND not configured', notConfigured: true };
 
   const to = args.to ?? defaultTo;
-  if (!to) return { ok: false, error: 'No recipient configured' };
+  if (!to) return { ok: false, error: 'No recipient configured', notConfigured: true };
 
   try {
     const res = await fetch('https://api.resend.com/emails', {

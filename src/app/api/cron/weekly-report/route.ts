@@ -196,6 +196,17 @@ async function handle(req: NextRequest): Promise<NextResponse> {
       html: report.html,
     });
 
+    // An unconfigured mailer is a deployment choice, not a failure: this route
+    // used to 502 on every scheduled run because RESEND_API_KEY is unset, which
+    // is exactly how a real outage gets lost in the noise. Skip cleanly and
+    // report success; a genuine send rejection still 502s and pings the
+    // healthcheck as a failure.
+    if (!sendResult.ok && sendResult.notConfigured) {
+      await pingHealthcheck(HC_SLUG, 'success');
+      log.warn('weekly-report skipped: no mailer configured');
+      return NextResponse.json({ ok: true, skipped: 'no mailer configured' });
+    }
+
     if (!sendResult.ok) {
       await pingHealthcheck(HC_SLUG, 'fail');
       log.error({ resend_error: sendResult.error ?? null }, 'weekly report send failed');
