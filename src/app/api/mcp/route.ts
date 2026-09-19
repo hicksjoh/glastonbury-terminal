@@ -105,6 +105,30 @@ async function handle(req: NextRequest): Promise<Response> {
     // consume it. NextRequest is already Request-compatible for header +
     // method + body reads, so we can pass through.
     const response = await transport.handleRequest(req as unknown as Request);
+
+    // Every authenticated connection cycle in production opens with one 400
+    // from the transport before succeeding (see memory/builders/connector-auth-qa.md
+    // for the 2026-09-19 trace). The client retries within a second and the
+    // connector works, so this is not user-visible — but "works after one
+    // failure" is how the last bug hid, and Vercel's access log carries no
+    // response body to explain it.
+    //
+    // Session validation is disabled here (stateless) and an Accept-header
+    // failure would be 406, not 400, which points at protocol-version
+    // negotiation. Log the inputs that would prove it rather than guessing.
+    if (response.status >= 400) {
+      console.warn(
+        JSON.stringify({
+          msg: 'mcp transport rejected request',
+          status: response.status,
+          protocol_version: req.headers.get('mcp-protocol-version'),
+          accept: req.headers.get('accept'),
+          method: req.method,
+          auth_mode: auth.oauthClientId ? 'oauth' : 'static',
+        }),
+      );
+    }
+
     return response;
   } finally {
     // The transport owns the server after connect(); closing the transport
