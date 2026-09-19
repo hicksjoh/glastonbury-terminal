@@ -4,7 +4,7 @@ import { findClient, verifyClientSecret } from '@/lib/oauth/clients';
 import { consumeCode } from '@/lib/oauth/codes';
 import { verifyS256, isWellFormedVerifier } from '@/lib/oauth/pkce';
 import { createAccessToken } from '@/lib/oauth/tokens';
-import { claimRefreshToken, mintRefreshToken, revokeRefreshFamily } from '@/lib/oauth/refresh';
+import { claimRefreshToken, mintRefreshToken } from '@/lib/oauth/refresh';
 import { checkRateLimitDurable, getRateLimitIdentity } from '@/lib/rate-limit-durable';
 import { loggerFor } from '@/lib/request-id';
 import { readBoundedText, BodyTooLargeError, BODY_LIMIT } from '@/lib/bounded-body';
