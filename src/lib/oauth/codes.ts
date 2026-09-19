@@ -111,3 +111,26 @@ export async function consumeCode(code: string): Promise<OAuthCode | null> {
 
   return r;
 }
+
+/**
+ * Has this code already been exchanged for a token?
+ *
+ * Used by the finalize duplicate-submit path: if the code a transaction
+ * minted has already been redeemed, the OAuth dance actually SUCCEEDED and
+ * re-sending the (now spent) code to the client would surface a spurious
+ * invalid_grant. We show "already connected" instead.
+ *
+ * Returns true only on a definite yes. An unknown code or a read failure
+ * returns false so the caller falls back to re-issuing the redirect — the
+ * client will then reject a genuinely bad code on its own terms.
+ */
+export async function isCodeSpent(code: string): Promise<boolean> {
+  const supabase = createServiceClient();
+  const { data, error } = await supabase
+    .from('oauth_codes')
+    .select('used_at')
+    .eq('code', code)
+    .maybeSingle();
+  if (error || !data) return false;
+  return (data as { used_at: string | null }).used_at !== null;
+}

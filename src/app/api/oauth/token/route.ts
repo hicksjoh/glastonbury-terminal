@@ -4,6 +4,7 @@ import { findClient, verifyClientSecret } from '@/lib/oauth/clients';
 import { consumeCode } from '@/lib/oauth/codes';
 import { verifyS256, isWellFormedVerifier } from '@/lib/oauth/pkce';
 import { createAccessToken } from '@/lib/oauth/tokens';
+import { claimRefreshToken, mintRefreshToken, revokeRefreshFamily } from '@/lib/oauth/refresh';
 import { checkRateLimitDurable, getRateLimitIdentity } from '@/lib/rate-limit-durable';
 import { loggerFor } from '@/lib/request-id';
 import { readBoundedText, BodyTooLargeError, BODY_LIMIT } from '@/lib/bounded-body';
@@ -18,6 +19,13 @@ import { readBoundedText, BodyTooLargeError, BODY_LIMIT } from '@/lib/bounded-bo
 // PKCE verifier guessing. The PKCE verifier is 43-128 chars of entropy
 // per RFC 7636, so even without the rate limit guessing is impossible —
 // but defence in depth.
+//
+// 2026-09-19 (connector QA): added the refresh_token grant. Previously this
+// route implemented authorization_code ONLY, with 1-hour access tokens and
+// no way to renew them. Every hour the connector's token died and the only
+// recovery was a full human login + consent — which is what surfaced as
+// "authentication expired". Refresh tokens rotate on every use and carry
+// reuse detection; see src/lib/oauth/refresh.ts.
 //
 // p3-1: error responses are GENERIC. Pre-p3-1 the route returned distinct
 // error_description strings ("Unknown client_id" vs "client_secret
@@ -94,23 +102,34 @@ export async function POST(req: NextRequest) {
     return tokenError('invalid_request', 'malformed body');
   }
 
-  if (params.grant_type !== 'authorization_code') {
-    return tokenError('unsupported_grant_type', 'Only authorization_code is supported');
+  const grantType = params.grant_type;
+  if (grantType !== 'authorization_code' && grantType !== 'refresh_token') {
+    return tokenError(
+      'unsupported_grant_type',
+      'Only authorization_code and refresh_token are supported',
+    );
   }
 
   const { code, redirect_uri, code_verifier, client_id, client_secret } = params;
 
-  if (!code) return tokenError('invalid_request', 'code required');
-  if (!redirect_uri) return tokenError('invalid_request', 'redirect_uri required');
-  if (!code_verifier) return tokenError('invalid_request', 'code_verifier required');
   if (!client_id) return tokenError('invalid_request', 'client_id required');
 
-  // P1-1: short-circuit a malformed PKCE verifier BEFORE we burn the
-  // single-use code via consumeCode(). RFC 7636 §4.1 verifier shape.
-  // Returns invalid_request (not invalid_grant) because this is a request
-  // shape error, not a grant-validation failure.
-  if (!isWellFormedVerifier(code_verifier)) {
-    return tokenError('invalid_request', 'code_verifier shape invalid');
+  // authorization_code-only shape checks. The refresh grant carries no
+  // code, redirect_uri or PKCE verifier — RFC 6749 §6.
+  if (grantType === 'authorization_code') {
+    if (!code) return tokenError('invalid_request', 'code required');
+    if (!redirect_uri) return tokenError('invalid_request', 'redirect_uri required');
+    if (!code_verifier) return tokenError('invalid_request', 'code_verifier required');
+
+    // P1-1: short-circuit a malformed PKCE verifier BEFORE we burn the
+    // single-use code via consumeCode(). RFC 7636 §4.1 verifier shape.
+    // Returns invalid_request (not invalid_grant) because this is a request
+    // shape error, not a grant-validation failure.
+    if (!isWellFormedVerifier(code_verifier)) {
+      return tokenError('invalid_request', 'code_verifier shape invalid');
+    }
+  } else if (!params.refresh_token) {
+    return tokenError('invalid_request', 'refresh_token required');
   }
 
   // P1-2: RFC 6749 §5.2 — return 401 ONLY when client authentication was
@@ -163,6 +182,81 @@ export async function POST(req: NextRequest) {
     return tokenError('invalid_grant', 'authorization grant invalid');
   };
 
+  /** Shape the RFC 6749 §5.1 success body. Shared by both grants. */
+  const tokenResponse = (body: {
+    access_token: string;
+    expires_in: number;
+    scope: string;
+    refresh_token?: string;
+  }) =>
+    NextResponse.json(
+      { token_type: 'Bearer', ...body },
+      {
+        headers: {
+          'Access-Control-Allow-Origin': '*',
+          'Cache-Control': 'no-store',
+          Pragma: 'no-cache',
+        },
+      },
+    );
+
+  // ─── refresh_token grant (RFC 6749 §6) ──────────────────────────────────
+  // The whole point of this branch: let the connector renew itself without
+  // dragging a human back through login + consent every hour.
+  if (grantType === 'refresh_token') {
+    const claim = await claimRefreshToken(params.refresh_token);
+    if (!claim.ok) {
+      // 'reused' already burned the family inside claimRefreshToken. Log the
+      // real reason; the client still gets the same generic invalid_grant.
+      log.warn({ client_id, reason: `refresh_${claim.reason}` }, 'token refresh rejected');
+      return invalidGrant(`refresh_${claim.reason}`);
+    }
+
+    const grant = claim.grant;
+    // The refresh token is bound to the client it was issued to. A token
+    // presented by a different client is a theft signal, not a mix-up —
+    // burn the family rather than just declining this one request.
+    if (grant.client_id !== client_id) {
+      await revokeRefreshFamily(grant.family_id);
+      return invalidGrant('refresh_client_mismatch');
+    }
+
+    // Rotate: the token we just consumed is dead, mint its successor in the
+    // same family so reuse detection keeps working across the chain.
+    let rotated: { token: string };
+    try {
+      rotated = await mintRefreshToken({
+        client_id: grant.client_id,
+        subject: grant.subject,
+        scope: grant.scope,
+        resource: grant.resource,
+        family_id: grant.family_id,
+      });
+    } catch (err) {
+      log.error(
+        { err: err instanceof Error ? err.message : String(err) },
+        'refresh rotation mint failed',
+      );
+      return tokenError('server_error', 'could not issue refresh token', 500);
+    }
+
+    const { token: access, expires_in } = await createAccessToken({
+      sub: grant.subject,
+      client_id,
+      scope: grant.scope,
+      resource: grant.resource,
+    });
+
+    log.info({ client_id, outcome: 'refreshed' }, 'access token refreshed');
+    return tokenResponse({
+      access_token: access,
+      expires_in,
+      scope: grant.scope,
+      refresh_token: rotated.token,
+    });
+  }
+
+  // ─── authorization_code grant (RFC 6749 §4.1.3) ─────────────────────────
   const row = await consumeCode(code);
   if (!row) return invalidGrant('consume_failed');
   if (row.client_id !== client_id) return invalidGrant('client_mismatch');
@@ -182,21 +276,32 @@ export async function POST(req: NextRequest) {
     resource: row.resource,
   });
 
-  return NextResponse.json(
-    {
-      access_token: token,
-      token_type: 'Bearer',
-      expires_in,
+  // Start a refresh family for this grant. Best-effort: if the insert
+  // fails we still return a working access token rather than failing an
+  // otherwise-valid exchange — the client just falls back to re-consenting
+  // in an hour, which is the old behaviour, not a regression.
+  let refresh_token: string | undefined;
+  try {
+    const minted = await mintRefreshToken({
+      client_id,
+      subject: row.subject,
       scope: row.scope,
-    },
-    {
-      headers: {
-        'Access-Control-Allow-Origin': '*',
-        'Cache-Control': 'no-store',
-        Pragma: 'no-cache',
-      },
-    },
-  );
+      resource: row.resource,
+    });
+    refresh_token = minted.token;
+  } catch (err) {
+    log.error(
+      { err: err instanceof Error ? err.message : String(err), client_id },
+      'refresh token mint failed — issuing access token without refresh',
+    );
+  }
+
+  return tokenResponse({
+    access_token: token,
+    expires_in,
+    scope: row.scope,
+    ...(refresh_token ? { refresh_token } : {}),
+  });
 }
 
 export function OPTIONS() {

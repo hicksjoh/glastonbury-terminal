@@ -253,3 +253,152 @@ test.describe('@smoke S3 — Client revocation invalidates outstanding tokens', 
     expect(afterRevoke.status()).toBe(401);
   });
 });
+
+// ───────────────────────────────────────────────────────────────────────────
+// 2026-09-19 connector QA regressions.
+//
+// Production trace that started this (client gt_claude_app_*):
+//   06:43:05  POST /api/oauth/finalize  303  code minted, redirect to Claude
+//   06:43:07  POST /api/oauth/finalize  400  SAME tx, 1.4s later
+// The second POST killed the in-flight navigation and stranded a valid,
+// never-exchanged code. The user read that as "authentication expired"
+// seconds after logging in.
+// ───────────────────────────────────────────────────────────────────────────
+
+/** Walk authorize → consent and stop at the tx, so a test can POST it twice. */
+async function getConsentTx(
+  req: APIRequestContext,
+  client: TestClient,
+  challenge: string,
+): Promise<string> {
+  const params = new URLSearchParams({
+    response_type: 'code',
+    client_id: client.client_id,
+    redirect_uri: client.redirect_uri,
+    code_challenge: challenge,
+    code_challenge_method: 'S256',
+    scope: 'mcp',
+    state: 'e2e-dup-state',
+  });
+  const res = await req.get(`/api/oauth/authorize?${params.toString()}`, { maxRedirects: 0 });
+  expect(res.status()).toBe(303);
+  const tx = new URL(res.headers()['location']!, 'https://example.com').searchParams.get('tx');
+  expect(tx).not.toBeNull();
+  return tx!;
+}
+
+function postFinalize(req: APIRequestContext, tx: string) {
+  return req.post('/api/oauth/finalize', {
+    data: new URLSearchParams({ tx }).toString(),
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    maxRedirects: 0,
+  });
+}
+
+test.describe('@smoke S3 — duplicate consent submit does not strand the grant', () => {
+  test('second POST of the same tx re-issues the SAME code instead of erroring', async ({ request }) => {
+    const client = await registerTestClient(request, 'dup-finalize');
+    const { verifier, challenge } = pkcePair();
+    const tx = await getConsentTx(request, client, challenge);
+
+    const first = await postFinalize(request, tx);
+    expect(first.status(), 'first approve should redirect to the client').toBe(303);
+    const firstUrl = new URL(first.headers()['location']!);
+    const firstCode = firstUrl.searchParams.get('code');
+    expect(firstCode).not.toBeNull();
+
+    // The duplicate. Pre-fix this was a dead-end 400.
+    const second = await postFinalize(request, tx);
+    expect(second.status(), 'duplicate approve must not dead-end').toBe(303);
+    const secondUrl = new URL(second.headers()['location']!);
+    expect(secondUrl.origin + secondUrl.pathname).toBe(firstUrl.origin + firstUrl.pathname);
+    // Same code — a replay, not a second grant.
+    expect(secondUrl.searchParams.get('code')).toBe(firstCode);
+    // State must survive, or the client drops the callback.
+    expect(secondUrl.searchParams.get('state')).toBe('e2e-dup-state');
+
+    // And the replayed code still works exactly once.
+    const exchange = await exchangeCodeForToken(request, client.client_id, firstCode!, verifier, client.redirect_uri);
+    expect(exchange.status()).toBe(200);
+  });
+
+  test('a genuinely unknown tx gets a readable HTML page, not bare text', async ({ request }) => {
+    const res = await postFinalize(request, 'f'.repeat(64));
+    expect(res.status()).toBe(400);
+    const body = await res.text();
+    expect(res.headers()['content-type']).toContain('text/html');
+    // It must not call this "authentication expired" — that wording is what
+    // sent us hunting for a session bug that did not exist.
+    expect(body.toLowerCase()).not.toContain('authentication expired');
+  });
+});
+
+test.describe('@smoke S3 — refresh tokens', () => {
+  test('metadata advertises the refresh_token grant', async ({ request }) => {
+    const res = await request.get('/.well-known/oauth-authorization-server');
+    expect(res.status()).toBe(200);
+    const meta = await res.json();
+    expect(meta.grant_types_supported).toContain('authorization_code');
+    expect(meta.grant_types_supported).toContain('refresh_token');
+  });
+
+  test('code exchange returns a refresh token that renews access', async ({ request }) => {
+    const client = await registerTestClient(request, 'refresh-happy');
+    const { verifier, challenge } = pkcePair();
+    const code = await getAuthCode(request, client, challenge);
+    expect(code).not.toBeNull();
+
+    const first = await exchangeCodeForToken(request, client.client_id, code!, verifier, client.redirect_uri);
+    expect(first.status()).toBe(200);
+    const firstBody = await first.json();
+    expect(typeof firstBody.refresh_token, 'authorization_code grant must return a refresh_token').toBe('string');
+
+    // Spend it. This is the path that replaces an hourly human re-consent.
+    const refreshed = await request.post('/api/oauth/token', {
+      form: {
+        grant_type: 'refresh_token',
+        refresh_token: firstBody.refresh_token,
+        client_id: client.client_id,
+      },
+    });
+    expect(refreshed.status()).toBe(200);
+    const refreshedBody = await refreshed.json();
+    expect(typeof refreshedBody.access_token).toBe('string');
+    // Rotation: the successor must be a different token.
+    expect(refreshedBody.refresh_token).not.toBe(firstBody.refresh_token);
+
+    // The renewed access token is accepted by the MCP resource.
+    const mcp = await request.get('/api/mcp', {
+      headers: { Authorization: `Bearer ${refreshedBody.access_token}` },
+    });
+    expect(mcp.status()).not.toBe(401);
+
+    // Reuse of the rotated-away token burns the family: the successor dies too.
+    const reuse = await request.post('/api/oauth/token', {
+      form: {
+        grant_type: 'refresh_token',
+        refresh_token: firstBody.refresh_token,
+        client_id: client.client_id,
+      },
+    });
+    expect(reuse.status()).toBe(400);
+    expect((await reuse.json()).error).toBe('invalid_grant');
+
+    const afterBurn = await request.post('/api/oauth/token', {
+      form: {
+        grant_type: 'refresh_token',
+        refresh_token: refreshedBody.refresh_token,
+        client_id: client.client_id,
+      },
+    });
+    expect(afterBurn.status(), 'reuse detection must revoke the whole family').toBe(400);
+  });
+
+  test('refresh_token grant requires a refresh_token param', async ({ request }) => {
+    const res = await request.post('/api/oauth/token', {
+      form: { grant_type: 'refresh_token', client_id: 'gt_whatever' },
+    });
+    expect(res.status()).toBe(400);
+    expect((await res.json()).error).toBe('invalid_request');
+  });
+});
