@@ -37,6 +37,8 @@
 -- ROLLBACK:
 --   ALTER TABLE public.oauth_consent_transactions DROP COLUMN IF EXISTS issued_code;
 --   DROP TABLE IF EXISTS public.oauth_refresh_tokens;
+--   DROP FUNCTION IF EXISTS public.claim_refresh_token(text, text);
+--   DROP FUNCTION IF EXISTS public.revoke_refresh_family(uuid);
 -- ============================================================================
 
 -- ─── Defect 1: remember which code a consent transaction minted ────────────
@@ -83,11 +85,12 @@ CREATE POLICY "deny all to anon" ON public.oauth_refresh_tokens
   AS RESTRICTIVE FOR ALL TO anon, authenticated USING (false) WITH CHECK (false);
 
 -- Atomic rotation claim. Marks the presented token used and returns its
--- grant context — but ONLY if it was live (unused, unrevoked, unexpired).
+-- grant context — but ONLY if it was live (unused, unrevoked, unexpired)
+-- AND belongs to the presenting client.
 -- Returning zero rows means "not claimable": unknown, expired, revoked, or
 -- already rotated. The caller distinguishes those cases with a follow-up
 -- read so it can trigger family revocation on genuine reuse.
-CREATE OR REPLACE FUNCTION public.claim_refresh_token(p_token_hash text)
+CREATE OR REPLACE FUNCTION public.claim_refresh_token(p_token_hash text, p_client_id text)
 RETURNS TABLE(
   family_id uuid,
   client_id text,
@@ -101,6 +104,11 @@ BEGIN
   UPDATE public.oauth_refresh_tokens AS t
   SET used_at = NOW()
   WHERE t.token_hash = p_token_hash
+    -- Client binding lives INSIDE the claim on purpose. Comparing after a
+    -- successful claim would let anyone holding a stolen refresh token
+    -- consume it under their own client's credentials and trip the family
+    -- burn — a free denial-of-service against the legitimate connector.
+    AND t.client_id = p_client_id
     AND t.used_at IS NULL
     AND t.revoked_at IS NULL
     AND t.expires_at > NOW()

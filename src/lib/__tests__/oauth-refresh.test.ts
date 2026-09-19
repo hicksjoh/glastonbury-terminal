@@ -22,11 +22,12 @@ interface Row {
 
 let rows: Row[] = [];
 
-function claimRpc(token_hash: string) {
+function claimRpc(token_hash: string, client_id: string) {
   const now = Date.now();
   const row = rows.find(
     (r) =>
       r.token_hash === token_hash &&
+      r.client_id === client_id &&
       r.used_at === null &&
       r.revoked_at === null &&
       Date.parse(r.expires_at) > now,
@@ -90,7 +91,9 @@ vi.mock('@/lib/supabase', () => ({
       };
     },
     rpc: (name: string, args: Record<string, string>) => {
-      if (name === 'claim_refresh_token') return Promise.resolve(claimRpc(args.p_token_hash));
+      if (name === 'claim_refresh_token') {
+        return Promise.resolve(claimRpc(args.p_token_hash, args.p_client_id));
+      }
       if (name === 'revoke_refresh_family') return Promise.resolve(revokeFamilyRpc(args.p_family_id));
       throw new Error(`unexpected rpc ${name}`);
     },
@@ -128,7 +131,7 @@ describe('OAuth refresh tokens — rotation and reuse detection', () => {
 
   it('claims a live token once and carries the grant context through', async () => {
     const { token, family_id } = await mintRefreshToken(GRANT);
-    const result = await claimRefreshToken(token);
+    const result = await claimRefreshToken(token, GRANT.client_id);
     expect(result.ok).toBe(true);
     if (!result.ok) return;
     expect(result.grant.family_id).toBe(family_id);
@@ -139,7 +142,7 @@ describe('OAuth refresh tokens — rotation and reuse detection', () => {
 
   it('rotation keeps the successor in the same family', async () => {
     const first = await mintRefreshToken(GRANT);
-    const claimed = await claimRefreshToken(first.token);
+    const claimed = await claimRefreshToken(first.token, GRANT.client_id);
     expect(claimed.ok).toBe(true);
     if (!claimed.ok) return;
 
@@ -148,33 +151,33 @@ describe('OAuth refresh tokens — rotation and reuse detection', () => {
     expect(second.token).not.toBe(first.token);
 
     // The successor is independently claimable.
-    const again = await claimRefreshToken(second.token);
+    const again = await claimRefreshToken(second.token, GRANT.client_id);
     expect(again.ok).toBe(true);
   });
 
   it('REUSE of an already-rotated token burns the entire family', async () => {
     const first = await mintRefreshToken(GRANT);
-    const claimed = await claimRefreshToken(first.token);
+    const claimed = await claimRefreshToken(first.token, GRANT.client_id);
     expect(claimed.ok).toBe(true);
     if (!claimed.ok) return;
     const second = await mintRefreshToken({ ...GRANT, family_id: claimed.grant.family_id });
     const third = await mintRefreshToken({ ...GRANT, family_id: claimed.grant.family_id });
 
     // Replay the spent first token — the classic stolen-token signal.
-    const replay = await claimRefreshToken(first.token);
+    const replay = await claimRefreshToken(first.token, GRANT.client_id);
     expect(replay.ok).toBe(false);
     if (replay.ok) return;
     expect(replay.reason).toBe('reused');
 
     // Every sibling must now be dead, including ones never presented.
     expect(rows.every((r) => r.revoked_at !== null)).toBe(true);
-    expect((await claimRefreshToken(second.token)).ok).toBe(false);
-    expect((await claimRefreshToken(third.token)).ok).toBe(false);
+    expect((await claimRefreshToken(second.token, GRANT.client_id)).ok).toBe(false);
+    expect((await claimRefreshToken(third.token, GRANT.client_id)).ok).toBe(false);
   });
 
   it('rejects an unknown token without touching anything', async () => {
     await mintRefreshToken(GRANT);
-    const result = await claimRefreshToken('deadbeef'.repeat(8));
+    const result = await claimRefreshToken('deadbeef'.repeat(8), GRANT.client_id);
     expect(result.ok).toBe(false);
     if (result.ok) return;
     expect(result.reason).toBe('unknown');
@@ -184,7 +187,7 @@ describe('OAuth refresh tokens — rotation and reuse detection', () => {
   it('rejects an expired token as expired, not reused', async () => {
     const { token } = await mintRefreshToken(GRANT);
     rows[0].expires_at = new Date(Date.now() - 1000).toISOString();
-    const result = await claimRefreshToken(token);
+    const result = await claimRefreshToken(token, GRANT.client_id);
     expect(result.ok).toBe(false);
     if (result.ok) return;
     expect(result.reason).toBe('expired');
@@ -193,7 +196,7 @@ describe('OAuth refresh tokens — rotation and reuse detection', () => {
   it('rejects a revoked token as revoked', async () => {
     const { token, family_id } = await mintRefreshToken(GRANT);
     await revokeRefreshFamily(family_id);
-    const result = await claimRefreshToken(token);
+    const result = await claimRefreshToken(token, GRANT.client_id);
     expect(result.ok).toBe(false);
     if (result.ok) return;
     expect(result.reason).toBe('revoked');
@@ -205,16 +208,35 @@ describe('OAuth refresh tokens — rotation and reuse detection', () => {
 
     await revokeRefreshTokensForClient(GRANT.client_id);
 
-    expect((await claimRefreshToken(mine.token)).ok).toBe(false);
+    expect((await claimRefreshToken(mine.token, GRANT.client_id)).ok).toBe(false);
     // An unrelated client is untouched.
-    expect((await claimRefreshToken(other.token)).ok).toBe(true);
+    expect((await claimRefreshToken(other.token, 'gt_someone_else')).ok).toBe(true);
+  });
+
+  it('a stolen token presented by another client is NOT consumed (no free kill switch)', async () => {
+    // The whole point of binding the client inside the atomic claim. An
+    // attacker who has the token but not the victim client's credentials
+    // could otherwise authenticate as their OWN registered client, burn the
+    // victim's token, and take the connector down at will.
+    const { token } = await mintRefreshToken(GRANT);
+
+    const attacker = await claimRefreshToken(token, 'gt_attacker_client');
+    expect(attacker.ok).toBe(false);
+    if (attacker.ok) return;
+    expect(attacker.reason).toBe('client_mismatch');
+
+    // Nothing was consumed and nothing was revoked...
+    expect(rows[0].used_at).toBeNull();
+    expect(rows[0].revoked_at).toBeNull();
+    // ...so the legitimate client's token still works.
+    expect((await claimRefreshToken(token, GRANT.client_id)).ok).toBe(true);
   });
 
   it('two concurrent claims of the same token: exactly one wins', async () => {
     const { token } = await mintRefreshToken(GRANT);
     const [a, b] = await Promise.all([
-      claimRefreshToken(token),
-      claimRefreshToken(token),
+      claimRefreshToken(token, GRANT.client_id),
+      claimRefreshToken(token, GRANT.client_id),
     ]);
     expect([a.ok, b.ok].filter(Boolean)).toHaveLength(1);
   });

@@ -204,7 +204,12 @@ export async function POST(req: NextRequest) {
   // The whole point of this branch: let the connector renew itself without
   // dragging a human back through login + consent every hour.
   if (grantType === 'refresh_token') {
-    const claim = await claimRefreshToken(params.refresh_token);
+    // The client binding is enforced INSIDE the atomic claim, so a token
+    // presented by the wrong client consumes nothing. Claiming first and
+    // comparing afterwards would have handed anyone holding a stolen refresh
+    // token a free kill switch: consume it under their own client's
+    // credentials and let the mismatch burn the victim's family.
+    const claim = await claimRefreshToken(params.refresh_token, client_id);
     if (!claim.ok) {
       // 'reused' already burned the family inside claimRefreshToken. Log the
       // real reason; the client still gets the same generic invalid_grant.
@@ -213,13 +218,6 @@ export async function POST(req: NextRequest) {
     }
 
     const grant = claim.grant;
-    // The refresh token is bound to the client it was issued to. A token
-    // presented by a different client is a theft signal, not a mix-up —
-    // burn the family rather than just declining this one request.
-    if (grant.client_id !== client_id) {
-      await revokeRefreshFamily(grant.family_id);
-      return invalidGrant('refresh_client_mismatch');
-    }
 
     // Rotate: the token we just consumed is dead, mint its successor in the
     // same family so reuse detection keeps working across the chain.

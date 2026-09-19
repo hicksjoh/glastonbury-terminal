@@ -394,6 +394,39 @@ test.describe('@smoke S3 — refresh tokens', () => {
     expect(afterBurn.status(), 'reuse detection must revoke the whole family').toBe(400);
   });
 
+  test('a refresh token presented by a DIFFERENT client is not consumed', async ({ request }) => {
+    // Binding the client inside the atomic claim is what stops a party who
+    // holds only a stolen refresh token from burning it under their own
+    // client's credentials — a free kill switch on the real connector.
+    const victim = await registerTestClient(request, 'refresh-victim');
+    const attacker = await registerTestClient(request, 'refresh-attacker');
+    const { verifier, challenge } = pkcePair();
+    const code = await getAuthCode(request, victim, challenge);
+    const exchanged = await exchangeCodeForToken(request, victim.client_id, code!, verifier, victim.redirect_uri);
+    const { refresh_token } = await exchanged.json();
+    expect(typeof refresh_token).toBe('string');
+
+    const stolen = await request.post('/api/oauth/token', {
+      form: {
+        grant_type: 'refresh_token',
+        refresh_token,
+        client_id: attacker.client_id,
+      },
+    });
+    expect(stolen.status()).toBe(400);
+    expect((await stolen.json()).error).toBe('invalid_grant');
+
+    // The victim's token must be untouched and still spendable.
+    const legit = await request.post('/api/oauth/token', {
+      form: {
+        grant_type: 'refresh_token',
+        refresh_token,
+        client_id: victim.client_id,
+      },
+    });
+    expect(legit.status(), 'the rightful client must be unaffected').toBe(200);
+  });
+
   test('refresh_token grant requires a refresh_token param', async ({ request }) => {
     const res = await request.post('/api/oauth/token', {
       form: { grant_type: 'refresh_token', client_id: 'gt_whatever' },

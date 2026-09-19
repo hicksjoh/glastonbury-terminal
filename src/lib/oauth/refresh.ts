@@ -50,10 +50,11 @@ export interface MintRefreshInput {
 }
 
 export type RefreshFailure =
-  | 'unknown'      // no such token
+  | 'unknown'         // no such token
   | 'expired'
   | 'revoked'
-  | 'reused';      // already rotated away — family burned
+  | 'client_mismatch' // token belongs to a different client — NOT consumed
+  | 'reused';         // already rotated away — family burned
 
 export type RefreshResult =
   | { ok: true; grant: RefreshGrant }
@@ -148,20 +149,31 @@ export async function revokeRefreshTokensForClient(client_id: string): Promise<v
 }
 
 /**
- * Atomically claim a refresh token for rotation.
+ * Atomically claim a refresh token for rotation, on behalf of `client_id`.
  *
  * On success the presented token is marked used and the caller should mint
  * a successor in the same family. On failure the reason distinguishes an
  * unknown/expired/revoked token from genuine REUSE — and reuse burns the
  * entire family before returning, so a stolen token cannot outlive its
  * detection.
+ *
+ * The client match is part of the atomic UPDATE, deliberately. Claiming
+ * first and comparing afterwards would let anyone holding a stolen refresh
+ * token consume it — and trip the family burn — using their own client's
+ * credentials, which is a free kill switch against the legitimate
+ * connector. A mismatched client now consumes nothing, and the theft still
+ * surfaces the moment the token is replayed after a real rotation.
  */
-export async function claimRefreshToken(token: string): Promise<RefreshResult> {
+export async function claimRefreshToken(
+  token: string,
+  client_id: string,
+): Promise<RefreshResult> {
   const supabase = createServiceClient();
   const token_hash = await hashRefreshToken(token);
 
   const { data, error } = await supabase.rpc('claim_refresh_token', {
     p_token_hash: token_hash,
+    p_client_id: client_id,
   });
 
   if (!error && data && (!Array.isArray(data) || data.length > 0)) {
@@ -183,7 +195,7 @@ export async function claimRefreshToken(token: string): Promise<RefreshResult> {
   // token we already rotated away."
   const { data: row, error: readErr } = await supabase
     .from('oauth_refresh_tokens')
-    .select('family_id, used_at, revoked_at, expires_at')
+    .select('family_id, client_id, used_at, revoked_at, expires_at')
     .eq('token_hash', token_hash)
     .maybeSingle();
 
@@ -191,10 +203,16 @@ export async function claimRefreshToken(token: string): Promise<RefreshResult> {
 
   const r = row as {
     family_id: string;
+    client_id: string;
     used_at: string | null;
     revoked_at: string | null;
     expires_at: string;
   };
+
+  // Wrong client. Report it without burning anything — see the note on the
+  // atomic claim above. Nothing was consumed, so the legitimate holder is
+  // unaffected.
+  if (r.client_id !== client_id) return { ok: false, reason: 'client_mismatch' };
 
   if (r.used_at) {
     // REUSE. Either a stolen token is being replayed, or the legitimate

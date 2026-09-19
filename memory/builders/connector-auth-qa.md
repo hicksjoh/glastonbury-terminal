@@ -106,3 +106,38 @@ part of the flow. Now `window.location.assign`.
 `/api/congress` has no `export const dynamic = 'force-dynamic'` and is
 prerendered at build time; it only builds because Vercel has Supabase env at
 build time. Worth a follow-up — `npm run check:routes` exists for this.
+
+## Post-review hardening: refresh claim is client-bound
+
+Found on adversarial re-read of my own diff, before review came back.
+
+The first cut called `claimRefreshToken(token)` and compared `grant.client_id`
+to the presenting `client_id` **after** the claim succeeded, burning the
+family on mismatch. That is a free kill switch: someone holding only a stolen
+refresh token cannot mint with it (they lack the victim client's secret), but
+they *could* register their own client, present the stolen token under their
+own credentials, and let the mismatch handler revoke the victim's whole
+family — taking the connector down at will, repeatedly.
+
+Fixed by moving the client match INSIDE the atomic claim
+(`claim_refresh_token(p_token_hash, p_client_id)`). A mismatched client now
+consumes nothing and burns nothing; it gets `client_mismatch` and a generic
+`invalid_grant`. No security property is lost — a thief who waits for a real
+rotation and then replays still trips genuine reuse detection.
+
+Verified against the live database, not just the mock:
+
+```
+attacker_claim_rows        0      -- rejected
+used_at_after_attacker     NULL   -- not consumed
+revoked_at_after_attacker  NULL   -- no family burn
+legit_claim_rows           1      -- rightful client still works
+legit_second_claim_rows    0      -- single-use still holds
+```
+
+Probe row deleted afterwards. Migration
+`20260919b_refresh_claim_binds_client` applied; the checked-in migration file
+carries the final two-arg signature.
+
+Final gate: **824 unit tests pass**, tsc clean, lint clean on all touched
+files.
