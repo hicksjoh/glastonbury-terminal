@@ -9,6 +9,9 @@
 // SHA-256 hash of the secret — never the plaintext.
 
 import { createServiceClient } from '@/lib/supabase';
+// refresh.ts depends only on @/lib/supabase, so this does not create a cycle
+// (tokens.ts → clients.ts → refresh.ts is a chain, not a loop).
+import { revokeRefreshTokensForClient } from '@/lib/oauth/refresh';
 
 export interface OAuthClient {
   id: string;
@@ -183,6 +186,11 @@ export async function revokeClient(clientId: string): Promise<boolean> {
   if (error) {
     throw new Error(`oauth_clients revoke failed: ${error.message}`);
   }
+  // Kill the client's refresh tokens too (2026-09-19). verifyAccessToken
+  // already rejects a revoked client, so revocation was effective either
+  // way — but leaving live refresh rows behind means an un-revoke silently
+  // restores months-old tokens. Revoking the grants is the honest state.
+  await revokeRefreshTokensForClient(clientId);
   return (count ?? 0) > 0;
 }
 

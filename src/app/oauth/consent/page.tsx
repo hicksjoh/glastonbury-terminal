@@ -1,5 +1,6 @@
 import { findClient } from '@/lib/oauth/clients';
 import { peekConsentTransaction } from '@/lib/oauth/consent-tx';
+import ApproveForm from './ApproveForm';
 
 // OAuth consent screen.
 //
@@ -124,50 +125,13 @@ export default async function ConsentPage({
 
       <Section title="Token lifetime">
         <p style={{ margin: 0, color: '#c0c0d0' }}>
-          Access tokens expire after 1 hour. The client will re-prompt you
-          when expired.
+          Access tokens last 1 hour and the client renews them silently for
+          up to 30 days. After that you&rsquo;ll approve once more. Revoke
+          any time from the terminal&rsquo;s connected-apps admin.
         </p>
       </Section>
 
-      <form method="post" action="/api/oauth/finalize" style={{ display: 'flex', gap: 12, marginTop: 24 }}>
-        {/* The transaction id IS the consent — finalize loads everything server-side. */}
-        <input type="hidden" name="tx" value={tx} />
-
-        <button
-          type="submit"
-          style={{
-            flex: 1,
-            padding: '12px 16px',
-            borderRadius: 8,
-            border: '1px solid #2a7d4f',
-            backgroundColor: '#1f5e3c',
-            color: '#fff',
-            fontSize: 14,
-            fontWeight: 600,
-            cursor: 'pointer',
-          }}
-        >
-          Approve access
-        </button>
-        <a
-          href="/"
-          style={{
-            flex: 1,
-            padding: '12px 16px',
-            borderRadius: 8,
-            border: '1px solid #3a3a4a',
-            backgroundColor: 'transparent',
-            color: '#c0c0d0',
-            fontSize: 14,
-            fontWeight: 600,
-            textAlign: 'center',
-            textDecoration: 'none',
-            cursor: 'pointer',
-          }}
-        >
-          Deny
-        </a>
-      </form>
+      <ApproveForm tx={tx} />
 
       <p style={{ color: '#666', fontSize: 12, marginTop: 16, marginBottom: 0 }}>
         Only approve clients you trust. The application above will be able to
