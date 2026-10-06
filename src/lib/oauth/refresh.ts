@@ -32,6 +32,23 @@ import { createServiceClient } from '@/lib/supabase';
 /** 30 days, matching SESSION_MAX_AGE_SECONDS in src/lib/session.ts. */
 const REFRESH_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 
+/**
+ * How long after a refresh token is rotated a second presentation of it by the
+ * same client is still treated as a retry rather than theft. Long enough for a
+ * retry after a lost response or two parallel refreshes; short enough that a
+ * stolen token replayed later still burns the family.
+ */
+export const REFRESH_REUSE_GRACE_MS = 60 * 1000;
+
+/** True when `usedAtIso` is a real timestamp no older than the grace window. */
+export function isWithinReuseGrace(usedAtIso: string, nowMs: number): boolean {
+  const usedAt = Date.parse(usedAtIso);
+  if (!Number.isFinite(usedAt)) return false;
+  const age = nowMs - usedAt;
+  // A used_at in the future is not a retry we can reason about.
+  return age >= 0 && age <= REFRESH_REUSE_GRACE_MS;
+}
+
 export interface RefreshGrant {
   family_id: string;
   client_id: string;
@@ -195,7 +212,7 @@ export async function claimRefreshToken(
   // token we already rotated away."
   const { data: row, error: readErr } = await supabase
     .from('oauth_refresh_tokens')
-    .select('family_id, client_id, used_at, revoked_at, expires_at')
+    .select('family_id, client_id, subject, scope, resource, used_at, revoked_at, expires_at')
     .eq('token_hash', token_hash)
     .maybeSingle();
 
@@ -204,6 +221,9 @@ export async function claimRefreshToken(
   const r = row as {
     family_id: string;
     client_id: string;
+    subject: string;
+    scope: string;
+    resource: string | null;
     used_at: string | null;
     revoked_at: string | null;
     expires_at: string;
@@ -214,18 +234,39 @@ export async function claimRefreshToken(
   // unaffected.
   if (r.client_id !== client_id) return { ok: false, reason: 'client_mismatch' };
 
-  if (r.used_at) {
-    // REUSE. Either a stolen token is being replayed, or the legitimate
-    // client never received the rotated successor. We cannot tell them
-    // apart, so we assume compromise: burn the family. The user re-consents
-    // once; an attacker gets nothing.
-    await revokeRefreshFamily(r.family_id);
-    return { ok: false, reason: 'reused' };
-  }
+  // Revocation and expiry outrank everything below: a dead token stays dead,
+  // retry or not.
   if (r.revoked_at) return { ok: false, reason: 'revoked' };
   if (Date.parse(r.expires_at) < Date.now()) return { ok: false, reason: 'expired' };
 
-  // Claim failed but the row looks live — a concurrent claimer won the race.
-  // Treat it as reuse: exactly one of the two racers gets the rotation.
-  return { ok: false, reason: 'reused' };
+  if (r.used_at) {
+    // The token was already rotated. Two very different callers look alike
+    // here: a thief replaying a stolen token, and the legitimate client that
+    // never received its successor (response lost in transit) or fired two
+    // refreshes at once. Burning the family on every such retry strands the
+    // connector and sends a human back to log in — the outage this feature
+    // exists to remove (QA 2026-10-05). So a second presentation by the SAME
+    // client within REFRESH_REUSE_GRACE_MS of the first is a retry and gets a
+    // successor in the same family. Anything later is treated as compromise.
+    if (isWithinReuseGrace(r.used_at, Date.now())) {
+      return {
+        ok: true,
+        grant: {
+          family_id: r.family_id,
+          client_id: r.client_id,
+          subject: r.subject,
+          scope: r.scope,
+          resource: r.resource ?? null,
+        },
+      };
+    }
+    await revokeRefreshFamily(r.family_id);
+    return { ok: false, reason: 'reused' };
+  }
+
+  // Claim failed but the row reads live and unused: the claim itself errored
+  // (store hiccup) or a racer's write is not visible yet. Nothing was
+  // consumed by us and there is no evidence of reuse, so burn nothing and let
+  // the client try again.
+  return { ok: false, reason: 'unknown' };
 }

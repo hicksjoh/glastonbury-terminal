@@ -106,6 +106,8 @@ import {
   revokeRefreshFamily,
   revokeRefreshTokensForClient,
   hashRefreshToken,
+  isWithinReuseGrace,
+  REFRESH_REUSE_GRACE_MS,
 } from '../oauth/refresh';
 
 const GRANT = {
@@ -155,7 +157,7 @@ describe('OAuth refresh tokens — rotation and reuse detection', () => {
     expect(again.ok).toBe(true);
   });
 
-  it('REUSE of an already-rotated token burns the entire family', async () => {
+  it('REUSE of an already-rotated token, after the retry grace, burns the entire family', async () => {
     const first = await mintRefreshToken(GRANT);
     const claimed = await claimRefreshToken(first.token, GRANT.client_id);
     expect(claimed.ok).toBe(true);
@@ -163,7 +165,11 @@ describe('OAuth refresh tokens — rotation and reuse detection', () => {
     const second = await mintRefreshToken({ ...GRANT, family_id: claimed.grant.family_id });
     const third = await mintRefreshToken({ ...GRANT, family_id: claimed.grant.family_id });
 
-    // Replay the spent first token — the classic stolen-token signal.
+    // Replay the spent first token after the retry grace — the classic
+    // stolen-token signal.
+    for (const r of rows) {
+      if (r.used_at) r.used_at = new Date(Date.now() - 2 * REFRESH_REUSE_GRACE_MS).toISOString();
+    }
     const replay = await claimRefreshToken(first.token, GRANT.client_id);
     expect(replay.ok).toBe(false);
     if (replay.ok) return;
@@ -232,12 +238,52 @@ describe('OAuth refresh tokens — rotation and reuse detection', () => {
     expect((await claimRefreshToken(token, GRANT.client_id)).ok).toBe(true);
   });
 
-  it('two concurrent claims of the same token: exactly one wins', async () => {
+  it('two concurrent claims by the same client: neither strands it, the token is spent once', async () => {
     const { token } = await mintRefreshToken(GRANT);
     const [a, b] = await Promise.all([
       claimRefreshToken(token, GRANT.client_id),
       claimRefreshToken(token, GRANT.client_id),
     ]);
-    expect([a.ok, b.ok].filter(Boolean)).toHaveLength(1);
+    // The same client refreshing twice at once is a retry, not theft.
+    expect(a.ok && b.ok).toBe(true);
+    if (!a.ok || !b.ok) return;
+    expect(a.grant.family_id).toBe(b.grant.family_id);
+    expect(rows.filter((r) => r.used_at !== null)).toHaveLength(1);
+    expect(rows.every((r) => r.revoked_at === null)).toBe(true);
+  });
+
+  // A client whose refresh response was lost retries with the token it still
+  // holds. Burning the family for that sends a human back to log in.
+  it('a retry inside the grace window is granted and burns nothing', async () => {
+    const first = await mintRefreshToken(GRANT);
+    expect((await claimRefreshToken(first.token, GRANT.client_id)).ok).toBe(true);
+    const retry = await claimRefreshToken(first.token, GRANT.client_id);
+    expect(retry.ok).toBe(true);
+    if (!retry.ok) return;
+    expect(retry.grant).toMatchObject({ client_id: GRANT.client_id, subject: GRANT.subject, scope: GRANT.scope });
+    expect(rows.every((r) => r.revoked_at === null)).toBe(true);
+  });
+
+  it('the grace never applies to another client, a revoked token or an expired one', async () => {
+    const first = await mintRefreshToken(GRANT);
+    await claimRefreshToken(first.token, GRANT.client_id);
+
+    const other = await claimRefreshToken(first.token, 'someone-else');
+    expect(other).toMatchObject({ ok: false, reason: 'client_mismatch' });
+    expect(rows.every((r) => r.revoked_at === null)).toBe(true);
+
+    rows[0].expires_at = new Date(Date.now() - 1000).toISOString();
+    expect(await claimRefreshToken(first.token, GRANT.client_id)).toMatchObject({ ok: false, reason: 'expired' });
+    rows[0].expires_at = new Date(Date.now() + 60_000).toISOString();
+    rows[0].revoked_at = new Date().toISOString();
+    expect(await claimRefreshToken(first.token, GRANT.client_id)).toMatchObject({ ok: false, reason: 'revoked' });
+  });
+
+  it('the grace window is exactly bounded and rejects nonsense timestamps', () => {
+    const now = Date.parse('2026-10-06T12:00:00Z');
+    expect(isWithinReuseGrace(new Date(now - REFRESH_REUSE_GRACE_MS).toISOString(), now)).toBe(true);
+    expect(isWithinReuseGrace(new Date(now - REFRESH_REUSE_GRACE_MS - 1).toISOString(), now)).toBe(false);
+    expect(isWithinReuseGrace(new Date(now + 1000).toISOString(), now)).toBe(false);
+    expect(isWithinReuseGrace('not-a-date', now)).toBe(false);
   });
 });

@@ -122,8 +122,9 @@ async function exchangeCodeForToken(
 
 test.describe('@smoke S3 — OAuth registration', () => {
   test('anonymous registration is rejected when OAUTH_REGISTRATION_TOKEN is set', async ({ baseURL }) => {
-    // Skip when the env var isn't set in this deploy — the route falls back
-    // to warn-and-allow then. CI deploys SHOULD set this for production.
+    // Only meaningful against a deploy with the token gate on AND open DCR
+    // off. Production sets OAUTH_OPEN_DCR=1 (Claude's connector registers
+    // anonymously), where an anonymous registration is admitted by design.
     if (!process.env.E2E_EXPECT_REG_TOKEN_GATE) {
       test.skip(true, 'Set E2E_EXPECT_REG_TOKEN_GATE=1 to assert this once OAUTH_REGISTRATION_TOKEN is live in prod');
     }
@@ -373,25 +374,31 @@ test.describe('@smoke S3 — refresh tokens', () => {
     });
     expect(mcp.status()).not.toBe(401);
 
-    // Reuse of the rotated-away token burns the family: the successor dies too.
-    const reuse = await request.post('/api/oauth/token', {
+    // An immediate second presentation of the rotated-away token is the same
+    // client retrying (lost response, parallel refresh). It must be granted,
+    // not burn the family — that burn is what kept disconnecting the
+    // connector. Replay AFTER the 60s grace still burns the family; that path
+    // needs an aged row, so it is covered in src/lib/__tests__/oauth-refresh.test.ts.
+    const retry = await request.post('/api/oauth/token', {
       form: {
         grant_type: 'refresh_token',
         refresh_token: firstBody.refresh_token,
         client_id: client.client_id,
       },
     });
-    expect(reuse.status()).toBe(400);
-    expect((await reuse.json()).error).toBe('invalid_grant');
+    expect(retry.status(), 'an immediate retry must not strand the client').toBe(200);
+    const retryBody = await retry.json();
+    expect(retryBody.refresh_token).not.toBe(firstBody.refresh_token);
 
-    const afterBurn = await request.post('/api/oauth/token', {
+    // And the family is still alive: the first successor keeps working.
+    const stillAlive = await request.post('/api/oauth/token', {
       form: {
         grant_type: 'refresh_token',
         refresh_token: refreshedBody.refresh_token,
         client_id: client.client_id,
       },
     });
-    expect(afterBurn.status(), 'reuse detection must revoke the whole family').toBe(400);
+    expect(stillAlive.status(), 'a retry must not revoke the family').toBe(200);
   });
 
   test('a refresh token presented by a DIFFERENT client is not consumed', async ({ request }) => {
