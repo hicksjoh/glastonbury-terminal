@@ -10,6 +10,8 @@ import { pingHealthcheck } from '@/lib/healthchecks';
 import { cronIsAuthorized } from '@/lib/cron-auth';
 import { captureRouteError } from '@/lib/api-error';
 import { loggerFor } from '@/lib/request-id';
+import { recordCronRan } from '@/lib/cron-idempotency';
+import { MARKER_JOBS } from '@/lib/cron-freshness';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -52,6 +54,15 @@ async function handle(req: NextRequest): Promise<NextResponse> {
     const persisted = await persistAlertCandidates(candidates);
 
     await pingHealthcheck(HC_SLUG, 'success');
+    // A scan with no active storm writes no row anywhere, so leave a marker
+    // for the dead-man check. Mock scans are QA, not evidence the job runs.
+    if (!allowMock) {
+      await recordCronRan(MARKER_JOBS.stormWatch, {
+        storms_seen: storms.length,
+        candidates: candidates.length,
+        created: persisted.created,
+      });
+    }
 
     return NextResponse.json({
       ok: true,

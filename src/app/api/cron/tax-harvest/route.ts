@@ -5,6 +5,8 @@ import { pingHealthcheck } from '@/lib/healthchecks';
 import { cronIsAuthorized } from '@/lib/cron-auth';
 import { captureRouteError } from '@/lib/api-error';
 import { loggerFor } from '@/lib/request-id';
+import { recordCronRan } from '@/lib/cron-idempotency';
+import { MARKER_JOBS } from '@/lib/cron-freshness';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -46,6 +48,9 @@ async function handle(req: NextRequest): Promise<NextResponse> {
     }
 
     await pingHealthcheck(HC_SLUG, 'success');
+    // A week with no harvestable loss inserts nothing, so leave a marker for
+    // the dead-man check.
+    await recordCronRan(MARKER_JOBS.taxHarvest, { week_of, inserted });
 
     return NextResponse.json({
       week_of,

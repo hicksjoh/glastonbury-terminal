@@ -3,7 +3,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { AppShell } from '@/components/layout/AppShell';
 import { ErrorBoundary } from '@/components/ErrorBoundary';
-import { CheckCircle, XCircle, RefreshCw, Shield, Sliders, Bell, Zap, Info } from 'lucide-react';
+import { CheckCircle, XCircle, RefreshCw, Shield, Sliders, Bell, Zap, Info, Clock } from 'lucide-react';
 import { APP_TIME_ZONE } from '@/lib/et-clock';
 
 interface ConnectionStatus {
@@ -14,6 +14,26 @@ interface ConnectionStatus {
 }
 
 const STORAGE_KEY = 'glastonbury-settings';
+
+// Mirrors GET /api/ops/cron-freshness.
+interface CronJobRow {
+  path: string;
+  name: string;
+  schedule: string;
+  status: string;
+  lastEvidenceAt: string | null;
+}
+type CronCheck =
+  | { state: 'loading' }
+  | { state: 'unavailable' }
+  | { state: 'loaded'; ok: boolean; crons: CronJobRow[] };
+
+const CRON_STATUS_LABEL: Record<string, { label: string; color: string }> = {
+  fresh: { label: 'ON SCHEDULE', color: '#4ade80' },
+  overdue: { label: 'OVERDUE', color: '#f87171' },
+  never_ran: { label: 'NEVER RAN', color: '#f87171' },
+  unverifiable: { label: 'UNVERIFIABLE', color: '#fbbf24' },
+};
 
 interface SavedSettings {
   riskTolerance: number;
@@ -43,6 +63,7 @@ export default function SettingsPage() {
   const [envVars, setEnvVars] = useState<Record<string, boolean>>({});
   const [isPaperEnv, setIsPaperEnv] = useState(true);
   const [settingsLoaded, setSettingsLoaded] = useState(false);
+  const [cronCheck, setCronCheck] = useState<CronCheck>({ state: 'loading' });
 
   // ── Load settings from localStorage on mount ──────────────────────────────
   useEffect(() => {
@@ -181,6 +202,22 @@ export default function SettingsPage() {
         setIsPaperEnv(data.isPaper ?? true);
       })
       .catch(() => {});
+  }, []);
+
+  // ── Scheduled-job dead-man check ──────────────────────────────────────────
+  // Anything other than a well-formed answer is "unavailable": a failed check
+  // must never render as an empty (and therefore healthy-looking) list.
+  useEffect(() => {
+    fetch('/api/ops/cron-freshness')
+      .then(res => (res.ok ? res.json() : Promise.reject(new Error(`HTTP ${res.status}`))))
+      .then(data => {
+        if (typeof data?.ok !== 'boolean' || !Array.isArray(data?.crons) || data.crons.length === 0) {
+          setCronCheck({ state: 'unavailable' });
+          return;
+        }
+        setCronCheck({ state: 'loaded', ok: data.ok, crons: data.crons });
+      })
+      .catch(() => setCronCheck({ state: 'unavailable' }));
   }, []);
 
   // ── Auto-test all connections on mount ────────────────────────────────────
@@ -361,6 +398,45 @@ export default function SettingsPage() {
               {paperMode ? 'PAPER' : 'LIVE'}
             </div>
           </div>
+        </Section>
+
+        {/* Scheduled jobs (cron dead-man check) */}
+        <Section title="Scheduled jobs" icon={Clock}>
+          {cronCheck.state === 'loading' && (
+            <div style={{ color: '#555570', fontSize: 11 }}>Checking…</div>
+          )}
+          {cronCheck.state === 'unavailable' && (
+            <div style={{ color: '#fbbf24', fontSize: 12 }}>
+              Job status unavailable — the check itself could not run.
+            </div>
+          )}
+          {cronCheck.state === 'loaded' && (
+            <div data-testid="cron-freshness" style={{ display: 'grid', gap: 6 }}>
+              {cronCheck.crons.map(c => {
+                // An unrecognised status is shown as a problem, never as healthy.
+                const s = CRON_STATUS_LABEL[c.status] ?? { label: 'UNKNOWN', color: '#fbbf24' };
+                return (
+                  <div key={`${c.path}@${c.schedule}`} style={{
+                    display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10,
+                    padding: '6px 10px', borderRadius: 6, background: 'rgba(255,255,255,0.02)',
+                  }}>
+                    <div style={{ minWidth: 0 }}>
+                      <span style={{ color: '#e8e8f0', fontSize: 12 }}>{c.name}</span>
+                      <span style={{ color: '#555570', fontSize: 10, marginLeft: 8, fontFamily: "'JetBrains Mono', monospace" }}>
+                        {c.schedule} UTC{c.lastEvidenceAt ? ` · last ${c.lastEvidenceAt.slice(0, 16).replace('T', ' ')}` : ''}
+                      </span>
+                    </div>
+                    <span style={{
+                      color: s.color, fontSize: 10, fontWeight: 600, whiteSpace: 'nowrap',
+                      fontFamily: "'JetBrains Mono', monospace",
+                    }}>
+                      {s.label}
+                    </span>
+                  </div>
+                );
+              })}
+            </div>
+          )}
         </Section>
 
         {/* Environment & Version Info */}

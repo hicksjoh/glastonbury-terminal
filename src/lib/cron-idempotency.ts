@@ -107,3 +107,33 @@ export async function markCronRunComplete(
     );
   }
 }
+
+/**
+ * Leave a "ran at" marker for a cron that has no idempotency claim and may
+ * write nothing on a quiet run (no storm, no harvestable loss, empty feed).
+ * The in-app dead-man check (src/lib/cron-freshness.ts) reads the latest
+ * `completed_at` per job name, so call this ONLY on the success path.
+ *
+ * Uses the existing cron_runs table: the claim creates today's row if it is
+ * missing (its return value is irrelevant here — this is a marker, not a
+ * gate), and mark-complete stamps `completed_at = NOW()` whether the row is
+ * new or left over from an earlier run today.
+ *
+ * Never throws: a marker failure must not turn a successful cron into a 500.
+ * A missing marker surfaces as `overdue` in the dead-man check instead.
+ */
+export async function recordCronRan(
+  jobName: string,
+  result?: Record<string, unknown>,
+): Promise<void> {
+  try {
+    const runKey = todayKeyET();
+    await tryClaimCronRun(jobName, runKey);
+    await markCronRunComplete(jobName, runKey, result);
+  } catch (err) {
+    console.error(
+      `[cron-idempotency] recordCronRan failed for ${jobName}:`,
+      err instanceof Error ? err.message : String(err),
+    );
+  }
+}
