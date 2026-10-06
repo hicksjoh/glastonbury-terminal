@@ -16,7 +16,9 @@
 
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
-import { getAccount, getPositions } from '@/lib/alpaca';
+import { alpacaFetch, getAccount, getPositions } from '@/lib/alpaca';
+import { getLiveQuotes } from '@/lib/watchlist-quotes';
+import { validateEquitySymbol } from '@/lib/sanitize';
 import { createServiceClient } from '@/lib/supabase';
 import {
   setMemory,
@@ -102,19 +104,72 @@ export function buildTerminalMcpServer(): McpServer {
   );
 
   // ─── tool: terminal_get_watchlist ──────────────────────────────────
+  // Prices are resolved LIVE on every call (Alpaca snapshot, FMP fallback)
+  // and written back to watchlist.current_price so the briefing and Keisha
+  // context read fresh numbers too. Each item carries price_source /
+  // price_as_of so a stale or missing price is never presented as live.
   server.tool(
     'terminal_get_watchlist',
-    'Returns the current watchlist symbols with optional notes and last known price. Use when asked what Wes is watching, tracking, or following.',
+    'Returns the current watchlist symbols with notes and a live price (with source + timestamp; falls back to the last stored price, clearly labeled). Use when asked what Wes is watching, tracking, or following.',
     {},
     async () => {
       try {
         const supabase = createServiceClient();
         const { data, error } = await supabase
           .from('watchlist')
-          .select('symbol, company_name, current_price, notes, created_at')
+          .select('symbol, company_name, current_price, notes, created_at, updated_at')
           .order('created_at', { ascending: false });
         if (error) return fail(`watchlist query failed: ${error.message}`);
-        return okJson({ count: data?.length ?? 0, items: data ?? [] });
+        const rows = data ?? [];
+
+        const quotes = await getLiveQuotes(rows.map(r => String(r.symbol)));
+        const now = new Date().toISOString();
+
+        const items = rows.map(r => {
+          const q = quotes.get(String(r.symbol).toUpperCase());
+          if (q) {
+            return {
+              symbol: r.symbol,
+              company_name: r.company_name,
+              current_price: q.price,
+              change_pct: q.changePct,
+              price_source: q.source,
+              price_as_of: q.asOf,
+              notes: r.notes,
+              created_at: r.created_at,
+            };
+          }
+          const stored = r.current_price === null || r.current_price === undefined ? null : Number(r.current_price);
+          return {
+            symbol: r.symbol,
+            company_name: r.company_name,
+            current_price: stored,
+            change_pct: null,
+            price_source: stored === null ? 'unavailable' : 'stored',
+            price_as_of: stored === null ? null : r.updated_at,
+            notes: r.notes,
+            created_at: r.created_at,
+          };
+        });
+
+        // Best-effort write-back; a failure here must not break the read.
+        await Promise.all(
+          Array.from(quotes.values()).map(q =>
+            supabase
+              .from('watchlist')
+              .update({ current_price: q.price, updated_at: now })
+              .eq('symbol', q.symbol)
+              .then(({ error: e }) => e && console.warn(`watchlist price write-back failed for ${q.symbol}: ${e.message}`)),
+          ),
+        );
+
+        const unpriced = items.filter(i => i.price_source !== 'alpaca' && i.price_source !== 'fmp').length;
+        return okJson({
+          count: items.length,
+          live_priced: items.length - unpriced,
+          fetched_at: now,
+          items,
+        });
       } catch (err) {
         return fail(`terminal_get_watchlist failed: ${(err as Error).message}`);
       }
@@ -131,11 +186,24 @@ export function buildTerminalMcpServer(): McpServer {
     },
     async ({ symbol, notes }) => {
       try {
+        const sym = validateEquitySymbol(symbol);
+        if (!sym) return fail(`invalid ticker symbol: ${symbol.slice(0, 20)}`);
+
+        // Enrich with name + live price so the row is never born empty.
+        let companyName: string | null = null;
+        try {
+          const asset = await alpacaFetch<{ name?: string }>(`/v2/assets/${encodeURIComponent(sym)}`);
+          companyName = asset?.name ?? null;
+        } catch { /* non-critical — insert without a name */ }
+        const quote = (await getLiveQuotes([sym])).get(sym) ?? null;
+
         const supabase = createServiceClient();
         const { data, error } = await supabase
           .from('watchlist')
           .insert({
-            symbol: symbol.toUpperCase(),
+            symbol: sym,
+            company_name: companyName,
+            current_price: quote?.price ?? null,
             notes: notes ?? null,
           })
           .select()

@@ -266,6 +266,31 @@ export async function getSnapshot(symbol: string) {
   return alpacaFetch(`/v2/stocks/${sym}/snapshot`, { base: 'data' });
 }
 
+/** Minimal shape of an Alpaca v2 stock snapshot — only the fields we read. */
+export interface AlpacaSnapshot {
+  latestTrade?: { p?: number; t?: string } | null;
+  dailyBar?: { c?: number; t?: string } | null;
+  prevDailyBar?: { c?: number; t?: string } | null;
+}
+
+/**
+ * Batch snapshots for many symbols in ONE request. Uses the IEX feed, which
+ * every Alpaca plan (including free/paper) can query; the default SIP feed
+ * 403s on the free tier for recent data. Invalid symbols are dropped rather
+ * than failing the whole batch.
+ */
+export async function getSnapshots(symbols: string[]): Promise<Record<string, AlpacaSnapshot>> {
+  const valid = symbols
+    .map(s => validateEquitySymbol(s))
+    .filter((s): s is string => !!s);
+  if (valid.length === 0) return {};
+  const qs = encodeURIComponent(Array.from(new Set(valid)).join(','));
+  return alpacaFetch<Record<string, AlpacaSnapshot>>(
+    `/v2/stocks/snapshots?symbols=${qs}&feed=iex`,
+    { base: 'data' },
+  );
+}
+
 // ─── Asset search (loose match for typeahead) ─────────────────────────────
 
 /**

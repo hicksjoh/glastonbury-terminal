@@ -4,6 +4,7 @@ import type { ToolDef } from './registry';
 import { sanitizeSymbol } from '@/lib/sanitize';
 import { createServiceClient } from '@/lib/supabase';
 import { getProfile } from '@/lib/fmp-client';
+import { getLiveQuotes } from '@/lib/watchlist-quotes';
 
 const inputSchema = z.object({
   symbol: z.string().describe('Stock ticker symbol to add'),
@@ -45,6 +46,11 @@ export const addWatchlist: ToolDef<z.infer<typeof inputSchema>> = {
         companyName = profile.companyName || symbol;
         currentPrice = profile.price;
       }
+    } catch { /* non-critical */ }
+    // FMP is frequently quota-limited; prefer the live-quote helper for price.
+    try {
+      const live = (await getLiveQuotes([symbol])).get(symbol);
+      if (live) currentPrice = live.price;
     } catch { /* non-critical */ }
 
     const { error } = await supabase.from('watchlist').insert({
