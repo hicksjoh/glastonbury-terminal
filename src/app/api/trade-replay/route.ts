@@ -3,6 +3,7 @@ import Anthropic from '@anthropic-ai/sdk';
 import { createServiceClient } from '@/lib/supabase';
 import { checkRateLimitDurable, getRateLimitIdentity } from '@/lib/rate-limit-durable';
 import { tagAnthropicCall } from '@/lib/anthropic-cost';
+import { CLAUDE_MODEL_FALLBACK, modelBudget } from '@/lib/claude';
 import { internalFetch } from '@/lib/internal-fetch';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
@@ -127,10 +128,10 @@ Grade harshly but fairly. A = exceptional timing. B = good. C = average. D = poo
 Positive moneyLeftOnTable means they exited too early. Negative means they saved money by exiting before worse.`;
 
     const anthropic = new Anthropic();
-    const replayModel = process.env.CLAUDE_MODEL_FALLBACK || 'claude-sonnet-4-6';
+    const replayModel = CLAUDE_MODEL_FALLBACK;
     const msg = await anthropic.messages.create({
       model: replayModel,
-      max_tokens: 600,
+      ...modelBudget(replayModel, 600),
       messages: [{ role: 'user', content: prompt }],
     });
     tagAnthropicCall(msg.usage, replayModel, { caller: 'trade-replay' });

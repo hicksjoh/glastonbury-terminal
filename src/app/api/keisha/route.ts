@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { KEISHA_SYSTEM_PROMPT } from '@/lib/claude';
+import { CLAUDE_MODEL_PRIMARY, KEISHA_SYSTEM_PROMPT } from '@/lib/claude';
 import { cachedSystem } from '@/lib/prompts';
 import { checkRateLimitDurable, getRateLimitIdentity } from '@/lib/rate-limit-durable';
 import { sanitizeInput } from '@/lib/sanitize';
@@ -104,6 +104,7 @@ TOOL USAGE RULES:
 
     return NextResponse.json({
       content: finalText,
+      model: CLAUDE_MODEL_PRIMARY,
       suggestions: suggestions.length > 0 ? suggestions : undefined,
       actions: actions.length > 0
         ? actions.map(a => ({ type: a.type, result: a.result, success: a.success, ...(a.renderCard ? { renderCard: a.renderCard } : {}) }))

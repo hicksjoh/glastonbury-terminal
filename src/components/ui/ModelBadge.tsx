@@ -18,11 +18,15 @@ export interface ModelBadgeProps {
 function shortModelName(model: string | null | undefined): string {
   if (!model) return 'Claude';
   const m = model.toLowerCase();
+  if (m.includes('fable-5-1')) return 'Fable 5.1';
+  if (m.includes('fable'))     return 'Fable';
+  if (m.includes('opus-5-5'))  return 'Opus 5.5';
   if (m.includes('opus-5'))    return 'Opus 5';
   if (m.includes('opus-4-8'))  return 'Opus 4.8';
   if (m.includes('opus-4-7'))  return 'Opus 4.7';
   if (m.includes('opus-4-6'))  return 'Opus 4.6';
   if (m.includes('opus'))      return 'Opus';
+  if (m.includes('sonnet-5-5')) return 'Sonnet 5.5';
   if (m.includes('sonnet-5'))  return 'Sonnet 5';
   if (m.includes('sonnet-4-6')) return 'Sonnet 4.6';
   if (m.includes('sonnet'))    return 'Sonnet';

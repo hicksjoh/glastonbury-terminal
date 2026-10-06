@@ -4,7 +4,7 @@
 // scoring (multiple statements in one session, cron reruns) hits the
 // prompt cache and pays ~10% per call after the first write.
 
-import { anthropic, CLAUDE_MODEL_FAST } from '@/lib/claude';
+import { anthropic, CLAUDE_MODEL_FAST, modelBudget, textOf } from '@/lib/claude';
 import { tagAnthropicCall } from '@/lib/anthropic-cost';
 import { cachedSystem } from '@/lib/prompts';
 
@@ -46,13 +46,13 @@ export async function scoreFedStatement(
 
   const msg = await anthropic.messages.create({
     model: CLAUDE_MODEL_FAST,
-    max_tokens: 512,
+    ...modelBudget(CLAUDE_MODEL_FAST, 512),
     system: cachedSystem(SCORER_SYSTEM_PROMPT),
     messages: [{ role: 'user', content: userPrompt }],
   });
   tagAnthropicCall(msg.usage, CLAUDE_MODEL_FAST, { caller: 'fed-scorer' });
 
-  const text = msg.content[0]?.type === 'text' ? msg.content[0].text : '';
+  const text = textOf(msg);
   if (!text) return null;
 
   try {

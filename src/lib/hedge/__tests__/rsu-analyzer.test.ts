@@ -19,6 +19,9 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 const anthropicMock = vi.hoisted(() => ({
   anthropic: { messages: { create: vi.fn() } },
   CLAUDE_MODEL_PRIMARY: 'test-model',
+  modelBudget: (_model: string, visibleTokens: number) => ({ max_tokens: visibleTokens }),
+  textOf: (m: { content: Array<{ type: string; text?: string }> }) =>
+    m.content.filter(b => b.type === 'text').map(b => b.text).join(''),
 }));
 const supabaseMock = vi.hoisted(() => ({ createServiceClient: vi.fn() }));
 const fmpMock = vi.hoisted(() => ({ getQuote: vi.fn() }));

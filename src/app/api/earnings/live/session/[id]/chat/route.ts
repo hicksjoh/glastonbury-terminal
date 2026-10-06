@@ -1,5 +1,5 @@
 import { NextRequest } from 'next/server';
-import { anthropic, CLAUDE_MODEL_PRIMARY, CLAUDE_MODEL_FALLBACK } from '@/lib/claude';
+import { anthropic, CLAUDE_MODEL_PRIMARY, CLAUDE_MODEL_FALLBACK, modelBudget } from '@/lib/claude';
 import { tagAnthropicCall } from '@/lib/anthropic-cost';
 import { createServiceClient } from '@/lib/supabase';
 import { checkRateLimitDurable, getRateLimitIdentity } from '@/lib/rate-limit-durable';
@@ -76,7 +76,7 @@ Answer using only what's in the transcript above. Quote specific lines where app
       try {
         const callStream = (model: string) => anthropic.messages.stream({
           model,
-          max_tokens: 1200,
+          ...modelBudget(model, 1200),
           system: KEISHA_EARNINGS_CHAT_SYSTEM,
           messages,
         });
