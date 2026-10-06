@@ -6,8 +6,8 @@
  * Persists to trade_debates.
  */
 
-import { anthropic, CLAUDE_MODEL_PRIMARY, CLAUDE_MODEL_FALLBACK } from '@/lib/claude';
-import { tagAnthropicCall } from '@/lib/anthropic-cost';
+import { anthropic, CLAUDE_MODEL_PRIMARY, CLAUDE_MODEL_FALLBACK, modelBudget } from '@/lib/claude';
+import { tagAnthropicCall, modelPricing } from '@/lib/anthropic-cost';
 import { fetchQuote, fetchCompanyProfile, fetchRecentNews, fetchBars, computeIndicators } from '@/lib/crew-data';
 
 const ROUNDS = 3;
@@ -83,13 +83,9 @@ ${JSON.stringify({
 ${trade ? `PROPOSED TRADE: ${JSON.stringify(trade, null, 2)}` : ''}`;
 }
 
-const PRICE_PER_M: Record<string, { input: number; output: number }> = {
-  'claude-opus-4-7': { input: 15, output: 75 },
-  'claude-sonnet-4-6': { input: 3, output: 15 },
-};
 function cost(model: string, tIn: number, tOut: number): number {
-  const p = PRICE_PER_M[model] ?? { input: 3, output: 15 };
-  return (tIn / 1_000_000) * p.input + (tOut / 1_000_000) * p.output;
+  const p = modelPricing(model);
+  return (tIn / 1_000_000) * p.input_per_mtok + (tOut / 1_000_000) * p.output_per_mtok;
 }
 
 type RoundOutput = { side: 'bull' | 'bear'; round: number; text: string; tokens_in: number; tokens_out: number; model: string };
@@ -114,7 +110,7 @@ async function runSideRound(args: {
 ${historyText ? `\nDEBATE SO FAR:\n${historyText}\n\n` : ''}It is now Round ${args.round} for the ${args.side.toUpperCase()}${args.round > 1 ? `. Respond directly to the ${otherSide}'s previous round and add new evidence.` : '. Make your opening case.'}`;
 
   const callStream = (model: string) => anthropic.messages.stream({
-    model, max_tokens: 500, system, messages: [{ role: 'user', content: userPrompt }],
+    model, ...modelBudget(model, 500), system, messages: [{ role: 'user', content: userPrompt }],
   });
 
   let model = CLAUDE_MODEL_FALLBACK; // Sonnet for debaters — speed + cost
@@ -153,7 +149,7 @@ async function runModerator(args: {
   const userPrompt = `${args.dataBlob}\n\nFULL DEBATE TRANSCRIPT:\n${transcript}\n\nRender the verdict now as JSON.`;
 
   const callStream = (model: string) => anthropic.messages.stream({
-    model, max_tokens: 1500, system: MODERATOR_SYSTEM, messages: [{ role: 'user', content: userPrompt }],
+    model, ...modelBudget(model, 1500), system: MODERATOR_SYSTEM, messages: [{ role: 'user', content: userPrompt }],
   });
 
   let model = CLAUDE_MODEL_PRIMARY; // Opus for moderator

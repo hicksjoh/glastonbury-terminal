@@ -26,42 +26,54 @@ interface ModelPricing {
   output_per_mtok: number;
 }
 
-// USD per 1,000,000 tokens. As of 2026.
+// USD per 1,000,000 tokens. List rates as of 2026-10.
 const PRICING: Record<string, ModelPricing> = {
+  // Fable tier
+  'claude-fable-5-1': { input_per_mtok: 10, output_per_mtok: 50 },
+  'claude-fable-5': { input_per_mtok: 10, output_per_mtok: 50 },
   // Opus family
-  'claude-opus-4-7': { input_per_mtok: 15, output_per_mtok: 75 },
-  'claude-opus-4-7[1m]': { input_per_mtok: 15, output_per_mtok: 75 },
-  'claude-opus-4-6': { input_per_mtok: 15, output_per_mtok: 75 },
+  'claude-opus-5-5': { input_per_mtok: 4, output_per_mtok: 20 },
+  'claude-opus-5': { input_per_mtok: 5, output_per_mtok: 25 },
+  'claude-opus-4-8': { input_per_mtok: 5, output_per_mtok: 25 },
+  'claude-opus-4-7': { input_per_mtok: 5, output_per_mtok: 25 },
+  'claude-opus-4-6': { input_per_mtok: 5, output_per_mtok: 25 },
   // Sonnet family
+  'claude-sonnet-5-5': { input_per_mtok: 2, output_per_mtok: 10 },
+  'claude-sonnet-5': { input_per_mtok: 2, output_per_mtok: 10 },
   'claude-sonnet-4-6': { input_per_mtok: 3, output_per_mtok: 15 },
   'claude-sonnet-4-5': { input_per_mtok: 3, output_per_mtok: 15 },
   // Haiku family
-  'claude-haiku-4-5-20251001': { input_per_mtok: 0.8, output_per_mtok: 4 },
-  'claude-haiku-4-5': { input_per_mtok: 0.8, output_per_mtok: 4 },
+  'claude-haiku-4-5': { input_per_mtok: 1, output_per_mtok: 5 },
 };
 
 export interface AnthropicUsage {
-  input_tokens?: number;
-  output_tokens?: number;
-  cache_creation_input_tokens?: number;
-  cache_read_input_tokens?: number;
+  input_tokens?: number | null;
+  output_tokens?: number | null;
+  cache_creation_input_tokens?: number | null;
+  cache_read_input_tokens?: number | null;
 }
 
-function pricingFor(model: string): ModelPricing | null {
-  return PRICING[model] ?? null;
+// An unknown model must not price at $0 — that blinds the budget-burn
+// alert exactly when a new (usually pricier) model ships. Unknown ids
+// price at the most expensive known rate so the alert errs loud.
+const UNKNOWN_MODEL_PRICING: ModelPricing = { input_per_mtok: 10, output_per_mtok: 50 };
+
+export function modelPricing(model: string): ModelPricing {
+  // Tolerate dated snapshots ("claude-haiku-4-5-20251001") and "[1m]" tags.
+  const id = model.replace(/\[1m\]$/, '').replace(/-\d{8}$/, '');
+  const p = PRICING[id];
+  if (p) return p;
+  log.warn({ model }, 'anthropic-cost: unknown model, pricing at top rate — update PRICING table');
+  return UNKNOWN_MODEL_PRICING;
 }
 
 /**
  * Compute the USD cost of a single Anthropic message call.
  * Cache writes are billed at 1.25× input price; cache reads at 0.1×.
- * Returns 0 (and logs a warn) if the model is not in the pricing table.
+ * Unknown models price at the top known rate (see modelPricing).
  */
 export function computeAnthropicCostUsd(usage: AnthropicUsage, model: string): number {
-  const p = pricingFor(model);
-  if (!p) {
-    log.warn({ model }, 'anthropic-cost: unknown model, returning 0 — update PRICING table');
-    return 0;
-  }
+  const p = modelPricing(model);
   const M = 1_000_000;
   const input = (usage.input_tokens ?? 0) * p.input_per_mtok;
   const cacheWrite = (usage.cache_creation_input_tokens ?? 0) * p.input_per_mtok * 1.25;

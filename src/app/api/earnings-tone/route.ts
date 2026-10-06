@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { anthropic, CLAUDE_MODEL_FALLBACK } from '@/lib/claude';
+import { anthropic, CLAUDE_MODEL_FALLBACK, modelBudget, textOf } from '@/lib/claude';
 import { tagAnthropicCall } from '@/lib/anthropic-cost';
 import { getSupabase } from '@/lib/supabase';
 import { withRateLimit, RATE } from '@/lib/api-rate-limit';
@@ -127,7 +127,7 @@ async function GET_impl(req: NextRequest) {
     try {
       const message = await anthropic.messages.create({
         model: CLAUDE_MODEL_FALLBACK,
-        max_tokens: 2000,
+        ...modelBudget(CLAUDE_MODEL_FALLBACK, 2000),
         messages: [
           {
             role: 'user',
@@ -154,7 +154,7 @@ ${transcript.slice(0, 80000)}`,
       });
       tagAnthropicCall(message.usage, CLAUDE_MODEL_FALLBACK, { caller: 'earnings-tone' });
 
-      const responseText = message.content[0].type === 'text' ? message.content[0].text : '';
+      const responseText = textOf(message);
 
       // Extract JSON from response (handle markdown code blocks)
       const jsonMatch = responseText.match(/\{[\s\S]*\}/);

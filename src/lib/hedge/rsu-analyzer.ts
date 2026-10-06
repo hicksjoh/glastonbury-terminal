@@ -10,7 +10,7 @@
 //   2. BEAR case (hedge aggressively, capture diversification benefit)
 //   3. SYNTHESIS (Wes-specific recommendation with sizes)
 
-import { anthropic, CLAUDE_MODEL_PRIMARY } from '@/lib/claude';
+import { anthropic, CLAUDE_MODEL_PRIMARY, modelBudget, textOf } from '@/lib/claude';
 import { tagAnthropicCall } from '@/lib/anthropic-cost';
 import { cachedSystem } from '@/lib/prompts';
 import { getQuote, type FmpQuote } from '@/lib/fmp-client';
@@ -310,7 +310,7 @@ export async function analyzeRsuHedge(): Promise<HedgeAnalysisResult | null> {
 
   const msg = await anthropic.messages.create({
     model: CLAUDE_MODEL_PRIMARY,
-    max_tokens: 1500,
+    ...modelBudget(CLAUDE_MODEL_PRIMARY, 1500),
     system: cachedSystem(HEDGE_TEAM_SYSTEM_PROMPT),
     messages: [
       {
@@ -321,7 +321,7 @@ export async function analyzeRsuHedge(): Promise<HedgeAnalysisResult | null> {
   });
   tagAnthropicCall(msg.usage, CLAUDE_MODEL_PRIMARY, { caller: 'rsu-analyzer' });
 
-  const text = msg.content[0]?.type === 'text' ? msg.content[0].text : '';
+  const text = textOf(msg);
   if (!text) return null;
 
   const concentration = computeConcentration(wealth);

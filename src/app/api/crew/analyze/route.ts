@@ -3,8 +3,9 @@ import {
   anthropic,
   CLAUDE_MODEL_PRIMARY,
   CLAUDE_MODEL_FALLBACK,
+  modelBudget,
 } from '@/lib/claude';
-import { tagAnthropicCall } from '@/lib/anthropic-cost';
+import { tagAnthropicCall, modelPricing } from '@/lib/anthropic-cost';
 import { createServiceClient } from '@/lib/supabase';
 import { checkRateLimitDurable } from '@/lib/rate-limit-durable';
 import {
@@ -52,14 +53,9 @@ type JudgeOutput = {
   } | null;
 };
 
-const PRICE_PER_M: Record<string, { input: number; output: number }> = {
-  'claude-opus-4-7': { input: 15.0, output: 75.0 },
-  'claude-sonnet-4-6': { input: 3.0, output: 15.0 },
-  'claude-haiku-4-5-20251001': { input: 0.8, output: 4.0 },
-};
 const costOf = (model: string, tIn: number, tOut: number) => {
-  const p = PRICE_PER_M[model] ?? { input: 3.0, output: 15.0 };
-  return (tIn / 1_000_000) * p.input + (tOut / 1_000_000) * p.output;
+  const p = modelPricing(model);
+  return (tIn / 1_000_000) * p.input_per_mtok + (tOut / 1_000_000) * p.output_per_mtok;
 };
 
 const sseEncode = (obj: unknown) => `data: ${JSON.stringify(obj)}\n\n`;
@@ -170,7 +166,7 @@ async function runSpecialist(
   const callStream = (model: string) =>
     anthropic.messages.stream({
       model,
-      max_tokens: 800,
+      ...modelBudget(model, 800),
       system,
       messages: [{ role: 'user', content: user }],
     });
@@ -298,7 +294,7 @@ async function runJudge(
   const callStream = (model: string) =>
     anthropic.messages.stream({
       model,
-      max_tokens: 1200,
+      ...modelBudget(model, 1200),
       system: JUDGE_SYSTEM,
       messages: [{ role: 'user', content: userPromptForJudge(ticker, data, specialists) }],
     });
