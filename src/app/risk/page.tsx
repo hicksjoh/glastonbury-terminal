@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
+import { toMonteCarloView, type MonteCarloView } from '@/lib/monte-carlo-view';
 import { AppShell } from '@/components/layout/AppShell';
 import { ErrorBoundary } from '@/components/ErrorBoundary';
 import { LoadingState } from '@/components/LoadingState';
@@ -32,7 +33,7 @@ export default function RiskPage() {
 
   const [activeTab, setActiveTab] = useState<'analytics' | 'montecarlo'>('analytics');
 
-  const [mcData, setMcData] = useState<any>(null);
+  const [mcData, setMcData] = useState<MonteCarloView | null>(null);
   const [mcLoading, setMcLoading] = useState(false);
   const [mcSimulations, setMcSimulations] = useState(10000);
   const [mcHorizon, setMcHorizon] = useState(21);
@@ -120,8 +121,9 @@ export default function RiskPage() {
         body: JSON.stringify({ simulations: mcSimulations, horizon: mcHorizon }),
       });
       if (res.ok) {
-        const data = await res.json();
-        setMcData(data);
+        // null when the response can't be rendered honestly — the tab then
+        // shows its empty state instead of defaults.
+        setMcData(toMonteCarloView(await res.json()));
       }
     } catch (err) {
       console.error('Monte Carlo error:', err);
@@ -611,7 +613,7 @@ export default function RiskPage() {
                 }}>
                   <h2 style={{ fontSize: 16, fontWeight: 700, color: '#e8e8e8', margin: '0 0 4px' }}>Simulated Portfolio Return Distribution</h2>
                   <p style={{ color: '#666', fontSize: 12, margin: '0 0 20px' }}>
-                    {(mcData.simulations ?? mcSimulations).toLocaleString()} paths over {mcData.horizon ?? mcHorizon}-day horizon
+                    {mcSimulations.toLocaleString()} paths over {mcHorizon}-day horizon
                   </p>
 
                   {mcData.histogram && mcData.histogram.length > 0 ? (
@@ -691,36 +693,7 @@ export default function RiskPage() {
                 }}>
                   <h2 style={{ fontSize: 16, fontWeight: 700, color: '#e8e8e8', margin: '0 0 16px' }}>Monte Carlo Stress Scenarios</h2>
                   <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 12 }}>
-                    {[
-                      {
-                        name: '2008 Crash',
-                        impact: mcData.stressTests?.crash2008 ?? -38.5,
-                        dollarLoss: mcData.stressTests?.crash2008Dollar ?? 0,
-                        description: 'Lehman collapse, global financial crisis',
-                        color: '#ef4444',
-                      },
-                      {
-                        name: 'COVID (Mar 2020)',
-                        impact: mcData.stressTests?.covid ?? -33.9,
-                        dollarLoss: mcData.stressTests?.covidDollar ?? 0,
-                        description: 'Pandemic selloff, 34% in 23 trading days',
-                        color: '#f87171',
-                      },
-                      {
-                        name: '2022 Rate Hikes',
-                        impact: mcData.stressTests?.rates2022 ?? -25.4,
-                        dollarLoss: mcData.stressTests?.rates2022Dollar ?? 0,
-                        description: 'Fed tightening cycle, tech/growth rout',
-                        color: '#f97316',
-                      },
-                      {
-                        name: 'Flash Crash',
-                        impact: mcData.stressTests?.flashCrash ?? -8.7,
-                        dollarLoss: mcData.stressTests?.flashCrashDollar ?? 0,
-                        description: 'Sudden liquidity evaporation event',
-                        color: '#f0c674',
-                      },
-                    ].map(s => (
+                    {mcData.stressTests.map(s => ({ ...s, color: '#ef4444' })).map(s => (
                       <div key={s.name} style={{
                         background: `${s.color}08`,
                         border: `1px solid ${s.color}20`,
@@ -757,17 +730,7 @@ export default function RiskPage() {
                       </tr>
                     </thead>
                     <tbody>
-                      {(mcData.percentiles ?? [
-                        { pct: '1st', returnPct: mcData.var99 ?? 0, dollarPL: 0 },
-                        { pct: '5th', returnPct: mcData.var95 ?? 0, dollarPL: 0 },
-                        { pct: '10th', returnPct: (mcData.var95 ?? 0) * 0.7, dollarPL: 0 },
-                        { pct: '25th', returnPct: (mcData.var95 ?? 0) * 0.3, dollarPL: 0 },
-                        { pct: '50th (Median)', returnPct: mcData.medianReturn ?? 0, dollarPL: 0 },
-                        { pct: '75th', returnPct: mcData.p75 ?? 2.1, dollarPL: 0 },
-                        { pct: '90th', returnPct: mcData.p90 ?? 5.2, dollarPL: 0 },
-                        { pct: '95th', returnPct: mcData.p95 ?? 7.8, dollarPL: 0 },
-                        { pct: '99th', returnPct: mcData.p99 ?? 12.1, dollarPL: 0 },
-                      ]).map((row: { pct: string; returnPct: number; dollarPL: number }, idx: number) => (
+                      {mcData.percentiles.map((row, idx) => (
                         <tr key={idx} style={{ borderBottom: '1px solid rgba(255,255,255,0.04)' }}>
                           <td style={{ padding: '10px 12px', fontSize: 13, color: '#ccc', fontWeight: 500 }}>{row.pct}</td>
                           <td style={{

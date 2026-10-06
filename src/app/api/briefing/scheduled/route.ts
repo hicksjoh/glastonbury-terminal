@@ -17,6 +17,7 @@ import type { PushSubscriptionData } from '@/lib/web-push';
 import { captureRouteError } from '@/lib/api-error';
 import { loggerFor } from '@/lib/request-id';
 import { withRateLimit, RATE } from '@/lib/api-rate-limit';
+import { brokerageAccountLabel, recordedHoldingsContext } from '@/lib/briefing-holdings';
 
 const HC_SLUG = 'briefing-scheduled';
 const JOB_NAME = 'briefing-scheduled';
@@ -92,13 +93,14 @@ async function gatherMarketData(portfolioSymbols: string[]) {
 // ─── Build the enriched context string for Claude ─────────
 function buildBriefingPromptContext(
   portfolio: Awaited<ReturnType<typeof gatherPortfolioData>>,
-  market: Awaited<ReturnType<typeof gatherMarketData>>
+  market: Awaited<ReturnType<typeof gatherMarketData>>,
+  holdings: string,
 ): string {
   const parts: string[] = [];
 
   // Portfolio summary
   const dayPL = portfolio.day_pl;
-  parts.push(`Alpaca Account:
+  parts.push(`${brokerageAccountLabel()}:
   - Equity: $${portfolio.equity.toLocaleString()}
   - Cash: $${portfolio.cash.toLocaleString()}
   - Buying Power: $${portfolio.buying_power.toLocaleString()}
@@ -113,8 +115,7 @@ function buildBriefingPromptContext(
     ).join('\n')}`);
   }
 
-  // Static holdings
-  parts.push(`Static Holdings: CR3 equity ~$720K (23 territories), Anthropic RSUs 5,749 shares, Miami Shores ~$580K`);
+  parts.push(holdings);
 
   // VIX
   if (market.vix !== null) {
@@ -180,7 +181,7 @@ async function runScheduledBriefing(req: NextRequest) {
       : market;
 
     // Build context and generate briefing via Claude
-    const context = buildBriefingPromptContext(portfolio, enrichedMarket);
+    const context = buildBriefingPromptContext(portfolio, enrichedMarket, await recordedHoldingsContext());
     const briefingContent = await generateBriefing(context);
 
     // Save to Supabase

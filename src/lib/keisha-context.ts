@@ -3,6 +3,7 @@ import { buildMarketContext } from '@/lib/market-intel';
 import { getRegimeUIConfig, mapApiRegime, regimeContextString } from '@/lib/ui-regime-adapter';
 import { getQuote } from '@/lib/fmp-client';
 import { loadWealthFacts, formatWealthFactsBlock } from '@/lib/wealth-facts';
+import { internalFetch } from '@/lib/internal-fetch';
 
 // ── Common words to exclude from symbol detection ────────────────────────────
 export const COMMON_WORDS = new Set([
@@ -227,7 +228,7 @@ export async function getAlpacaContext(): Promise<string> {
   // Fetch options positions + Greeks
   let optionsStr = 'Options Positions: None';
   try {
-    const optionsRes = await fetch(`${getBaseUrl()}/api/options/positions`, {
+    const optionsRes = await internalFetch(`/api/options/positions`, {
       headers: { 'Content-Type': 'application/json' },
     });
     if (optionsRes.ok) {
@@ -536,7 +537,7 @@ export async function getContrarianContext(symbols: string[]): Promise<string> {
 
   for (const sym of symbols.slice(0, 2)) {
     try {
-      const sentimentRes = await fetch(`${baseUrl}/api/sentiment?symbol=${sym}`).then(r => r.ok ? r.json() : null);
+      const sentimentRes = await internalFetch(`/api/sentiment?symbol=${sym}`).then(r => r.ok ? r.json() : null);
       if (sentimentRes?.overallSentiment) {
         const score = typeof sentimentRes.overallSentiment === 'number'
           ? sentimentRes.overallSentiment
@@ -575,12 +576,12 @@ export async function detectTradeIntent(response: string): Promise<string> {
   const baseUrl = getBaseUrl();
 
   const [crewResult, guardResult] = await Promise.all([
-    fetch(`${baseUrl}/api/agent-crew`, {
+    internalFetch(`/api/agent-crew`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ symbol, action: action.includes('buy') || action.includes('long') || action.includes('add') ? 'buy' : 'sell' }),
     }).then(r => r.ok ? r.json() : null).catch(() => null),
-    fetch(`${baseUrl}/api/trade-guard`, {
+    internalFetch(`/api/trade-guard`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ symbol, side: action.includes('buy') || action.includes('long') || action.includes('add') ? 'buy' : 'sell', quantity: 10, price: 0 }),
@@ -828,13 +829,13 @@ export async function buildFullPortfolioContext(opts: {
   const fetchPromises: Promise<Response | null>[] = [];
 
   const gexPromise = needs.needsGex
-    ? fetch(`${baseUrl}/api/gex?symbol=SPY`).catch(() => null)
+    ? internalFetch(`/api/gex?symbol=SPY`).catch(() => null)
     : Promise.resolve(null);
   const macroPromise = needs.needsMacro
-    ? fetch(`${baseUrl}/api/macro`).catch(() => null)
+    ? internalFetch(`/api/macro`).catch(() => null)
     : Promise.resolve(null);
   const driftPromise = needs.needsDrift
-    ? fetch(`${baseUrl}/api/drift`).catch(() => null)
+    ? internalFetch(`/api/drift`).catch(() => null)
     : Promise.resolve(null);
   const accountPromise = needs.needsPersonality
     ? fetch(`${process.env.ALPACA_BASE_URL || 'https://paper-api.alpaca.markets'}/v2/account`, {
@@ -929,11 +930,13 @@ export async function buildFullPortfolioContext(opts: {
   // Regime-aware UI config for Keisha
   if (gexRes) {
     try {
-      const regimeRes = await fetch(`${baseUrl}/api/regime`, { signal: AbortSignal.timeout(5000) }).catch(() => null);
+      const regimeRes = await internalFetch(`/api/regime`, { signal: AbortSignal.timeout(5000) }).catch(() => null);
       if (regimeRes && 'ok' in regimeRes && regimeRes.ok) {
         const regimeJson = await regimeRes.json();
-        if (regimeJson.regime) {
-          const uiConfig = getRegimeUIConfig(mapApiRegime(regimeJson.regime));
+        // { success, data: { regime } } — and never coach off an unclassified regime.
+        const apiRegime = regimeJson?.data?.regime;
+        if (regimeJson?.success && apiRegime && apiRegime !== 'unknown') {
+          const uiConfig = getRegimeUIConfig(mapApiRegime(apiRegime));
           contextParts.push(`\nREGIME-AWARE TRADING GUIDANCE:\n${regimeContextString(uiConfig)}\nAdapt your suggestions to this regime. Mention the regime when relevant.`);
         }
       }

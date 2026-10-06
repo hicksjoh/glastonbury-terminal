@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import type { Tool } from '@anthropic-ai/sdk/resources/messages';
 import type { ToolDef } from './registry';
+import { internalFetch } from '@/lib/internal-fetch';
 
 const inputSchema = z.object({});
 
@@ -22,7 +23,7 @@ export const getMarketNarrative: ToolDef<z.infer<typeof inputSchema>> = {
       ? `https://${process.env.VERCEL_URL}`
       : 'http://localhost:3000';
     try {
-      const res = await fetch(`${narrativeBaseUrl}/api/narrative`, {
+      const res = await internalFetch(`/api/narrative`, {
         signal: AbortSignal.timeout(30000),
       });
       if (!res.ok) {

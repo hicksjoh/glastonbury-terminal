@@ -2,6 +2,7 @@ import { z } from 'zod';
 import type { Tool } from '@anthropic-ai/sdk/resources/messages';
 import type { ToolDef } from '../registry';
 import { TAX_DISCLAIMER, type FilingStatus } from '@/lib/tax-engine';
+import { internalFetch } from '@/lib/internal-fetch';
 
 const inputSchema = z.object({
   min_loss: z.number().optional().describe('Minimum unrealized loss to include (default $100)'),
@@ -28,9 +29,8 @@ export const getHarvestCandidates: ToolDef<z.infer<typeof inputSchema>> = {
     try {
       const harvestFs = (String(input.filing_status || 'single')) as FilingStatus;
       const minLoss = Number(input.min_loss || 100);
-      const baseUrl = process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : 'http://localhost:3000';
-      const harvestRes = await fetch(
-        `${baseUrl}/api/tax/harvest?filing_status=${harvestFs}&min_loss=${minLoss}`,
+      const harvestRes = await internalFetch(
+        `/api/tax/harvest?filing_status=${harvestFs}&min_loss=${minLoss}`,
         { signal: AbortSignal.timeout(15000) },
       );
       if (!harvestRes.ok) {

@@ -141,6 +141,10 @@ export default function DashboardPage() {
   const [rsus, setRsus] = useState(0);
   const [miami, setMiami] = useState(0);
   const [wealthCash, setWealthCash] = useState(0);
+  // null until /api/wealth reports the mode. Unknown is its own state: guessing
+  // 'paper' would label real cash as simulated if wealth is down in live mode,
+  // and guessing 'live' would present simulated cash as deployable.
+  const [brokerageIsLive, setBrokerageIsLive] = useState<boolean | null>(null);
   const [investments, setInvestments] = useState(0);
   // Authoritative total from /api/wealth. The dashboard used to re-derive net
   // worth here as `equity + cr3 + rsus + miami`, which silently dropped the
@@ -274,7 +278,7 @@ export default function DashboardPage() {
 
     let wealthRes: {
       success?: boolean;
-      data?: { total_net_worth?: number; breakdown?: Record<string, { value?: number }> };
+      data?: { total_net_worth?: number; trading_mode?: string; breakdown?: Record<string, { value?: number }> };
     } | null = null;
     try {
       wealthRes = await fetch('/api/wealth').then(r => r.ok ? r.json() : null).catch(() => null);
@@ -284,6 +288,7 @@ export default function DashboardPage() {
         if (d?.rsus?.value)         setRsus(d.rsus.value);
         if (d?.real_estate?.value)  setMiami(d.real_estate.value);
         if (d?.cash?.value != null)        setWealthCash(d.cash.value);
+        if (wealthRes.data.trading_mode) setBrokerageIsLive(wealthRes.data.trading_mode === 'live');
         if (d?.investments?.value != null) setInvestments(d.investments.value);
         if (typeof wealthRes.data.total_net_worth === 'number') {
           setApiNetWorth(wealthRes.data.total_net_worth);
@@ -331,7 +336,11 @@ export default function DashboardPage() {
       const res = await fetch('/api/regime', { signal: AbortSignal.timeout(10000) });
       if (res.ok) {
         const data = await res.json();
-        if (data.regime) setRegimeConfig(getRegimeUIConfig(mapApiRegime(data.regime)));
+        // The route nests the regime under `data`; reading the top level never matched.
+        const regime = data?.data?.regime;
+        if (data?.success && regime && regime !== 'unknown') {
+          setRegimeConfig(getRegimeUIConfig(mapApiRegime(regime)));
+        }
       }
     } catch { /* silent */ }
   }, []);
@@ -485,7 +494,11 @@ export default function DashboardPage() {
           gap: space[3],
           marginBottom: space[5],
         }}>
-          <MetricTile label="Cash Available" value={formatCurrency(animatedCash)} caption="Ready to deploy" />
+          <MetricTile
+            label={brokerageIsLive === null ? 'Brokerage Cash' : brokerageIsLive ? 'Cash Available' : 'Paper Cash'}
+            value={formatCurrency(animatedCash)}
+            caption={brokerageIsLive === null ? 'Account mode unknown' : brokerageIsLive ? 'Ready to deploy' : 'Simulated — not real money'}
+          />
           <MetricTile
             label="Today's P&L"
             value={formatPL(todayPL)}

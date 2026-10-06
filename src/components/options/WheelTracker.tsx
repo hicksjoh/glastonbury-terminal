@@ -24,31 +24,20 @@ interface WheelTrackerProps {
   cycles?: WheelCycle[];
 }
 
-// Demo data for display
-const DEMO_CYCLES: WheelCycle[] = [
-  {
-    id: '1',
-    underlying: 'AAPL',
-    phase: 'selling_calls',
-    roundNumber: 2,
-    costBasis: 185,
-    totalPremium: 620,
-    startedAt: '2026-02-15',
-  },
-  {
-    id: '2',
-    underlying: 'MSFT',
-    phase: 'selling_puts',
-    roundNumber: 1,
-    costBasis: 0,
-    totalPremium: 310,
-    startedAt: '2026-03-01',
-  },
-];
-
 export default function WheelTracker({ cycles }: WheelTrackerProps) {
   const [expandedId, setExpandedId] = useState<string | null>(null);
-  const activeCycles = cycles || DEMO_CYCLES;
+  // No cycles means no wheels. This used to fall back to built-in demo data,
+  // which rendered premium and active wheels for an account that had never
+  // run one (QA 2026-10-05, blocker 4).
+  const activeCycles = cycles ?? [];
+
+  if (activeCycles.length === 0) {
+    return (
+      <div style={{ padding: '20px 0', textAlign: 'center', color: '#6b6b80', fontSize: 13 }}>
+        No wheel cycles tracked yet. Cycles appear here once a wheel strategy is running.
+      </div>
+    );
+  }
 
   const totalPremiumAll = activeCycles.reduce((s, c) => s + c.totalPremium, 0);
 

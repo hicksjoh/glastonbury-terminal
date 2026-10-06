@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { createServiceClient } from '@/lib/supabase';
 import { getQuote } from '@/lib/fmp-client';
 import { withRateLimit, RATE } from '@/lib/api-rate-limit';
+import { classifyRegime } from '@/lib/market-regime';
 
 // Live-data endpoint — never let Next static-optimize this at build time
 export const dynamic = 'force-dynamic';
@@ -14,16 +15,6 @@ async function fetchVIX(): Promise<number | null> {
 async function fetchSPYMomentum(): Promise<number | null> {
   const q = await getQuote('SPY');
   return q?.changePercentage ?? null;
-}
-
-function detectRegime(vix: number | null, momentum: number | null): { regime: string; confidence: number } {
-  const v = vix ?? 20;
-  const m = momentum ?? 0;
-
-  if (v < 20 && m > 0) return { regime: 'bull_low_vol', confidence: 0.75 + Math.min(0.2, (20 - v) / 100) };
-  if (v >= 20 && m > 0) return { regime: 'bull_high_vol', confidence: 0.6 };
-  if (v < 20 && m <= 0) return { regime: 'bear_low_vol', confidence: 0.55 };
-  return { regime: 'bear_high_vol', confidence: 0.7 + Math.min(0.2, (v - 30) / 100) };
 }
 
 async function GET_impl() {
@@ -57,15 +48,24 @@ async function GET_impl() {
 
     // Fetch fresh data
     const [vix, momentum] = await Promise.all([fetchVIX(), fetchSPYMomentum()]);
-    const { regime, confidence } = detectRegime(vix, momentum);
+    const { regime, confidence } = classifyRegime(vix, momentum);
 
-    // Store new regime
-    await supabase.from('market_regime').insert({
+    // An unclassifiable read is reported, never stored: a cached 'unknown'
+    // would mask the next hour of good data.
+    if (regime === 'unknown') {
+      return NextResponse.json({
+        success: false,
+        data: { regime, confidence, vix, momentum_factor: momentum, detected_at: null, stale: true },
+      });
+    }
+
+    const { error: insertError } = await supabase.from('market_regime').insert({
       regime,
       confidence,
       vix,
       momentum_factor: momentum,
     });
+    if (insertError) console.error('market_regime insert failed:', insertError.message);
 
     return NextResponse.json({
       success: true,
@@ -74,8 +74,8 @@ async function GET_impl() {
   } catch (error) {
     console.error('Regime API error:', error);
     return NextResponse.json({
-      success: true,
-      data: { regime: 'bull_low_vol', confidence: 0.5, vix: null, momentum_factor: null, detected_at: null, stale: true },
+      success: false,
+      data: { regime: 'unknown', confidence: 0, vix: null, momentum_factor: null, detected_at: null, stale: true },
     });
   }
 }

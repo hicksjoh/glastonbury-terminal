@@ -5,6 +5,8 @@ import { pingHealthcheck } from '@/lib/healthchecks';
 import { verifySessionJwt, SESSION_COOKIE_NAME } from '@/lib/session';
 import { cronIsAuthorized } from '@/lib/cron-auth';
 import { withRateLimit, RATE } from '@/lib/api-rate-limit';
+import { getServerTradingMode } from '@/lib/trading-mode';
+import { getEtDateParts } from '@/lib/et-clock';
 
 const HC_SLUG = 'portfolio-snapshot';
 
@@ -20,15 +22,25 @@ async function POST_impl(req: NextRequest) {
     const supabase = createServiceClient();
 
     // Fetch Alpaca + wealth data in parallel
-    const [account, positions, { data: wealthAssets }] = await Promise.all([
+    const [account, positions, { data: wealthAssets, error: wealthError }] = await Promise.all([
       getAccount().catch(() => null),
       getPositions().catch(() => []),
       supabase.from('wealth_assets').select('*'),
     ]);
 
-    const equity = account ? parseFloat(account.equity) : 0;
-    const cash = account ? parseFloat(account.cash) : 0;
-    const lastEquity = account ? parseFloat(account.last_equity) : 0;
+    // A snapshot is a permanent row in the net-worth history. Writing zeros
+    // because a dependency blipped would chart as a real crash, so a missing
+    // input fails the run (and the healthcheck) instead.
+    if (!account || wealthError) {
+      const reason = !account ? 'Alpaca account unavailable' : `wealth_assets read failed: ${wealthError?.message}`;
+      console.error('Portfolio snapshot aborted:', reason);
+      await pingHealthcheck(HC_SLUG, 'fail');
+      return NextResponse.json({ error: reason }, { status: 502 });
+    }
+
+    const equity = parseFloat(account.equity);
+    const cash = parseFloat(account.cash);
+    const lastEquity = parseFloat(account.last_equity);
     const pnl = equity - lastEquity;
 
     const positionsArray = Array.isArray(positions) ? positions : [];
@@ -52,9 +64,14 @@ async function POST_impl(req: NextRequest) {
     const rsuValue = assetsByClass['rsu'] || 0;
     const propertyValue = assetsByClass['real_estate'] || 0;
     const cashReserves = assetsByClass['cash'] || 0;
-    const netWorth = equity + cr3Value + rsuValue + propertyValue + cashReserves;
+    // Paper equity is simulated money: tracked in `equity`, never in net worth
+    // (same rule as /api/wealth).
+    const realBrokerageEquity = getServerTradingMode() === 'live' ? equity : 0;
+    const netWorth = realBrokerageEquity + cr3Value + rsuValue + propertyValue + cashReserves;
 
-    const today = new Date().toISOString().split('T')[0];
+    // The cron fires at 22:00 UTC; key the row on the US market date.
+    const et = getEtDateParts();
+    const today = `${et.year}-${String(et.month + 1).padStart(2, '0')}-${String(et.day).padStart(2, '0')}`;
 
     // Upsert (one snapshot per day)
     const { data, error } = await supabase
@@ -113,6 +130,14 @@ async function POST_impl(req: NextRequest) {
 // through (they auth via CRON_SECRET below). For human GET traffic we therefore
 // must verify the session JWT here ourselves — middleware never sees us.
 async function GET_impl(req: NextRequest) {
+  // Vercel cron always sends GET with `Authorization: Bearer $CRON_SECRET`.
+  // This handler used to treat every GET as a session-only read, so the daily
+  // cron 401'd on every run and never wrote a row (QA 2026-10-05, blocker 2).
+  // A request presenting cron credentials is a snapshot run.
+  if (req.headers.get('authorization') || req.headers.get('x-api-key')) {
+    return POST_impl(req);
+  }
+
   const authCookie = req.cookies.get(SESSION_COOKIE_NAME);
   const session = await verifySessionJwt(authCookie?.value);
   if (!session) {

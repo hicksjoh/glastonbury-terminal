@@ -31,6 +31,7 @@ interface PortfolioData {
   propertyValue: number;
   totalNetWorth: number;
   loading: boolean;
+  unavailable: boolean;
 }
 
 interface MonteCarloParams {
@@ -92,13 +93,17 @@ const DEFAULT_PARAMS: MonteCarloParams = {
 
 export default function MonteCarloPage() {
   const [params, setParams] = useState<MonteCarloParams>(DEFAULT_PARAMS);
+  // Zeros until /api/wealth answers. These used to be literal dollar amounts
+  // that doubled as the fallback, so a failed fetch simulated a made-up
+  // portfolio and called it live (QA 2026-10-05, blocker 6).
   const [portfolioData, setPortfolioData] = useState<PortfolioData>({
-    cr3Value: 720000,
-    anthropicRSUs: 82000,
-    investmentPortfolio: 100000,
-    propertyValue: 580000,
-    totalNetWorth: 1482000,
+    cr3Value: 0,
+    anthropicRSUs: 0,
+    investmentPortfolio: 0,
+    propertyValue: 0,
+    totalNetWorth: 0,
     loading: true,
+    unavailable: false,
   });
   // Null on the first render on purpose. runMonteCarlo() is Math.random()-driven,
   // so seeding it during render makes the server and the browser roll different
@@ -110,28 +115,28 @@ export default function MonteCarloPage() {
   useEffect(() => {
     async function fetchPortfolio() {
       try {
-        const [wealthRes, alpacaRes] = await Promise.all([
-          fetch('/api/wealth').then(r => r.json()).catch(() => null),
-          fetch('/api/alpaca/account').then(r => r.json()).catch(() => null),
-        ]);
-
+        const wealthRes = await fetch('/api/wealth').then(r => (r.ok ? r.json() : null)).catch(() => null);
         const breakdown = wealthRes?.data?.breakdown;
-        const investmentValue = alpacaRes?.equity
-          ? parseFloat(alpacaRes.equity)
-          : breakdown?.investments?.value ?? 100000;
+        if (!wealthRes?.success || !breakdown) {
+          setPortfolioData(prev => ({ ...prev, loading: false, unavailable: true }));
+          return;
+        }
 
+        // /api/wealth is the single source: it already excludes a paper
+        // account's simulated equity. Reading Alpaca equity here re-added it.
         const newPortfolio: PortfolioData = {
-          cr3Value: breakdown?.franchise?.value ?? 720000,
-          anthropicRSUs: breakdown?.rsus?.value ?? 82000,
-          investmentPortfolio: investmentValue,
-          propertyValue: breakdown?.real_estate?.value ?? 580000,
-          totalNetWorth: wealthRes?.data?.total_net_worth ?? 1482000,
+          cr3Value: breakdown.franchise?.value ?? 0,
+          anthropicRSUs: breakdown.rsus?.value ?? 0,
+          investmentPortfolio: breakdown.investments?.value ?? 0,
+          propertyValue: breakdown.real_estate?.value ?? 0,
+          totalNetWorth: wealthRes.data.total_net_worth ?? 0,
           loading: false,
+          unavailable: false,
         };
 
         setPortfolioData(newPortfolio);
       } catch {
-        setPortfolioData(prev => ({ ...prev, loading: false }));
+        setPortfolioData(prev => ({ ...prev, loading: false, unavailable: true }));
       }
     }
     fetchPortfolio();
@@ -140,6 +145,11 @@ export default function MonteCarloPage() {
   // Runs once on mount with the seeded placeholder portfolio, then again each
   // time the params or the fetched portfolio change.
   useEffect(() => {
+    // Nothing to simulate until real inputs arrive.
+    if (portfolioData.loading || portfolioData.unavailable) {
+      setResult(null);
+      return;
+    }
     setResult(runMonteCarlo(params, portfolioData));
   }, [params, portfolioData]);
 
@@ -198,7 +208,11 @@ export default function MonteCarloPage() {
         <h1 style={{ fontSize: 24, fontWeight: 700, margin: 0 }}>Monte Carlo Modeler</h1>
         <p style={{ color: '#6b6b80', fontSize: 13, marginTop: 4 }}>
           1,000-simulation $50M wealth roadmap probability model
-          {portfolioData.loading ? ' — loading portfolio...' : ' — seeded with live portfolio data'}
+          {portfolioData.loading
+            ? ' — loading portfolio...'
+            : portfolioData.unavailable
+              ? ' — wealth data unavailable, simulation paused'
+              : ' — seeded from your recorded wealth (paper-account equity excluded)'}
         </p>
       </div>
 
@@ -220,7 +234,7 @@ export default function MonteCarloPage() {
           ].map(({ label, value, color }) => (
             <div key={label} style={{ textAlign: 'center' }}>
               <div style={{ fontSize: 20, fontWeight: 700, color, opacity: portfolioData.loading ? 0.4 : 1 }}>
-                {fmtCurrency(value)}
+                {portfolioData.unavailable ? '—' : fmtCurrency(value)}
               </div>
               <div style={{ fontSize: 11, color: '#6b6b80', marginTop: 4 }}>{label}</div>
             </div>
@@ -256,7 +270,9 @@ export default function MonteCarloPage() {
         {result ? (
           <MonteCarloChart data={result.chartData} />
         ) : (
-          <div style={{ textAlign: 'center', padding: 60, color: '#6b6b80' }}>Running simulation...</div>
+          <div style={{ textAlign: 'center', padding: 60, color: '#6b6b80' }}>
+            {portfolioData.unavailable ? 'Wealth data unavailable — nothing to simulate. Reload to retry.' : 'Running simulation...'}
+          </div>
         )}
       </div>
 

@@ -22,6 +22,7 @@ import OptionsPositions from '@/components/options/OptionsPositions';
 import GreeksSummary from '@/components/options/GreeksSummary';
 import type { OptionChainEntry } from '@/lib/options/types';
 import { useLiveAck, NotionalConfirmDialog } from '@/components/trade/LiveTradingGate';
+import { classifyOrderResponse, type OrderSubmitOutcome } from '@/lib/order-submit-outcome';
 
 const LIVE_TYPED_CONFIRM_THRESHOLD_USD = Number(
   process.env.NEXT_PUBLIC_LIVE_TYPED_CONFIRM_THRESHOLD_USD || 5_000,
@@ -92,6 +93,7 @@ function TradingPage() {
   const [form, setForm] = useState<OrderForm>({ symbol: '', side: 'buy', qty: '', type: 'market', limitPrice: '' });
   const [debateOpen, setDebateOpen] = useState(false);
   const [step, setStep] = useState<'form' | 'guard' | 'confirm' | 'submitted'>('form');
+  const [orderError, setOrderError] = useState<string | null>(null);
   const [apiConnected, setApiConnected] = useState(false);
 
   // Ticker search state
@@ -314,32 +316,37 @@ function TradingPage() {
     // In live mode, attach the session ack token. In paper mode it's null.
     if (liveAck.token) headers['x-live-ack'] = liveAck.token;
 
+    setOrderError(null);
+    let outcome: OrderSubmitOutcome;
     try {
       const res = await fetch('/api/alpaca/orders', {
         method: 'POST',
         headers,
         body: JSON.stringify(order),
       });
-      // If server rejected with a live-safety code, surface it —
-      // the modals inform the user what to do next.
-      if (!res.ok) {
-        try {
-          const body = await res.json();
-          if (body?.code === 'typed_confirm_required') {
-            // Server-side threshold might disagree with client-side estimate
-            // (e.g., unknown limit price for market orders). Re-open dialog.
-            setPendingNotional(Number((body?.notional_usd ?? pendingNotional) || 0));
-            setNotionalDialogOpen(true);
-            return;
-          }
-          if (body?.code === 'live_ack_required' || body?.code === 'live_ack_expired' || body?.code === 'live_ack_invalid') {
-            alert('Live-mode ack expired — reload the page and re-confirm.');
-            return;
-          }
-        } catch { /* fall through to generic path */ }
-      }
+      const body = await res.json().catch(() => null);
+      outcome = classifyOrderResponse(res.ok, res.status, body);
     } catch {
-      // Silently handle — still show submitted state for paper demo
+      // A throw does not prove the order never arrived: the response can be
+      // lost after the broker accepted it. Never invite a blind retry.
+      outcome = { kind: 'rejected', message: 'No confirmation received — the order may or may not have been placed. Check Orders before retrying.' };
+    }
+
+    if (outcome.kind === 'typed_confirm') {
+      // Server-side threshold might disagree with client-side estimate
+      // (e.g., unknown limit price for market orders). Re-open dialog.
+      setPendingNotional(Number((outcome.notionalUsd ?? pendingNotional) || 0));
+      setNotionalDialogOpen(true);
+      return;
+    }
+    if (outcome.kind === 'ack_expired') {
+      alert('Live-mode ack expired — reload the page and re-confirm.');
+      return;
+    }
+    if (outcome.kind === 'rejected') {
+      // Stay on the confirm step with the form intact so the order can be fixed.
+      setOrderError(outcome.message);
+      return;
     }
     setStep('submitted');
     setForm({ symbol: '', side: 'buy', qty: '', type: 'market', limitPrice: '' });
@@ -407,7 +414,9 @@ function TradingPage() {
       }}>
         <AlertTriangle size={16} color="#f59e0b" />
         <span style={{ fontSize: 13, color: '#f59e0b', fontWeight: 600 }}>
-          PAPER TRADING MODE &mdash; No real money. All trades are simulated.
+          {liveAck.isLive
+            ? <>LIVE TRADING MODE &mdash; Real money. Orders route to your live brokerage account.</>
+            : <>PAPER TRADING MODE &mdash; No real money. All trades are simulated.</>}
         </span>
         {!apiConnected && (
           <span style={{ fontSize: 12, color: '#6b6b80', marginLeft: 'auto' }}>
@@ -1005,9 +1014,14 @@ function TradingPage() {
                     side={form.side as 'buy' | 'sell'}
                     qty={parseInt(form.qty) || 0}
                   />
+                  {orderError && (
+                    <div role="alert" style={{ margin: '12px 0', padding: '10px 12px', borderRadius: 8, border: '1px solid #ef444460', backgroundColor: '#ef444415', color: '#f87171', fontSize: 12, fontWeight: 600 }}>
+                      {orderError}
+                    </div>
+                  )}
                   <div style={{ display: 'flex', gap: 8 }}>
                     <button
-                      onClick={() => setStep('form')}
+                      onClick={() => { setOrderError(null); setStep('form'); }}
                       style={{ flex: 1, padding: '10px 0', backgroundColor: '#2a2a3a', border: 'none', borderRadius: 8, color: '#e8e8e8', cursor: 'pointer', fontWeight: 600 }}
                     >Back</button>
                     <button
@@ -1030,8 +1044,8 @@ function TradingPage() {
               {step === 'submitted' && (
                 <div style={{ textAlign: 'center', padding: '20px 0' }}>
                   <div style={{ fontSize: 40, marginBottom: 12, color: '#22c55e' }}>&#10003;</div>
-                  <div style={{ color: '#22c55e', fontWeight: 700, marginBottom: 8 }}>Order submitted (paper trade)</div>
-                  <div style={{ color: '#6b6b80', fontSize: 12, marginBottom: 20 }}>Simulated execution in paper account</div>
+                  <div style={{ color: '#22c55e', fontWeight: 700, marginBottom: 8 }}>{liveAck.isLive ? 'Order submitted (LIVE)' : 'Order submitted (paper trade)'}</div>
+                  <div style={{ color: '#6b6b80', fontSize: 12, marginBottom: 20 }}>{liveAck.isLive ? 'Accepted by your live brokerage account' : 'Simulated execution in paper account'}</div>
                   <button
                     onClick={() => setStep('form')}
                     style={{ padding: '10px 24px', backgroundColor: '#c9a84c', border: 'none', borderRadius: 8, color: '#08080d', cursor: 'pointer', fontWeight: 700 }}
