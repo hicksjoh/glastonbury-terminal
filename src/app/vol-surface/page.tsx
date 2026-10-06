@@ -193,6 +193,12 @@ export default function VolSurfacePage() {
           </select>
         </div>
 
+        {data?.modelled && (
+          <div role="note" style={{ margin: '0 0 16px', padding: '10px 14px', borderRadius: 8, border: '1px solid #f59e0b40', backgroundColor: '#f59e0b10', color: '#f59e0b', fontSize: 13, fontWeight: 600 }}>
+            MODELLED SURFACE — not market data. {data.modelNote}
+          </div>
+        )}
+
         <p style={{ color: C.muted, fontSize: 14, margin: '0 0 24px' }}>
           Implied volatility heatmap, skew analysis &amp; mispricing detection
           {data && (
@@ -527,7 +533,9 @@ export default function VolSurfacePage() {
             <Card title="Mispricing Alerts">
               {data.mispricings.length === 0 ? (
                 <div style={{ color: C.muted, fontSize: 13, textAlign: 'center', padding: 24 }}>
-                  No mispricings detected
+                  {data.modelled
+                    ? 'Unavailable — mispricing detection needs a live options chain, and this surface is modelled.'
+                    : 'No mispricings detected'}
                 </div>
               ) : (
                 <div style={{ overflowX: 'auto' }}>

@@ -1,8 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { scoreSignal } from '@/lib/signal-scorer';
+import {
+  confluenceEvidence,
+  isScannableMover,
+  longSignalFitsRegime,
+  type MoverFacts,
+} from '@/lib/scanner-evidence';
+import { internalFetch } from '@/lib/internal-fetch';
 import {
   getMarketGainers,
-  getMarketLosers,
   getMarketActives,
   getStockScreener,
   getDividendCalendar,
@@ -44,11 +49,6 @@ async function fetchActives(): Promise<FmpResult<StockMoverRow>> {
   return { rows, meta: fmpMeta(rows) };
 }
 
-async function fetchLosers(): Promise<FmpResult<StockMoverRow>> {
-  const rows = await getMarketLosers();
-  return { rows, meta: fmpMeta(rows) };
-}
-
 async function fetchInsiderFeed(): Promise<FmpResult<InsiderTradingRow>> {
   const rows = await getLatestInsiderTrades(50);
   return { rows, meta: fmpMeta(rows) };
@@ -60,23 +60,25 @@ async function GET_impl(req: NextRequest) {
     let signals: SignalResult[] = [];
     let metas: ApiMeta[] = [];
 
+    // Regime first: each preset's regime_fit badge is derived from it.
+    const { regime, regimeMeta } = await getMarketRegime();
+
     switch (preset) {
       case 'momentum':
-        ({ signals, metas } = await scanMomentum());
+        ({ signals, metas } = await scanMomentum(regime));
         break;
       case 'value':
-        ({ signals, metas } = await scanValue());
+        ({ signals, metas } = await scanValue(regime));
         break;
       case 'income':
-        ({ signals, metas } = await scanIncome());
+        ({ signals, metas } = await scanIncome(regime));
         break;
       case 'confluence':
       default:
-        ({ signals, metas } = await scanConfluence());
+        ({ signals, metas } = await scanConfluence(regime));
         break;
     }
 
-    const { regime, regimeMeta } = await getMarketRegime();
     metas.push(regimeMeta);
 
     const allLive = metas.every(m => m.live);
@@ -102,36 +104,27 @@ async function GET_impl(req: NextRequest) {
   }
 }
 
-async function scanMomentum(): Promise<{ signals: SignalResult[]; metas: ApiMeta[] }> {
+async function scanMomentum(regime: string): Promise<{ signals: SignalResult[]; metas: ApiMeta[] }> {
   const result = await fetchGainers();
-  const gainers = result.rows;
 
-  const signals = gainers.slice(0, 15).map(g => {
-    const change = Number(g.changesPercentage || 0);
-    const scored = scoreSignal({
-      above50DMA: change > 5,
-      bullishFlow: change > 8,
-      regimeFit: true,
-      winRate: 0.55,
-      avgWin: 0.08,
-      avgLoss: 0.04,
-    }, 100000, Number(g.price || 100));
-
-    return {
+  const signals = result.rows
+    .map(g => ({ g, price: Number(g.price || 0), change: Number(g.changesPercentage || 0) }))
+    .filter(isScannableMover)
+    .slice(0, 15)
+    .map(({ g, change }) => ({
       symbol: String(g.symbol || ''),
       company: String(g.name || g.symbol || ''),
-      score: scored.score,
-      sources: [...scored.sources, 'momentum'],
-      kellySizing: scored.kellySizing,
-      thesis: `Up ${change.toFixed(1)}% — momentum breakout with strong volume`,
-      regime_fit: true,
-    };
-  });
+      score: Math.min(100, Math.round(30 + change * 2)),
+      sources: ['top_gainer'],
+      kellySizing: null,
+      thesis: `Up ${change.toFixed(1)}% today — on the top-gainers list. Price action only; no flow or sentiment check.`,
+      regime_fit: longSignalFitsRegime(regime),
+    }));
 
   return { signals, metas: [result.meta] };
 }
 
-async function scanValue(): Promise<{ signals: SignalResult[]; metas: ApiMeta[] }> {
+async function scanValue(regime: string): Promise<{ signals: SignalResult[]; metas: ApiMeta[] }> {
   const stocks: StockScreenerRow[] = await getStockScreener({
     marketCapMoreThan: 1_000_000_000,
     priceMoreThan: 5,
@@ -140,34 +133,27 @@ async function scanValue(): Promise<{ signals: SignalResult[]; metas: ApiMeta[] 
 
   const signals = stocks
     .filter(s => {
-      const pe = Number(s.pe || 999);
-      return pe > 0 && pe < 15;
+      const pe = Number(s.pe);
+      return Number.isFinite(pe) && pe > 0 && pe < 15;
     })
     .slice(0, 15)
     .map(s => {
-      const scored = scoreSignal({
-        sentimentScore: 7,
-        regimeFit: true,
-        winRate: 0.6,
-        avgWin: 0.12,
-        avgLoss: 0.06,
-      }, 100000, Number(s.price || 100));
-
+      const pe = Number(s.pe);
       return {
         symbol: String(s.symbol || ''),
         company: String(s.companyName || s.symbol || ''),
-        score: scored.score,
-        sources: [...scored.sources, 'value_screen'],
-        kellySizing: scored.kellySizing,
-        thesis: `P/E ${Number(s.pe || 0).toFixed(1)} — undervalued relative to sector`,
-        regime_fit: true,
+        score: Math.max(0, Math.min(100, Math.round(100 - pe * 4))),
+        sources: ['value_screen'],
+        kellySizing: null,
+        thesis: `P/E ${pe.toFixed(1)} — passes the P/E < 15, $1B+ cap screen. Not compared against its sector.`,
+        regime_fit: longSignalFitsRegime(regime),
       };
     });
 
   return { signals, metas: [fmpMeta(stocks)] };
 }
 
-async function scanIncome(): Promise<{ signals: SignalResult[]; metas: ApiMeta[] }> {
+async function scanIncome(regime: string): Promise<{ signals: SignalResult[]; metas: ApiMeta[] }> {
   const from = new Date().toISOString().split('T')[0];
   const to = new Date(Date.now() + 30 * 86400000).toISOString().split('T')[0];
 
@@ -178,100 +164,70 @@ async function scanIncome(): Promise<{ signals: SignalResult[]; metas: ApiMeta[]
     .slice(0, 15)
     .map(d => {
       const yld = Number(d.yield || 0);
-      const scored = scoreSignal({
-        sentimentScore: 7,
-        regimeFit: true,
-        winRate: 0.65,
-        avgWin: 0.06,
-        avgLoss: 0.03,
-      }, 100000, Number(d.adjDividend || 1) * 50);
-
       return {
         symbol: String(d.symbol || ''),
         company: String(d.symbol || ''),
-        score: Math.min(100, scored.score + Math.round(yld * 3)),
-        sources: [...scored.sources, 'dividend_income'],
-        kellySizing: scored.kellySizing,
+        score: Math.min(100, Math.round(yld * 10)),
+        sources: ['dividend_income'],
+        kellySizing: null,
         thesis: `${yld.toFixed(1)}% yield — ex-div ${d.date || 'upcoming'}`,
-        regime_fit: true,
+        regime_fit: longSignalFitsRegime(regime),
       };
     });
 
   return { signals, metas: [fmpMeta(dividends)] };
 }
 
-async function scanConfluence(): Promise<{ signals: SignalResult[]; metas: ApiMeta[] }> {
+async function scanConfluence(regime: string): Promise<{ signals: SignalResult[]; metas: ApiMeta[] }> {
   const [gainersRes, activesRes, insiderRes] = await Promise.all([
     fetchGainers(),
     fetchActives(),
     fetchInsiderFeed(),
   ]);
 
-  const gainers = gainersRes.rows;
-  const actives = activesRes.rows;
-  const insiders = insiderRes.rows;
+  const symbolData: Record<string, MoverFacts> = {};
 
-  const symbolData: Record<string, {
-    price: number; change: number; volume: number;
-    isGainer: boolean; isActive: boolean; hasInsider: boolean; insiderBuy: boolean;
-  }> = {};
-
-  for (const g of gainers.slice(0, 20)) {
+  for (const g of gainersRes.rows.slice(0, 20)) {
     if (!g.symbol) continue;
     symbolData[g.symbol] = {
-      price: g.price || 0, change: Number(g.changesPercentage || 0),
-      volume: Number(g.volume || 0), isGainer: true, isActive: false,
-      hasInsider: false, insiderBuy: false,
+      price: Number(g.price || 0), change: Number(g.changesPercentage || 0),
+      isGainer: true, isActive: false, insiderBuy: false,
     };
   }
 
-  for (const a of actives.slice(0, 20)) {
+  for (const a of activesRes.rows.slice(0, 20)) {
     if (!a.symbol) continue;
     if (symbolData[a.symbol]) {
       symbolData[a.symbol].isActive = true;
     } else {
       symbolData[a.symbol] = {
-        price: a.price || 0, change: Number(a.changesPercentage || 0),
-        volume: Number(a.volume || 0), isGainer: false, isActive: true,
-        hasInsider: false, insiderBuy: false,
+        price: Number(a.price || 0), change: Number(a.changesPercentage || 0),
+        isGainer: false, isActive: true, insiderBuy: false,
       };
     }
   }
 
-  for (const ins of insiders) {
+  for (const ins of insiderRes.rows) {
     const sym = ins.symbol;
-    if (sym && symbolData[sym]) {
-      symbolData[sym].hasInsider = true;
-      if (String(ins.acquistionOrDisposition || '').toLowerCase() === 'a') {
-        symbolData[sym].insiderBuy = true;
-      }
+    if (sym && symbolData[sym] && String(ins.acquistionOrDisposition || '').toLowerCase() === 'a') {
+      symbolData[sym].insiderBuy = true;
     }
   }
 
   const results: SignalResult[] = [];
-  for (const [symbol, data] of Object.entries(symbolData)) {
-    const scored = scoreSignal({
-      insiderClusterBuy: data.insiderBuy,
-      bullishFlow: data.isGainer && data.change > 5,
-      sentimentScore: data.change > 3 ? 8 : data.change > 0 ? 6 : 4,
-      above50DMA: data.change > 0,
-      regimeFit: true,
-      winRate: 0.55,
-      avgWin: 0.08,
-      avgLoss: 0.05,
-    }, 100000, data.price);
-
-    if (scored.score >= 20) {
-      results.push({
-        symbol,
-        company: symbol,
-        score: scored.score,
-        sources: scored.sources,
-        kellySizing: scored.kellySizing,
-        thesis: generateThesis(symbol, data, scored.sources),
-        regime_fit: true,
-      });
-    }
+  for (const [symbol, facts] of Object.entries(symbolData)) {
+    if (!isScannableMover(facts)) continue;
+    const { score, sources } = confluenceEvidence(facts);
+    if (sources.length === 0) continue;
+    results.push({
+      symbol,
+      company: symbol,
+      score,
+      sources,
+      kellySizing: null,
+      thesis: generateThesis(symbol, facts, sources),
+      regime_fit: longSignalFitsRegime(regime),
+    });
   }
 
   return {
@@ -280,39 +236,33 @@ async function scanConfluence(): Promise<{ signals: SignalResult[]; metas: ApiMe
   };
 }
 
-function generateThesis(
-  symbol: string,
-  data: { change: number; isGainer: boolean; isActive: boolean; insiderBuy: boolean },
-  sources: string[],
-): string {
+function generateThesis(symbol: string, facts: MoverFacts, sources: string[]): string {
   const parts = [];
-  if (data.isGainer) parts.push(`+${data.change.toFixed(1)}% today`);
-  if (data.isActive) parts.push('high volume');
-  if (data.insiderBuy) parts.push('insider buying');
-  if (sources.includes('positive_sentiment')) parts.push('positive sentiment');
-  return `${symbol}: ${parts.join(', ')}. ${sources.length} confluence signals detected.`;
+  if (facts.isGainer) parts.push(`+${facts.change.toFixed(1)}% today`);
+  if (facts.isActive) parts.push('on the most-active list');
+  if (facts.insiderBuy) parts.push('recent insider buy');
+  return `${symbol}: ${parts.join(', ')}. ${sources.length} of 3 checks matched.`;
 }
 
+/** Reads /api/regime — the row the header chip shows — rather than classifying
+ *  again, so the two chips agree even inside that route's one-hour cache. */
 async function getMarketRegime(): Promise<{ regime: string; regimeMeta: ApiMeta }> {
   try {
-    const [gainersRes, losersRes] = await Promise.all([fetchGainers(), fetchLosers()]);
-    const gLen = gainersRes.rows.length;
-    const lLen = losersRes.rows.length;
-
-    let regime: string;
-    if (gLen > lLen * 1.5) regime = 'bull_low_vol';
-    else if (gLen > lLen) regime = 'bull_high_vol';
-    else if (lLen > gLen * 1.5) regime = 'bear_high_vol';
-    else regime = 'bear_low_vol';
-
+    const res = await internalFetch('/api/regime', { signal: AbortSignal.timeout(10000) });
+    const body = res.ok ? await res.json() : null;
+    const regime: string = body?.success && body.data?.regime ? body.data.regime : 'unknown';
     return {
       regime,
-      regimeMeta: buildMeta({ source: 'fmp', live: gainersRes.meta.live && losersRes.meta.live }),
+      regimeMeta: buildMeta(
+        regime === 'unknown'
+          ? { source: 'fallback:regime', live: false, error: 'regime unavailable' }
+          : { source: 'regime', live: true },
+      ),
     };
   } catch {
     return {
       regime: 'unknown',
-      regimeMeta: buildMeta({ source: 'fallback:fmp', live: false, error: 'regime fetch failed' }),
+      regimeMeta: buildMeta({ source: 'fallback:regime', live: false, error: 'regime fetch failed' }),
     };
   }
 }

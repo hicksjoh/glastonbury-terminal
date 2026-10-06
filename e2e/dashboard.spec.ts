@@ -13,7 +13,8 @@ test.describe('Dashboard — Options Cards Integrated', () => {
     await expect(page.locator('text=/Daily Theta/i').first()).toBeVisible();
 
     // Existing cards still present
-    await expect(page.locator('text=/Cash Available/i')).toBeVisible();
+    // Paper accounts label the tile "Paper Cash" so simulated funds never read as deployable.
+    await expect(page.locator('text=/Cash Available|Paper Cash/i')).toBeVisible();
     await expect(page.locator('text=/Positions/i').first()).toBeVisible();
     await expect(page.locator('text=/\\$50M Progress/i')).toBeVisible();
 

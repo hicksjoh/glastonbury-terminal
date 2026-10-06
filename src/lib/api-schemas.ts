@@ -70,6 +70,9 @@ export const volSurfaceResponseSchema = z.object({
     currentIV: z.number(), expectedIV: z.number(), edge: z.number(), direction: z.string(),
   }).passthrough()),
   lastUpdated: z.string(),
+  // True while the surface is model-generated rather than read from a chain.
+  modelled: z.boolean().optional(),
+  modelNote: z.string().optional(),
 }).passthrough();
 
 export const alertsResponseSchema = z.object({

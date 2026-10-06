@@ -2,6 +2,7 @@ import { z } from 'zod';
 import type { Tool } from '@anthropic-ai/sdk/resources/messages';
 import type { ToolDef } from './registry';
 import { sanitizeSymbol } from '@/lib/sanitize';
+import { internalFetch } from '@/lib/internal-fetch';
 
 const inputSchema = z.object({
   ticker: z.string().optional().describe('Optional ticker to filter by (e.g., NVDA)'),
@@ -30,7 +31,7 @@ export const getCongressTrades: ToolDef<z.infer<typeof inputSchema>> = {
       const params = new URLSearchParams();
       const filterTicker = String(input.ticker || '').trim();
       if (filterTicker) params.set('ticker', sanitizeSymbol(filterTicker));
-      const res = await fetch(`${congressBaseUrl}/api/congress?${params}`, {
+      const res = await internalFetch(`/api/congress?${params}`, {
         signal: AbortSignal.timeout(10000),
       });
       if (!res.ok) {

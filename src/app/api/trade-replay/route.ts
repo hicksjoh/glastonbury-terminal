@@ -3,6 +3,7 @@ import Anthropic from '@anthropic-ai/sdk';
 import { createServiceClient } from '@/lib/supabase';
 import { checkRateLimitDurable, getRateLimitIdentity } from '@/lib/rate-limit-durable';
 import { tagAnthropicCall } from '@/lib/anthropic-cost';
+import { internalFetch } from '@/lib/internal-fetch';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -73,12 +74,14 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     let marketContext = '';
     try {
       const [regimeRes, gexRes] = await Promise.all([
-        fetch(`${baseUrl}/api/regime`, { signal: AbortSignal.timeout(10000) }).then(r => r.ok ? r.json() : null).catch(() => null),
-        fetch(`${baseUrl}/api/gex?symbol=${trade.ticker}`, { signal: AbortSignal.timeout(10000) }).then(r => r.ok ? r.json() : null).catch(() => null),
+        internalFetch(`/api/regime`, { signal: AbortSignal.timeout(10000) }).then(r => r.ok ? r.json() : null).catch(() => null),
+        internalFetch(`/api/gex?symbol=${trade.ticker}`, { signal: AbortSignal.timeout(10000) }).then(r => r.ok ? r.json() : null).catch(() => null),
       ]);
 
       const parts: string[] = [];
-      if (regimeRes?.regime) parts.push(`Market regime at trade time: ${regimeRes.regime} (VIX: ${regimeRes.vix || 'N/A'})`);
+      // /api/regime nests its payload under `data`; it reports the CURRENT regime.
+      const regime = regimeRes?.data;
+      if (regime?.regime && regime.regime !== 'unknown') parts.push(`Current market regime: ${regime.regime} (VIX: ${regime.vix ?? 'N/A'})`);
       if (gexRes?.regime) parts.push(`GEX regime: ${gexRes.regime} (net GEX: ${gexRes.netGEX || 0})`);
       marketContext = parts.join('\n');
     } catch {

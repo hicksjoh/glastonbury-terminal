@@ -175,11 +175,24 @@ async function POST_impl(req: NextRequest) {
       // Weight by normal distribution
       if (breakevens.length === 1) {
         const z = (breakevens[0] - midPrice) / (midPrice * totalVol);
-        probOfProfit = pnls[pnls.length - 1] > 0 ? normalCDF(z) : 1 - normalCDF(z);
+        // normalCDF(z) is P(price ends BELOW the breakeven). A position that is
+        // profitable at the top of the range wins ABOVE it, so its probability
+        // is the complement. These were swapped: a long OTM call read > 50%.
+        probOfProfit = pnls[pnls.length - 1] > 0 ? 1 - normalCDF(z) : normalCDF(z);
       }
     }
 
     return NextResponse.json({
+      // What the numbers are built on, so the page can say so. No live quote
+      // or chain is read here.
+      assumptions: {
+        spot: midPrice,
+        spotSource: 'midpoint of the simulated price range (not a live quote)',
+        iv: defaultIV,
+        ivSource: 'flat 30% for probability of profit; leg pricing uses a leg IV when supplied',
+        probabilityNote: 'Exact only for a single breakeven. With two breakevens it is the share of the simulated price range that is profitable; with none it is 50%.',
+        dte: currentDte,
+      },
       grid,
       maxProfit: Math.round(maxProfit * 100) / 100,
       maxLoss: Math.round(maxLoss * 100) / 100,

@@ -6,6 +6,7 @@ import { checkRateLimitDurable } from '@/lib/rate-limit-durable';
 import { getSectorPerformance } from '@/lib/fmp-client';
 import { tagAnthropicCall } from '@/lib/anthropic-cost';
 import { cachedSystem } from '@/lib/prompts';
+import { internalFetch } from '@/lib/internal-fetch';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60;
@@ -49,11 +50,11 @@ async function fetchAlpacaSnapshots(symbols: string[]): Promise<Record<string, R
 
 async function fetchRegime(): Promise<{ regime: string; vix: number; confidence: number }> {
   try {
-    const base = process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : 'http://localhost:3000';
-    const res = await fetch(`${base}/api/regime`, { signal: AbortSignal.timeout(10000) });
+    const res = await internalFetch(`/api/regime`, { signal: AbortSignal.timeout(10000) });
     if (!res.ok) return { regime: 'unknown', vix: 0, confidence: 0 };
-    const data = await res.json();
-    return { regime: data.regime || 'unknown', vix: data.vix || 0, confidence: data.confidence || 0 };
+    // The route answers { success, data: { regime, vix, confidence } }.
+    const { data } = await res.json();
+    return { regime: data?.regime || 'unknown', vix: data?.vix || 0, confidence: data?.confidence || 0 };
   } catch {
     return { regime: 'unknown', vix: 0, confidence: 0 };
   }

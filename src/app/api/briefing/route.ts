@@ -3,6 +3,8 @@ import { generateBriefing } from '@/lib/claude';
 import { createServiceClient } from '@/lib/supabase';
 import { buildMarketContext } from '@/lib/market-intel';
 import { checkRateLimitDurable } from '@/lib/rate-limit-durable';
+import { internalFetch } from '@/lib/internal-fetch';
+import { brokerageAccountLabel, recordedHoldingsContext } from '@/lib/briefing-holdings';
 
 // Live-data endpoint — never let Next static-optimize this at build time
 export const dynamic = 'force-dynamic';
@@ -26,7 +28,7 @@ async function getBriefingContext(): Promise<string> {
     if (accountRes.ok) {
       const acct = await accountRes.json();
       const dayPL = parseFloat(acct.equity) - parseFloat(acct.last_equity);
-      parts.push(`Alpaca Account:
+      parts.push(`${brokerageAccountLabel()}:
   - Equity: $${parseFloat(acct.equity).toLocaleString()}
   - Cash: $${parseFloat(acct.cash).toLocaleString()}
   - Buying Power: $${parseFloat(acct.buying_power).toLocaleString()}
@@ -74,8 +76,7 @@ async function getBriefingContext(): Promise<string> {
     parts.push('Supabase: Connection unavailable');
   }
 
-  // Static holdings always included
-  parts.push(`Static Holdings: CR3 equity ~$720K (23 territories), Anthropic RSUs 5,749 shares, Miami Shores ~$580K`);
+  parts.push(await recordedHoldingsContext());
 
   // Fetch market intelligence (news, movers, earnings)
   try {
@@ -89,28 +90,12 @@ async function getBriefingContext(): Promise<string> {
 
   // Aggregate news sentiment (last 12 hours)
   try {
-    const newsRes = await fetch(`${process.env.NEXT_PUBLIC_BASE_URL || 'http://localhost:3000'}/api/news?limit=30`);
+    const newsRes = await internalFetch(`/api/news?limit=30`);
     if (newsRes.ok) {
       const newsData = await newsRes.json();
       const articles = newsData.articles || [];
       if (articles.length > 0) {
-        // Score headlines via sentiment API
-        const sentRes = await fetch(`${process.env.NEXT_PUBLIC_BASE_URL || 'http://localhost:3000'}/api/sentiment`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ headlines: articles.slice(0, 20).map((a: { headline: string }) => a.headline) }),
-        });
-        if (sentRes.ok) {
-          const sentData = await sentRes.json();
-          const results = sentData.results || [];
-          const bullish = results.filter((r: { sentiment: string }) => r.sentiment === 'BULLISH').length;
-          const bearish = results.filter((r: { sentiment: string }) => r.sentiment === 'BEARISH').length;
-          const neutral = results.filter((r: { sentiment: string }) => r.sentiment === 'NEUTRAL').length;
-          const total = results.length;
-          if (total > 0) {
-            parts.push(`\nNEWS SENTIMENT (${total} headlines): ${Math.round((bullish/total)*100)}% Bullish, ${Math.round((neutral/total)*100)}% Neutral, ${Math.round((bearish/total)*100)}% Bearish`);
-          }
-        }
+        parts.push(`\nNEWS: ${articles.length} recent headlines loaded`);
       }
     }
   } catch {
@@ -119,7 +104,7 @@ async function getBriefingContext(): Promise<string> {
 
   // Fetch active alerts
   try {
-    const alertsRes = await fetch(`${process.env.NEXT_PUBLIC_BASE_URL || 'http://localhost:3000'}/api/alerts`);
+    const alertsRes = await internalFetch(`/api/alerts`);
     if (alertsRes.ok) {
       const alertsData = await alertsRes.json();
       const activeAlerts = (alertsData.alerts || []).filter((a: { is_active: boolean }) => a.is_active);
@@ -137,7 +122,7 @@ async function getBriefingContext(): Promise<string> {
 
   // Fetch top sector movers
   try {
-    const sectorsRes = await fetch(`${process.env.NEXT_PUBLIC_BASE_URL || 'http://localhost:3000'}/api/sectors`);
+    const sectorsRes = await internalFetch(`/api/sectors`);
     if (sectorsRes.ok) {
       const sectorsData = await sectorsRes.json();
       const sectors = sectorsData.sectors || [];

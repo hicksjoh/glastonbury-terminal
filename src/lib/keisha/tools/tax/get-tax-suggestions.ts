@@ -2,6 +2,7 @@ import { z } from 'zod';
 import type { Tool } from '@anthropic-ai/sdk/resources/messages';
 import type { ToolDef } from '../registry';
 import { TAX_DISCLAIMER, ACTIVE_TAX_YEAR, calculateIncomeTax, type FilingStatus } from '@/lib/tax-engine';
+import { internalFetch } from '@/lib/internal-fetch';
 
 const inputSchema = z.object({
   filing_status: z.enum(['single', 'mfj', 'mfs', 'hoh']).optional().describe('Filing status'),
@@ -40,7 +41,7 @@ export const getTaxSuggestions: ToolDef<z.infer<typeof inputSchema>> = {
     // 1. Tax-Loss Harvesting — check for losses
     try {
       const baseUrl = process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : 'http://localhost:3000';
-      const harvestRes = await fetch(`${baseUrl}/api/tax/harvest?filing_status=${sugFs}&min_loss=500`, { signal: AbortSignal.timeout(10000) });
+      const harvestRes = await internalFetch(`/api/tax/harvest?filing_status=${sugFs}&min_loss=500`, { signal: AbortSignal.timeout(10000) });
       if (harvestRes.ok) {
         const hd = await harvestRes.json();
         if (hd.data?.candidates?.length > 0) {

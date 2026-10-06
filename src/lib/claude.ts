@@ -96,12 +96,15 @@ export async function streamMessageWithFallback(
 // prompt is ~4K tokens and we pay full-price input tokens on every Claude
 // call if uncached; caching drops cached reads to ~10% of a write and
 // persists ~5 min. See generateBriefing + generateAnalysis below.
+import { APP_TIME_ZONE } from './et-clock';
 import { KEISHA_SYSTEM_PROMPT, cachedSystem } from './prompts';
 export { KEISHA_SYSTEM_PROMPT };
 
 export async function generateBriefing(portfolioContext: string): Promise<string> {
+  // US market date, not the server's UTC date: after 8pm ET a bare
+  // toLocaleDateString() on Vercel is already "tomorrow".
   const today = new Date().toLocaleDateString('en-US', {
-    weekday: 'long', year: 'numeric', month: 'long', day: 'numeric'
+    weekday: 'long', year: 'numeric', month: 'long', day: 'numeric', timeZone: APP_TIME_ZONE,
   });
 
   const message = await anthropic.messages.create({
@@ -134,8 +137,10 @@ export async function generateAnalysis(
   portfolioContext: string,
   conversationHistory: { role: 'user' | 'assistant'; content: string }[]
 ): Promise<string> {
+  // US market date, not the server's UTC date: after 8pm ET a bare
+  // toLocaleDateString() on Vercel is already "tomorrow".
   const today = new Date().toLocaleDateString('en-US', {
-    weekday: 'long', year: 'numeric', month: 'long', day: 'numeric'
+    weekday: 'long', year: 'numeric', month: 'long', day: 'numeric', timeZone: APP_TIME_ZONE,
   });
 
   const dynamicContext = `═══════════════════════════════════════════

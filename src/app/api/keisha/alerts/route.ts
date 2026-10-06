@@ -3,6 +3,7 @@ import { createServiceClient } from '@/lib/supabase';
 import { captureRouteError } from '@/lib/api-error';
 import { loggerFor } from '@/lib/request-id';
 import { withRateLimit, RATE } from '@/lib/api-rate-limit';
+import { internalFetch } from '@/lib/internal-fetch';
 
 interface Alert {
   type: 'opportunity' | 'warning';
@@ -29,7 +30,7 @@ async function GET_impl(request: Request) {
     const now = new Date().toISOString();
 
     // 1. Portfolio position alerts — any holding moving >3% today
-    const portfolio = await fetch(`${baseUrl}/api/portfolio`).then(r => r.ok ? r.json() : null).catch(() => null);
+    const portfolio = await internalFetch(`/api/portfolio`).then(r => r.ok ? r.json() : null).catch(() => null);
     if (portfolio?.positions) {
       for (const pos of portfolio.positions) {
         const changePct = pos.unrealized_plpc ? parseFloat(pos.unrealized_plpc) * 100 : 0;
@@ -48,15 +49,17 @@ async function GET_impl(request: Request) {
     }
 
     // 2. Scanner signal alerts — high-confluence signals
-    const scanner = await fetch(`${baseUrl}/api/scanner?preset=confluence`).then(r => r.ok ? r.json() : null).catch(() => null);
+    const scanner = await internalFetch(`/api/scanner?preset=confluence`).then(r => r.ok ? r.json() : null).catch(() => null);
     if (scanner?.signals) {
+      // Scanner scores are now 30/60/70/100 by matched checks; 80+ means all
+      // three (top gainer, most active, insider buy) matched.
       const hotSignals = scanner.signals.filter((s: any) => s.score >= 80);
       for (const sig of hotSignals.slice(0, 3)) {
         alerts.push({
           type: 'opportunity',
           priority: sig.score >= 90 ? 'high' : 'medium',
-          title: `High-confluence signal: ${sig.action || 'BUY'} ${sig.symbol} (${sig.score}/100)`,
-          message: `${sig.sources?.length || 0} sources agree: ${sig.sources?.join(', ') || 'multiple'}. ${sig.thesis || ''}`,
+          title: `Scanner match: ${sig.symbol} hit all ${sig.sources?.length || 0} screen checks`,
+          message: `${sig.thesis || ''} This is a screen match, not a trade recommendation.`,
           symbol: sig.symbol,
           link: '/scanner',
           timestamp: now,
@@ -65,7 +68,7 @@ async function GET_impl(request: Request) {
     }
 
     // 3. GEX regime flip alert
-    const gex = await fetch(`${baseUrl}/api/gex?symbol=SPY`).then(r => r.ok ? r.json() : null).catch(() => null);
+    const gex = await internalFetch(`/api/gex?symbol=SPY`).then(r => r.ok ? r.json() : null).catch(() => null);
     if (gex?.regime === 'negative') {
       // Check if we recently alerted about negative gamma
       let recentlyAlerted = false;
@@ -91,7 +94,7 @@ async function GET_impl(request: Request) {
     }
 
     // 4. Earnings on held positions
-    const earnings = await fetch(`${baseUrl}/api/earnings?range=today`).then(r => r.ok ? r.json() : null).catch(() => null);
+    const earnings = await internalFetch(`/api/earnings?range=today`).then(r => r.ok ? r.json() : null).catch(() => null);
     if (earnings?.upcoming && portfolio?.positions) {
       const heldSymbols = portfolio.positions.map((p: any) => p.symbol);
       const earningsToday = (earnings.upcoming || []).filter((e: any) => heldSymbols.includes(e.symbol));

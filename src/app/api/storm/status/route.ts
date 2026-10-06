@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { createServiceClient } from '@/lib/supabase';
 import { withRateLimit, RATE } from '@/lib/api-rate-limit';
+import { summarizeStormCoverage } from '@/lib/storm-coverage';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -16,10 +17,23 @@ async function GET_impl() {
       .gte('created_at', since)
       .order('created_at', { ascending: false })
       .limit(20),
+    // Every territory, not just Seacoast FL: the card reports coverage against
+    // the whole footprint.
     sb.from('cr3_territories')
-      .select('territory_id, region, county, zip_codes')
-      .eq('ar_type', 'Seacoast FL'),
+      .select('territory_id, region, county, zip_codes'),
   ]);
+
+  // A failed read must not render as "All clear". supabase-js returns errors
+  // rather than throwing, and `?? []` below would turn one into an empty,
+  // calm-looking card.
+  if (alertsRes.error || territoriesRes.error) {
+    const detail = alertsRes.error?.message ?? territoriesRes.error?.message;
+    console.error('storm/status read failed:', detail);
+    return NextResponse.json(
+      { error: 'Storm status unavailable', unavailable: true },
+      { status: 503 },
+    );
+  }
 
   const alerts = (alertsRes.data as unknown as Array<{
     id: string;
@@ -34,6 +48,10 @@ async function GET_impl() {
     suggested_sizing_notes: string | null;
     created_at: string;
   }>) ?? [];
+
+  const territories = (territoriesRes.data ?? []) as {
+    territory_id: string; region: string | null; county: string | null; zip_codes: string[] | null;
+  }[];
 
   // Per-territory highest threat over all recent alerts.
   const territoryThreat: Record<string, 'clear' | 'watch' | 'warning' | 'direct_hit'> = {};
@@ -51,7 +69,8 @@ async function GET_impl() {
   return NextResponse.json({
     alerts,
     territoryThreat,
-    territories: territoriesRes.data ?? [],
+    territories,
+    coverage: summarizeStormCoverage(territories),
   });
 }
 

@@ -318,7 +318,7 @@ export default function ScannerPage() {
                       }}>{src.replace(/_/g, ' ')}</span>
                     );
                   })}
-                  {s.regime_fit ? (
+                  {data?.marketRegime === 'unknown' ? null : s.regime_fit ? (
                     <span style={{ padding: '2px 8px', borderRadius: 4, fontSize: 10, fontWeight: 500, background: 'rgba(74,222,128,0.1)', color: '#4ade80', display: 'flex', alignItems: 'center', gap: 3 }}>
                       <Check size={10} /> regime fit
                     </span>

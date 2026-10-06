@@ -7,6 +7,7 @@ import { ALPACA_BASE_URL } from '@/lib/alpaca';
 import { assertLiveOrderAllowed, formatLiveOrderRejection, resolveNotionalUsd } from '@/lib/live-order-safety';
 import { getServerTradingMode, LiveOrderRejectedError } from '@/lib/trading-mode';
 import * as Sentry from '@sentry/nextjs';
+import { internalFetch } from '@/lib/internal-fetch';
 
 // Live-data endpoint — never let Next static-optimize this at build time
 export const dynamic = 'force-dynamic';
@@ -41,7 +42,7 @@ async function handleScan(): Promise<NextResponse> {
 
   try {
     // 1. Fetch signals from scanner
-    const scanRes = await fetch(`${baseUrl}/api/scanner?preset=confluence`);
+    const scanRes = await internalFetch(`/api/scanner?preset=confluence`);
     if (!scanRes.ok) {
       return NextResponse.json(
         { error: 'Failed to fetch signals from scanner', details: await scanRes.text() },
@@ -74,7 +75,7 @@ async function handleScan(): Promise<NextResponse> {
     for (const signal of topSignals) {
       const symbol = signal.symbol || signal.ticker;
       try {
-        const crewRes = await fetch(`${baseUrl}/api/agent-crew`, {
+        const crewRes = await internalFetch(`/api/agent-crew`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ symbol, action: 'buy' }),
@@ -146,23 +147,12 @@ async function handleScan(): Promise<NextResponse> {
           continue;
         }
 
-        // 7. Kelly sizing
-        let kellySize: number | null = null;
-        try {
-          const { calculateKelly } = await import('@/lib/kelly-sizer');
-          const kellyResult = calculateKelly({
-            winRate: Math.min(0.9, signal.score / 100),
-            avgWin: 0.08,
-            avgLoss: 0.04,
-          });
-          // calculateKelly fails closed to 0 on bad input, but `?? null`
-          // would have let a NaN through (?? only tests null/undefined),
-          // and JSON.stringify renders NaN as null on the wire.
-          kellySize = Number.isFinite(kellyResult?.dollarsAtRisk) ? kellyResult.dollarsAtRisk : null;
-        } catch {
-          // If Kelly sizer not available, use null
-          kellySize = null;
-        }
+        // 7. Sizing. No dollar size is suggested: there is no measured win rate
+        // for scanner signals, and this used to derive one from the score
+        // itself (`winRate = score / 100`), which turned a 100-point screen
+        // match into a "90% win rate" Kelly bet on a default $100k portfolio.
+        // Size comes from the trade guard at order time, against the real account.
+        const kellySize: number | null = null;
 
         const candidate: PipelineCandidate = {
           symbol,

@@ -1,6 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
+import type { StormCoverage } from '@/lib/storm-coverage';
 import { useRouter } from 'next/navigation';
 
 type ThreatLevel = 'clear' | 'watch' | 'warning' | 'direct_hit';
@@ -41,12 +42,18 @@ export function StormWatchCard() {
   const [alerts, setAlerts] = useState<StormAlert[]>([]);
   const [territories, setTerritories] = useState<Territory[]>([]);
   const [threatMap, setThreatMap] = useState<Record<string, ThreatLevel>>({});
+  const [unavailable, setUnavailable] = useState(false);
+  const [coverage, setCoverage] = useState<StormCoverage | null>(null);
 
   const load = useCallback(async () => {
     try {
       const res = await fetch('/api/storm/status');
-      if (!res.ok) return;
+      // A failed read is not an all-clear: say so instead of leaving the last
+      // (or empty) state on screen.
+      if (!res.ok) { setUnavailable(true); return; }
       const body = await res.json();
+      setUnavailable(false);
+      setCoverage(body.coverage ?? null);
       setAlerts(body.alerts ?? []);
       setTerritories(body.territories ?? []);
       setThreatMap(body.territoryThreat ?? {});
@@ -85,18 +92,33 @@ export function StormWatchCard() {
             Storm Watch — NOAA NHC
           </div>
           <div style={{ fontSize: 16, fontWeight: 700, color: '#e8e8e8', marginTop: 4 }}>
-            {loading ? 'Loading…' : activeAlert
-              ? `${activeAlert.storm_name} — ${THREAT_LABEL[activeAlert.threat_level]} on ${activeAlert.impacted_territory_ids.length} territory(ies)`
-              : `All clear · ${territories.length} Seacoast FL territories monitored`}
+            {loading ? 'Loading…' : unavailable
+              ? 'Storm status unavailable — this is NOT an all-clear'
+              : activeAlert
+                ? `${activeAlert.storm_name} — ${THREAT_LABEL[activeAlert.threat_level]} on ${activeAlert.impacted_territory_ids.length} territory(ies)`
+                : coverage
+                  ? `No active storms · ${coverage.monitored} of ${coverage.expected} territories monitored`
+                  : `No active storms · ${territories.length} territories monitored`}
           </div>
+          {!loading && !unavailable && coverage && !coverage.complete && (
+            <div role="alert" style={{ fontSize: 12, color: '#f97316', marginTop: 6, fontWeight: 600 }}>
+              Coverage gap: {coverage.expected - coverage.monitored} territories cannot be flagged
+              {coverage.notConfigured > 0 && ` — ${coverage.notConfigured} not configured`}
+              {coverage.missingZips.length > 0 && ` — ${coverage.missingZips.length} with no ZIPs (${coverage.missingZips.join(', ')})`}
+              .
+            </div>
+          )}
         </div>
-        <button
-          onClick={runMockTest}
-          style={{ background: 'none', border: '1px solid #333', color: '#888', padding: '4px 10px', fontSize: 11, borderRadius: 6, cursor: 'pointer' }}
-          title="QA: fire a synthetic Miami-bound storm"
-        >
-          Fire mock
-        </button>
+        {/* QA-only: never offer a synthetic hurricane on the production terminal. */}
+        {process.env.NODE_ENV !== 'production' && (
+          <button
+            onClick={runMockTest}
+            style={{ background: 'none', border: '1px solid #333', color: '#888', padding: '4px 10px', fontSize: 11, borderRadius: 6, cursor: 'pointer' }}
+            title="QA: fire a synthetic Miami-bound storm"
+          >
+            Fire mock
+          </button>
+        )}
       </div>
 
       {/* Heatmap grid */}
