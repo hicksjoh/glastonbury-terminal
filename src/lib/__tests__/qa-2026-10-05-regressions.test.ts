@@ -106,9 +106,39 @@ describe('B3 internalFetch: self-calls authenticate and target the app origin', 
     expect(internalBaseUrl()).toBe('http://localhost:3000');
   });
 
-  it('refuses to carry the internal key to anything but this app\'s /api', () => {
-    expect(() => internalFetch('https://evil.example.com/api/x')).toThrow();
-    expect(() => internalFetch('/login')).toThrow();
+  it('refuses to carry credentials to anything but this app\'s /api', async () => {
+    await expect(internalFetch('https://evil.example.com/api/x')).rejects.toThrow();
+    await expect(internalFetch('/login')).rejects.toThrow();
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  // Post-deploy smoke 2026-10-06: with the key header attached, production
+  // self-calls still 401'd at middleware. Inside a signed-in request the
+  // caller's session cookie is forwarded, so those paths work without the key.
+  it('forwards only the caller\'s session cookie when inside a request', async () => {
+    vi.resetModules();
+    vi.doMock('next/headers', () => ({
+      cookies: () => ({
+        get: (name: string) => (name === 'gt-auth' ? { value: 'jwt.abc.def' } : { value: 'other' }),
+      }),
+    }));
+    const { internalFetch: scoped } = await import('@/lib/internal-fetch');
+    delete process.env.INTERNAL_API_KEY;
+    await scoped('/api/regime');
+    const [, init] = fetchSpy.mock.calls[0] as unknown as [string, RequestInit];
+    const h = new Headers(init.headers);
+    expect(h.get('cookie')).toBe('gt-auth=jwt.abc.def');
+    expect(h.get('x-internal-key')).toBeNull();
+    vi.doUnmock('next/headers');
+  });
+
+  it('sends no cookie outside a request scope, and trims the key', async () => {
+    process.env.INTERNAL_API_KEY = 'k-123\n';
+    await internalFetch('/api/regime');
+    const [, init] = fetchSpy.mock.calls[0] as unknown as [string, RequestInit];
+    const h = new Headers(init.headers);
+    expect(h.get('cookie')).toBeNull();
+    expect(h.get('x-internal-key')).toBe('k-123');
   });
 
   // Guard for the bug class, not just the ten call sites fixed: any server
