@@ -22,6 +22,66 @@ column is the equivalent local time during DST (subtract 1h for EST winter).
 | `/api/cron/slo-roundup` | `0 21 * * 5` | 5:00 PM Fri | `slo-roundup` | ✅ p1-4 (per-week) | Aggregate SLO counters · Resend email |
 | `/api/cron/migration-drift-check` | `0 13 * * 1` | 9:00 AM Mon | `migration-drift-check` | ✅ p1-4 (per-week) | Canary-check schema · Resend alert if drift |
 
+## In-app dead-man check (the one that is actually armed)
+
+**Healthchecks pings are currently inactive in production**: `HEALTHCHECKS_PING_KEY`
+is not set in Vercel, and `src/lib/healthchecks.ts` is fail-open, so every
+`pingHealthcheck()` call is a silent no-op. That is how the daily portfolio
+snapshot cron went months without writing a row and nobody was told. Until the
+key is set, the check below is the only thing watching the crons.
+
+- **Logic**: `src/lib/cron-freshness.ts` (pure, unit-tested). `CRON_REGISTRY`
+  maps each cron in `vercel.json` to a name, a grace period and an evidence
+  source. The allowed age is derived from the schedule itself: the longest gap
+  between two firings (24h daily, 72h for weekday-only jobs so weekends are
+  tolerated, 168h weekly) plus grace (3h daily, 24h weekly, +24h for
+  date-granularity evidence).
+- **Route**: `GET /api/ops/cron-freshness` (session auth via middleware) returns
+  `{ ok, checkedAt, crons: [{ path, name, schedule, status, lastEvidenceAt, maxAgeHours }] }`.
+  `ok` is true only when every cron is `fresh`.
+- **Statuses**: `fresh` · `overdue` · `never_ran` · `unverifiable`.
+  `unverifiable` is the fail-closed bucket: a cron in `vercel.json` with no
+  registry entry, a schedule that cannot be parsed, or evidence that could not
+  be read. Nothing unknown is ever reported fresh.
+- **Asserted nightly** by `e2e/truth-invariants.spec.ts` (`@smoke @truth`), run
+  every day at 11:00 UTC by `.github/workflows/nightly-smoke.yml`.
+- **Visible to humans** on `/settings` → "Scheduled jobs".
+
+| Cron | Evidence |
+|------|----------|
+| `/api/briefing/morning-push` | `cron_runs.completed_at`, job `briefing-morning-push` |
+| `/api/briefing/scheduled` | `cron_runs.completed_at`, job `briefing-scheduled` |
+| `/api/cron/prediction-snapshot` `30 13 * * 1-5` | marker: `cron_runs`, job `narrative-refresh@30 13 * * 1-5` |
+| `/api/cron/prediction-snapshot` `0 18 * * 1-5` | marker: `cron_runs`, job `narrative-refresh@0 18 * * 1-5` |
+| `/api/cron/prediction-snapshot` `0 13 * * *` | marker: `cron_runs`, job `cron-prediction-snapshot` |
+| `/api/cron/weekly-report` | `cron_runs.completed_at`, job `weekly-report` |
+| `/api/portfolio/snapshot` | `portfolio_snapshots.date` |
+| `/api/cron/storm-watch` | marker: `cron_runs`, job `cron-storm-watch` |
+| `/api/cron/tax-harvest` | marker: `cron_runs`, job `cron-tax-harvest` |
+| `/api/cron/coach-review` | `coach_reviews.created_at` |
+| `/api/cron/slo-roundup` | `cron_runs.completed_at`, job `slo-roundup` |
+| `/api/cron/migration-drift-check` | `cron_runs.completed_at`, job `migration-drift-check` |
+
+"Marker" jobs can legitimately write nothing on a quiet run (no storm, no
+harvestable loss, empty feed), so on success they call `recordCronRan()` from
+`src/lib/cron-idempotency.ts`, which stamps a completed row in the existing
+`cron_runs` table. No new table or migration.
+
+Notes:
+
+- The narrative schedules write their marker only when Vercel sends the
+  `x-vercel-cron-schedule` header and `/api/narrative` did not answer
+  `refreshFailed`. A manual `?job=narrative` run leaves no marker.
+- `weekly-report` and `slo-roundup` now complete their claim when they skip for
+  "no mailer configured". Before, that path left the claim open forever.
+- **First deploy**: marker jobs have no evidence until each has run once on the
+  new code, so the dead-man test reports `never_ran` for them until then (worst
+  case the following Monday, for the weekly jobs). To clear it sooner, trigger
+  each cron once with `curl -H "Authorization: Bearer $CRON_SECRET"`.
+- **Adding a cron**: add it to `CRON_REGISTRY` in the same PR. A unit test fails
+  CI if `vercel.json` and the registry disagree, and the route reports the new
+  cron as `unverifiable` until it is registered.
+
 ## Healthchecks.io setup (one-time)
 
 The lib at `src/lib/healthchecks.ts` is fail-open: if `HEALTHCHECKS_PING_KEY`
@@ -82,6 +142,8 @@ When adding a new cron, the rule is: if it has fan-out side effects
 
 1. Edit `vercel.json` (the source of truth for schedules)
 2. Update this manifest
-3. In Healthchecks UI: pause or delete the corresponding check
-4. If removed: the route handler can stay if it's still useful for manual
+3. Update `CRON_REGISTRY` in `src/lib/cron-freshness.ts` (CI fails if it and
+   `vercel.json` disagree)
+4. In Healthchecks UI: pause or delete the corresponding check
+5. If removed: the route handler can stay if it's still useful for manual
    POSTs (e.g. via `curl ... -H "Authorization: Bearer $CRON_SECRET"`)

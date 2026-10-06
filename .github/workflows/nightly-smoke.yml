@@ -1,8 +1,12 @@
 name: Nightly Prod Smoke
 
-# Dead-man switch for the live terminal. Runs the @smoke e2e suite plus
-# freshness assertions against production every weekday morning before the
-# open, and after every deploy to main. When it fails it opens (or updates)
+# Dead-man switch for the live terminal. Runs the @smoke e2e suite (which
+# includes the @truth invariants in e2e/truth-invariants.spec.ts) plus
+# freshness assertions against production EVERY morning, and after every
+# deploy to main. Every day, not just weekdays: crons and storms do not skip
+# weekends, and a storm-watch or snapshot job that dies on a Friday night
+# should not wait until Monday to be noticed. Market-hours assertions in
+# e2e/freshness.spec.ts gate themselves on isWeekdayInNewYork(). When it fails it opens (or updates)
 # a pinned GitHub issue with the failure list — a silent regression on prod
 # should never again sit unnoticed for weeks.
 #
@@ -14,7 +18,7 @@ name: Nightly Prod Smoke
 
 on:
   schedule:
-    - cron: '0 11 * * 1-5' # 7:00 AM ET (11:00 UTC) weekdays, pre-open
+    - cron: '0 11 * * *' # 11:00 UTC (7:00 AM ET) every day, weekends included
   workflow_run:
     workflows: [CI]
     types: [completed]

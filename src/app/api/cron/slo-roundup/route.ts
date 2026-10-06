@@ -227,6 +227,10 @@ async function handle(req: NextRequest): Promise<NextResponse> {
     // healthcheck as a failure.
     if (!sendResult.ok && sendResult.notConfigured) {
       await pingHealthcheck(HC_SLUG, 'success');
+      // The run did everything it can without a mailer, so complete the claim.
+      // Leaving it open made this job look permanently stuck and gave the
+      // dead-man check (src/lib/cron-freshness.ts) nothing to read.
+      await markCronRunComplete(JOB_NAME, runKey, { skipped: 'no mailer configured' });
       log.warn('slo-roundup skipped: no mailer configured');
       return NextResponse.json({ ok: true, skipped: 'no mailer configured' });
     }
