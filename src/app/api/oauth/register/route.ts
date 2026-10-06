@@ -1,77 +1,77 @@
 import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
-import { isAllowedRedirectUri, registerClient } from '@/lib/oauth/clients';
+import {
+  isAllowedRedirectUri,
+  registerClient,
+  countRecentClients,
+  pruneStaleClients,
+  MAX_NEW_CLIENTS_PER_24H,
+} from '@/lib/oauth/clients';
+import {
+  decideRegistrationAdmission,
+  isAnonymousAdmission,
+  type AdmissionResult,
+} from '@/lib/oauth/registration-policy';
 import { checkRateLimitDurable, getRateLimitIdentity } from '@/lib/rate-limit-durable';
-import { safeSecretEqual } from '@/lib/safe-compare';
 import { verifySessionJwt, SESSION_COOKIE_NAME } from '@/lib/session';
 import { readBoundedJson, BodyTooLargeError, BODY_LIMIT } from '@/lib/bounded-body';
 
 // RFC 7591 OAuth 2.0 Dynamic Client Registration.
 //
-// Production hardening (p1-5): registration now requires either an
-// authenticated session (gt-auth cookie — Wes registering from his own
-// browser) OR an `OAUTH_REGISTRATION_TOKEN` bearer (programmatic admin).
+// Admission (decided in src/lib/oauth/registration-policy.ts, first match wins):
+//   1. gt-auth session cookie            — Wes registering from his browser
+//   2. OAUTH_REGISTRATION_TOKEN bearer   — programmatic admin
+//   3. OAUTH_OPEN_DCR=1                  — anonymous RFC 7591 registration for
+//                                          Claude.app's custom connector / MCP
+//                                          Inspector, which cannot send a bearer
+//   4. token configured, nothing matched — denied
+//   5. production                        — denied (fail closed, p6-1)
+//   6. dev                               — allowed with a warning
 //
-// The pre-p1-5 behavior allowed any internet caller to register; the
-// consent screen was the only real gate. That's still effectively true
-// (a malicious client never gets a valid token without Wes clicking
-// approve), but an unauthenticated registry of "Glastonbury Terminal"
-// look-alike clients is a phishing vector and table-bloat risk.
+// With OAUTH_OPEN_DCR unset the behaviour is exactly the pre-flag behaviour.
 //
-// Back-compat: if OAUTH_REGISTRATION_TOKEN is unset AND no valid session
-// is presented, the request is still accepted but logs a WARN. This keeps
-// any pre-p1-5 client integrations working until Wes sets the env var to
-// flip the gate to fully locked.
+// Registration alone grants nothing; the consent screen is the security gate
+// (/api/oauth/authorize requires Wes's session, /oauth/consent a human click).
+// Table bloat is bounded three ways:
+//   - 5 registrations / minute / IP (durable limiter, before auth),
+//   - anonymous registration is refused once MAX_NEW_CLIENTS_PER_24H live
+//     clients were created in the trailing 24h,
+//   - pruneStaleClients() runs after every successful registration.
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
-interface AdmissionResult {
-  ok: boolean;
-  via: 'session' | 'token' | 'open' | 'denied';
-}
+/** Grants every registered client may use. Clients carry no per-row list. */
+const CLIENT_GRANT_TYPES = ['authorization_code', 'refresh_token'] as const;
 
 async function authorizeRegistration(req: NextRequest): Promise<AdmissionResult> {
-  // Path 1: authenticated session cookie
+  let sessionValid = false;
   const cookie = req.cookies.get(SESSION_COOKIE_NAME);
   if (cookie?.value) {
-    const session = await verifySessionJwt(cookie.value);
-    if (session) return { ok: true, via: 'session' };
+    sessionValid = (await verifySessionJwt(cookie.value)) !== null;
   }
 
-  // Path 2: registration token (Authorization: Bearer ...)
-  const expected = process.env.OAUTH_REGISTRATION_TOKEN;
-  if (expected) {
-    const header = req.headers.get('authorization') ?? '';
-    if (header.startsWith('Bearer ') && safeSecretEqual(header.slice(7), expected)) {
-      return { ok: true, via: 'token' };
-    }
-    // Token gate is configured AND no valid session AND token mismatch — deny.
-    return { ok: false, via: 'denied' };
-  }
+  const result = decideRegistrationAdmission({
+    sessionValid,
+    authorizationHeader: req.headers.get('authorization'),
+    registrationToken: process.env.OAUTH_REGISTRATION_TOKEN,
+    openDcr: process.env.OAUTH_OPEN_DCR,
+    nodeEnv: process.env.NODE_ENV,
+  });
 
-  // p6-1: fail-CLOSED in production when OAUTH_REGISTRATION_TOKEN is unset.
-  // The earlier "warn and allow" fallback was a deploy-time footgun — if the
-  // operator forgot to set the env var, anonymous registration was open to
-  // the internet. Production NEVER takes that path now. Dev preserves the
-  // ergonomic warn-and-allow so local Claude.app testing still works without
-  // every developer needing to set the env var.
-  if (process.env.NODE_ENV === 'production') {
-    console.error(
-      '[oauth/register] OAUTH_REGISTRATION_TOKEN not set in production — ' +
-        'rejecting anonymous registration. Set the env var to enable token-based ' +
-        'admin registration, or rely on session-based registration only.',
+  if (result.via === 'dev') {
+    console.warn(
+      '[oauth/register] no session / token / OAUTH_OPEN_DCR — allowing ' +
+        'unauthenticated registration (dev only). Production fails closed here.',
     );
-    return { ok: false, via: 'denied' };
+  } else if (!result.ok) {
+    console.error(
+      '[oauth/register] denied: no session cookie, no matching ' +
+        'OAUTH_REGISTRATION_TOKEN bearer, and OAUTH_OPEN_DCR is not "1". ' +
+        'Set OAUTH_OPEN_DCR=1 to allow Claude.app-style anonymous registration.',
+    );
   }
-
-  // Dev only: no session, no env-var gate. Allow but warn.
-  console.warn(
-    '[oauth/register] OAUTH_REGISTRATION_TOKEN not set and no session ' +
-      'cookie present — allowing unauthenticated registration (dev only). ' +
-      'Production fails-closed in the same path.',
-  );
-  return { ok: true, via: 'open' };
+  return result;
 }
 
 interface RegisterBody {
@@ -111,6 +111,33 @@ export async function POST(req: NextRequest) {
       { error: 'unauthorized', error_description: 'Dynamic client registration is restricted on this server.' },
       { status: 401, headers: { 'WWW-Authenticate': 'Bearer realm="oauth-register"' } },
     );
+  }
+
+  // Flood cap for callers that proved nothing about themselves. Session and
+  // token registrants are exempt (that is Wes or his tooling). If the count
+  // itself fails we refuse: an unbounded anonymous write path is the thing
+  // this check exists to prevent.
+  if (isAnonymousAdmission(admission.via)) {
+    let recent: number;
+    try {
+      recent = await countRecentClients();
+    } catch (err) {
+      console.error('[oauth/register] recent-client count failed:', err instanceof Error ? err.message : String(err));
+      return NextResponse.json(
+        { error: 'temporarily_unavailable', error_description: 'Registration is temporarily unavailable.' },
+        { status: 503, headers: { 'Access-Control-Allow-Origin': '*', 'Retry-After': '60' } },
+      );
+    }
+    if (recent >= MAX_NEW_CLIENTS_PER_24H) {
+      console.warn(`[oauth/register] anonymous registration refused: ${recent} clients in 24h (cap ${MAX_NEW_CLIENTS_PER_24H})`);
+      return NextResponse.json(
+        {
+          error: 'too_many_requests',
+          error_description: 'Client registration limit reached. Try again later.',
+        },
+        { status: 429, headers: { 'Access-Control-Allow-Origin': '*', 'Retry-After': '3600' } },
+      );
+    }
   }
 
   let body: RegisterBody;
@@ -203,8 +230,21 @@ export async function POST(req: NextRequest) {
       redirect_uris,
       token_endpoint_auth_method: authMethod,
       scope,
-      metadata,
+      metadata: { ...metadata, registered_via: admission.via },
     });
+
+    // Opportunistic housekeeping: drop long-revoked clients and stale e2e
+    // leftovers. Best-effort — a failure here must never fail a registration
+    // that already succeeded.
+    try {
+      const pruned = await pruneStaleClients();
+      if (pruned.deleted > 0) {
+        console.info(`[oauth/register] pruned ${pruned.deleted} stale client(s)`);
+      }
+    } catch (err) {
+      console.warn('[oauth/register] prune skipped:', err instanceof Error ? err.message : String(err));
+    }
+
     return NextResponse.json(
       {
         client_id: creds.client_id,
@@ -213,6 +253,8 @@ export async function POST(req: NextRequest) {
         redirect_uris: creds.redirect_uris,
         token_endpoint_auth_method: creds.token_endpoint_auth_method,
         scope: creds.scope,
+        grant_types: CLIENT_GRANT_TYPES,
+        response_types: ['code'],
         // RFC 7591 §3.2.1 — issuance time
         client_id_issued_at: Math.floor(Date.now() / 1000),
         // No client_secret_expires_at; secrets don't expire (rotate by
@@ -222,9 +264,10 @@ export async function POST(req: NextRequest) {
       { status: 201, headers: { 'Access-Control-Allow-Origin': '*' } },
     );
   } catch (err) {
-    const msg = err instanceof Error ? err.message : 'registration failed';
+    // The caller may be anonymous: never echo a database error to it.
+    console.error('[oauth/register] registration failed:', err instanceof Error ? err.message : String(err));
     return NextResponse.json(
-      { error: 'server_error', error_description: msg },
+      { error: 'server_error', error_description: 'registration failed' },
       { status: 500 },
     );
   }
