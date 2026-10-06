@@ -5,6 +5,7 @@ import { withRateLimit, RATE } from '@/lib/api-rate-limit';
 import {
   cronEvidenceKey,
   evaluateCronFreshness,
+  isHealthyCronStatus,
   registryEntryFor,
   type CronEvidenceSource,
   type CronScheduleEntry,
@@ -108,7 +109,7 @@ async function GET_impl() {
   }
 
   const rows = evaluateCronFreshness(now, crons, evidence);
-  const ok = listValid && rows.length > 0 && rows.every(r => r.status === 'fresh');
+  const ok = listValid && rows.length > 0 && rows.every(r => isHealthyCronStatus(r.status));
 
   return NextResponse.json({
     ok,

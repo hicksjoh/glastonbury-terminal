@@ -19,7 +19,25 @@
  * Nothing is ever skipped, and nothing unknown is ever reported `fresh`.
  */
 
-export type CronStatus = 'fresh' | 'overdue' | 'never_ran' | 'unverifiable';
+export type CronStatus = 'fresh' | 'awaiting_first_run' | 'overdue' | 'never_ran' | 'unverifiable';
+
+/**
+ * When this check started watching. Several jobs only began leaving evidence
+ * with the change that introduced it (and the snapshot cron had never run at
+ * all), so on day one they have nothing newer than this. A job with no
+ * evidence since arming is `awaiting_first_run` — healthy — until one full
+ * max-age window has passed; after that the normal `overdue` / `never_ran`
+ * verdict applies for good. Without this the nightly would go red on deploy
+ * for a reason nobody can act on, which is how watchdogs get ignored.
+ *
+ * Do not bump this to silence an alarm. It is a one-time start date.
+ */
+export const DEAD_MAN_ARMED_AT = '2026-10-06T12:00:00Z';
+
+/** Statuses that mean "nothing to act on". */
+export function isHealthyCronStatus(status: CronStatus): boolean {
+  return status === 'fresh' || status === 'awaiting_first_run';
+}
 
 /** Where the latest proof-of-run for a cron lives. */
 export type CronEvidenceSource =
@@ -275,6 +293,7 @@ function evidenceToMs(value: string, source: CronEvidenceSource): number | null 
  *
  * @param now      the moment to judge against
  * @param crons    the `crons` array from vercel.json
+ * @param armedAt  start of the one-time arming window; tests pass an old date
  * @param evidence latest evidence per `cronEvidenceKey(cron)`: an ISO
  *                 timestamp (or `YYYY-MM-DD` for date columns), `null` when
  *                 the read succeeded and found nothing, and the key ABSENT
@@ -284,6 +303,7 @@ export function evaluateCronFreshness(
   now: Date,
   crons: readonly CronScheduleEntry[],
   evidence: Readonly<Record<string, string | null | undefined>>,
+  armedAt: string = DEAD_MAN_ARMED_AT,
 ): CronFreshnessRow[] {
   const nowMs = now.getTime();
   return crons.map((cron): CronFreshnessRow => {
@@ -312,7 +332,19 @@ export function evaluateCronFreshness(
     if (raw === undefined) {
       return { ...named, status: 'unverifiable', lastEvidenceAt: null, detail: 'evidence could not be read' };
     }
+    // Still inside the first window since arming: no post-arming run was due yet.
+    const armedMs = Date.parse(armedAt);
+    // An unparseable arming date arms nothing: fall through to the strict verdict.
+    const armingEndsMs = Number.isFinite(armedMs) ? armedMs + maxAgeHours * HOUR_MS : -Infinity;
+    const inArmingWindow = nowMs < armingEndsMs;
+    const awaiting = (lastEvidenceAt: string | null): CronFreshnessRow => ({
+      ...named,
+      status: 'awaiting_first_run',
+      lastEvidenceAt,
+      detail: `no run since the check was armed; first one is due by ${new Date(armingEndsMs).toISOString()}`,
+    });
     if (raw === null) {
+      if (inArmingWindow) return awaiting(null);
       return { ...named, status: 'never_ran', lastEvidenceAt: null, detail: 'no evidence of any run' };
     }
     if (typeof raw !== 'string') {
@@ -327,6 +359,7 @@ export function evaluateCronFreshness(
     }
     const ageHours = (nowMs - ms) / HOUR_MS;
     if (ageHours > maxAgeHours) {
+      if (inArmingWindow) return awaiting(raw);
       return {
         ...named,
         status: 'overdue',

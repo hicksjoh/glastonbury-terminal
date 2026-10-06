@@ -160,7 +160,9 @@ test.describe('@smoke @truth truth invariants', () => {
         offenders.push(`malformed row ${JSON.stringify(raw)}`);
         continue;
       }
-      if (raw.status !== 'fresh') {
+      // `awaiting_first_run` is the one-time arming window (see
+      // DEAD_MAN_ARMED_AT in src/lib/cron-freshness.ts); it expires on its own.
+      if (raw.status !== 'fresh' && raw.status !== 'awaiting_first_run') {
         offenders.push(
           `${String(raw.name)} [${String(raw.path)} @ ${String(raw.schedule)}] is ${String(raw.status)}` +
           ` (last evidence: ${raw.lastEvidenceAt === null ? 'none' : String(raw.lastEvidenceAt)}, max age ${String(raw.maxAgeHours)}h` +
@@ -170,7 +172,7 @@ test.describe('@smoke @truth truth invariants', () => {
     }
     expect(offenders, `scheduled jobs not provably running:\n  ${offenders.join('\n  ')}\n`).toEqual([]);
     // Belt and braces: the route's own verdict must agree with its rows.
-    expect(body.ok, 'every row is fresh but the route says ok:false').toBe(true);
+    expect(body.ok, 'every row is healthy but the route says ok:false').toBe(true);
   });
 
   test('no synthetic data: strategy benchmark returns an empty series with a reason', async ({ request }) => {

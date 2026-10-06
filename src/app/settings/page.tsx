@@ -32,6 +32,7 @@ const CRON_STATUS_LABEL: Record<string, { label: string; color: string }> = {
   fresh: { label: 'ON SCHEDULE', color: '#4ade80' },
   overdue: { label: 'OVERDUE', color: '#f87171' },
   never_ran: { label: 'NEVER RAN', color: '#f87171' },
+  awaiting_first_run: { label: 'AWAITING FIRST RUN', color: '#f0c674' },
   unverifiable: { label: 'UNVERIFIABLE', color: '#fbbf24' },
 };
 

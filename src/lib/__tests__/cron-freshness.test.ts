@@ -5,18 +5,22 @@ import {
   NARRATIVE_SCHEDULES,
   cronEvidenceKey,
   evaluateCronFreshness,
+  isHealthyCronStatus,
   maxGapHours,
   registryEntryFor,
   type CronScheduleEntry,
 } from '../cron-freshness';
 
+// Armed long ago, so these cases exercise the steady-state verdicts. The
+// arming window itself is covered in its own describe below.
+const LONG_ARMED = '2026-01-01T00:00:00Z';
 const at = (iso: string) => new Date(iso);
 const hoursBefore = (iso: string, h: number) => new Date(at(iso).getTime() - h * 3_600_000).toISOString();
 
 /** One-cron helper: status of `cron` given a single evidence value. */
 function statusOf(cron: CronScheduleEntry, now: string, value: string | null | undefined) {
   const evidence = value === undefined ? {} : { [cronEvidenceKey(cron)]: value };
-  return evaluateCronFreshness(at(now), [cron], evidence)[0];
+  return evaluateCronFreshness(at(now), [cron], evidence, LONG_ARMED)[0];
 }
 
 const STORM: CronScheduleEntry = { path: '/api/cron/storm-watch', schedule: '0 12 * * *' };
@@ -68,7 +72,7 @@ describe('evaluateCronFreshness', () => {
     const [row] = evaluateCronFreshness(at(now), [madeUp], {
       [cronEvidenceKey(madeUp)]: hoursBefore(now, 1),
       [madeUp.path]: hoursBefore(now, 1),
-    });
+    }, LONG_ARMED);
     expect(row.status).toBe('unverifiable');
     expect(row.maxAgeHours).toBeNull();
     expect(row.detail).toMatch(/CRON_REGISTRY/);
@@ -180,13 +184,13 @@ describe('evaluateCronFreshness', () => {
       [keys[0]]: hoursBefore(now, 5),
       [keys[1]]: null,
       // keys[2] absent → read failed
-    });
+    }, LONG_ARMED);
     expect(rows.map(r => r.status)).toEqual(['fresh', 'never_ran', 'unverifiable']);
   });
 
   it('returns one row per input cron, in order, and never drops one', () => {
     const crons: CronScheduleEntry[] = [STORM, { path: '/x', schedule: 'junk' }, WEEKLY];
-    const rows = evaluateCronFreshness(at('2026-10-07T11:00:00Z'), crons, {});
+    const rows = evaluateCronFreshness(at('2026-10-07T11:00:00Z'), crons, {}, LONG_ARMED);
     expect(rows.map(r => r.path)).toEqual(crons.map(c => c.path));
     expect(rows.every(r => r.status === 'unverifiable')).toBe(true);
   });
@@ -235,9 +239,49 @@ describe('registry ↔ vercel.json', () => {
             ? t.toISOString().slice(0, 10)
             : new Date(t.getTime() + 45_000).toISOString();
       }
-      const rows = evaluateCronFreshness(now, crons, evidence);
+      const rows = evaluateCronFreshness(now, crons, evidence, LONG_ARMED);
       const bad = rows.filter(r => r.status !== 'fresh').map(r => `${r.path} ${r.schedule}: ${r.status} ${r.detail}`);
       expect(bad, now.toISOString()).toEqual([]);
     }
+  });
+});
+
+describe('arming window: day one is not an alarm, and it expires', () => {
+  const snapshot = { path: '/api/portfolio/snapshot', schedule: '0 22 * * 1-5' };
+  const storm = { path: '/api/cron/storm-watch', schedule: '0 12 * * *' };
+  const armed = '2026-10-06T12:00:00Z';
+
+  it('a job with no evidence is awaiting_first_run inside its first window', () => {
+    const [row] = evaluateCronFreshness(at('2026-10-06T20:00:00Z'), [snapshot], { [snapshot.path]: null }, armed);
+    expect(row.status).toBe('awaiting_first_run');
+    expect(isHealthyCronStatus(row.status)).toBe(true);
+  });
+
+  it('stale pre-arming evidence is also awaiting, not overdue (storm-watch last marked in August)', () => {
+    const [row] = evaluateCronFreshness(
+      at('2026-10-06T20:00:00Z'), [storm], { [storm.path]: '2026-08-02T12:50:50Z' }, armed,
+    );
+    expect(row.status).toBe('awaiting_first_run');
+    expect(row.lastEvidenceAt).toBe('2026-08-02T12:50:50Z');
+  });
+
+  it('once the window passes, the same states alarm for good', () => {
+    // Daily job: 24h gap + 3h grace = 27h after arming.
+    const late = at('2026-10-07T16:00:00Z');
+    expect(evaluateCronFreshness(late, [storm], { [storm.path]: null }, armed)[0].status).toBe('never_ran');
+    expect(
+      evaluateCronFreshness(late, [storm], { [storm.path]: '2026-08-02T12:50:50Z' }, armed)[0].status,
+    ).toBe('overdue');
+  });
+
+  it('never softens unverifiable: a failed read alarms even on day one', () => {
+    const [row] = evaluateCronFreshness(at('2026-10-06T20:00:00Z'), [storm], {}, armed);
+    expect(row.status).toBe('unverifiable');
+    expect(isHealthyCronStatus(row.status)).toBe(false);
+  });
+
+  it('an unparseable arming date arms nothing', () => {
+    const [row] = evaluateCronFreshness(at('2026-10-06T20:00:00Z'), [storm], { [storm.path]: null }, 'not-a-date');
+    expect(row.status).toBe('never_ran');
   });
 });
