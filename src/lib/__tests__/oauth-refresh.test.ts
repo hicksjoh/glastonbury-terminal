@@ -8,6 +8,17 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 // family, and expired/revoked tokens never claim.
 // ---------------------------------------------------------------------------
 
+// The columns that exist on oauth_refresh_tokens IN PRODUCTION
+// (20260919_oauth_finalize_idempotency_and_refresh.sql). The fake rejects any
+// other column name in a filter, select, insert or update, so code that
+// reaches for a column the real table does not have fails here instead of at
+// runtime behind a swallowed error.
+const COLUMNS = [
+  'token_hash', 'family_id', 'client_id', 'subject', 'scope', 'resource',
+  'created_at', 'expires_at', 'used_at', 'revoked_at',
+] as const;
+type Col = (typeof COLUMNS)[number];
+
 interface Row {
   token_hash: string;
   family_id: string;
@@ -15,12 +26,26 @@ interface Row {
   subject: string;
   scope: string;
   resource: string | null;
+  created_at: string;
   expires_at: string;
   used_at: string | null;
   revoked_at: string | null;
 }
 
 let rows: Row[] = [];
+/** Make the next matching store call fail: (op, detail) => error or undefined. */
+let failNext: ((op: string, detail: string) => { code: string; message: string } | undefined) | null = null;
+let clock = 0;
+
+function col(name: string): Col {
+  if (!(COLUMNS as readonly string[]).includes(name)) {
+    throw new Error(`oauth_refresh_tokens has no column "${name}" in production`);
+  }
+  return name as Col;
+}
+function injected(op: string, detail: string) {
+  return failNext ? failNext(op, detail) : undefined;
+}
 
 function claimRpc(token_hash: string, client_id: string) {
   const now = Date.now();
@@ -59,38 +84,69 @@ function revokeFamilyRpc(family_id: string) {
   return { data: n, error: null };
 }
 
+/** Minimal PostgREST-style builder: filters accumulate, then it is awaited. */
+class Query {
+  private filters: ((r: Row) => boolean)[] = [];
+  private orderCol: Col | null = null;
+  private asc = true;
+  private max: number | null = null;
+  constructor(private op: 'select' | 'update', private patch: Partial<Row> | null) {}
+  eq(c: string, v: unknown) { const k = col(c); this.filters.push((r) => r[k] === v); return this; }
+  is(c: string, v: null) { const k = col(c); this.filters.push((r) => r[k] === v); return this; }
+  order(c: string, o: { ascending: boolean }) { this.orderCol = col(c); this.asc = o.ascending; return this; }
+  limit(n: number) { this.max = n; return this; }
+  private run(): { data: Row[] | null; error: { code: string; message: string } | null } {
+    const err = injected(this.op, JSON.stringify(this.patch ?? {}));
+    if (err) return { data: null, error: err };
+    let hit = rows.filter((r) => this.filters.every((f) => f(r)));
+    if (this.op === 'update') {
+      for (const r of hit) Object.assign(r, this.patch);
+      return { data: null, error: null };
+    }
+    if (this.orderCol) {
+      const k = this.orderCol;
+      hit = [...hit].sort((x, y) => String(x[k]).localeCompare(String(y[k])) * (this.asc ? 1 : -1));
+    }
+    if (this.max !== null) hit = hit.slice(0, this.max);
+    return { data: hit, error: null };
+  }
+  maybeSingle() {
+    const res = this.run();
+    return Promise.resolve({ data: res.data ? res.data[0] ?? null : null, error: res.error });
+  }
+  then<T>(resolve: (v: { data: Row[] | null; error: { code: string; message: string } | null }) => T) {
+    return Promise.resolve(this.run()).then(resolve);
+  }
+}
+
 vi.mock('@/lib/supabase', () => ({
   createServiceClient: () => ({
     from: (table: string) => {
       if (table !== 'oauth_refresh_tokens') throw new Error(`unexpected table ${table}`);
       return {
-        insert: (row: Omit<Row, 'used_at' | 'revoked_at'>) => {
-          rows.push({ ...row, used_at: null, revoked_at: null });
+        insert: (row: Record<string, unknown>) => {
+          for (const k of Object.keys(row)) col(k);
+          const err = injected('insert', '');
+          if (err) return Promise.resolve({ error: err });
+          // created_at is the database default; strictly increasing here so
+          // "first token of the family" is well defined.
+          const created_at = new Date(Date.now() + clock++).toISOString();
+          rows.push({ created_at, used_at: null, revoked_at: null, ...(row as object) } as Row);
           return Promise.resolve({ error: null });
         },
-        select: (_cols: string) => ({
-          eq: (_col: string, val: string) => ({
-            maybeSingle: () => {
-              const found = rows.find((r) => r.token_hash === val);
-              return Promise.resolve({ data: found ?? null, error: null });
-            },
-          }),
-        }),
-        update: (patch: Partial<Row>) => ({
-          eq: (_col: string, val: string) => ({
-            is: (_c: string, _v: null) => {
-              for (const r of rows) {
-                if (r.client_id === val && r.revoked_at === null) {
-                  Object.assign(r, patch);
-                }
-              }
-              return Promise.resolve({ error: null });
-            },
-          }),
-        }),
+        select: (cols: string) => {
+          for (const c of cols.split(',')) col(c.trim());
+          return new Query('select', null);
+        },
+        update: (patch: Partial<Row>) => {
+          for (const k of Object.keys(patch)) col(k);
+          return new Query('update', patch);
+        },
       };
     },
     rpc: (name: string, args: Record<string, string>) => {
+      const err = injected('rpc', name);
+      if (err) return Promise.resolve({ data: null, error: err });
       if (name === 'claim_refresh_token') {
         return Promise.resolve(claimRpc(args.p_token_hash, args.p_client_id));
       }
@@ -107,7 +163,10 @@ import {
   revokeRefreshTokensForClient,
   hashRefreshToken,
   isWithinReuseGrace,
+  refreshExpiryMs,
   REFRESH_REUSE_GRACE_MS,
+  REFRESH_TTL_MS,
+  REFRESH_FAMILY_MAX_AGE_MS,
 } from '../oauth/refresh';
 
 const GRANT = {
@@ -120,6 +179,8 @@ const GRANT = {
 describe('OAuth refresh tokens — rotation and reuse detection', () => {
   beforeEach(() => {
     rows = [];
+    failNext = null;
+    clock = 0;
   });
 
   it('never stores the plaintext token', async () => {
@@ -285,5 +346,155 @@ describe('OAuth refresh tokens — rotation and reuse detection', () => {
     expect(isWithinReuseGrace(new Date(now - REFRESH_REUSE_GRACE_MS - 1).toISOString(), now)).toBe(false);
     expect(isWithinReuseGrace(new Date(now + 1000).toISOString(), now)).toBe(false);
     expect(isWithinReuseGrace('not-a-date', now)).toBe(false);
+  });
+});
+
+// ── Security review 2026-10-06: the retry grace must not fork the family, must
+// not blind reuse detection, families must end, and our own store failures
+// must never cost the client its token.
+describe('OAuth refresh tokens — grace without forking, family cap, store errors', () => {
+  beforeEach(() => {
+    rows = [];
+    failNext = null;
+    clock = 0;
+  });
+
+  /** Claim + mint, the way the token route does. */
+  async function rotate(token: string) {
+    const claim = await claimRefreshToken(token, GRANT.client_id);
+    if (!claim.ok) return { ok: false as const, reason: claim.reason };
+    const minted = await mintRefreshToken({
+      ...GRANT,
+      family_id: claim.grant.family_id,
+      family_started_at: claim.grant.family_started_at,
+    });
+    return { ok: true as const, token: minted.token };
+  }
+  const live = () => rows.filter((r) => r.used_at === null && r.revoked_at === null);
+
+  it('replaying a rotated token N times inside the grace leaves exactly ONE live token', async () => {
+    const first = await mintRefreshToken(GRANT);
+    const results = [];
+    for (let i = 0; i < 6; i++) results.push(await rotate(first.token));
+    expect(results.every((r) => r.ok)).toBe(true);
+    expect(live()).toHaveLength(1);
+    // Only the LAST successor handed out is the live one.
+    const last = results[results.length - 1];
+    if (!last.ok) return;
+    expect(live()[0].token_hash).toBe(await hashRefreshToken(last.token));
+  });
+
+  it('thief and owner both present inside the grace: the loser burns the family on next use', async () => {
+    const stolen = await mintRefreshToken(GRANT);
+    const thief = await rotate(stolen.token); // presents first
+    const owner = await rotate(stolen.token); // owner's hourly refresh lands in the grace
+    expect(thief.ok && owner.ok).toBe(true);
+    if (!thief.ok || !owner.ok) return;
+
+    // The owner's retry withdrew the thief's successor: one live token.
+    expect(live()).toHaveLength(1);
+
+    // The thief comes back with a revoked successor → family burned.
+    const thiefAgain = await claimRefreshToken(thief.token, GRANT.client_id);
+    expect(thiefAgain).toMatchObject({ ok: false, reason: 'revoked' });
+    expect(rows.every((r) => r.revoked_at !== null)).toBe(true);
+    // Nobody keeps access; a human re-consents.
+    expect((await claimRefreshToken(owner.token, GRANT.client_id)).ok).toBe(false);
+  });
+
+  it('a normal claim revokes any other live token in the family (closes a mint race)', async () => {
+    const first = await mintRefreshToken(GRANT);
+    const claim = await claimRefreshToken(first.token, GRANT.client_id);
+    if (!claim.ok) throw new Error('setup');
+    // Simulate the race outcome: two live successors in one family.
+    const s1 = await mintRefreshToken({ ...GRANT, family_id: claim.grant.family_id });
+    const s2 = await mintRefreshToken({ ...GRANT, family_id: claim.grant.family_id });
+    expect(live()).toHaveLength(2);
+
+    expect((await claimRefreshToken(s1.token, GRANT.client_id)).ok).toBe(true);
+    expect(live()).toHaveLength(0); // s2 withdrawn
+    const other = await claimRefreshToken(s2.token, GRANT.client_id);
+    expect(other).toMatchObject({ ok: false, reason: 'revoked' });
+    expect(rows.every((r) => r.revoked_at !== null)).toBe(true);
+  });
+
+  it('presenting a revoked token never burns ANOTHER client\'s view: wrong client still consumes nothing', async () => {
+    const first = await mintRefreshToken(GRANT);
+    rows[0].revoked_at = new Date().toISOString();
+    const sibling = await mintRefreshToken({ ...GRANT, family_id: first.family_id });
+    const res = await claimRefreshToken(first.token, 'attacker-client');
+    expect(res).toMatchObject({ ok: false, reason: 'client_mismatch' });
+    expect(rows.find((r) => r.token_hash !== rows[0].token_hash)?.revoked_at).toBeNull();
+    void sibling;
+  });
+
+  it('a successor never outlives the 90-day family cap', async () => {
+    const start = Date.parse('2026-01-01T00:00:00Z');
+    const day = 24 * 60 * 60 * 1000;
+    expect(refreshExpiryMs(start, start)).toBe(start + REFRESH_TTL_MS);
+    // Day 80 of the family: 30 more days would be day 110; capped at day 90.
+    expect(refreshExpiryMs(start + 80 * day, start)).toBe(start + REFRESH_FAMILY_MAX_AGE_MS);
+
+    const first = await mintRefreshToken(GRANT);
+    rows[0].created_at = new Date(Date.now() - 80 * day).toISOString();
+    const claim = await claimRefreshToken(first.token, GRANT.client_id);
+    if (!claim.ok) throw new Error('setup');
+    const next = await mintRefreshToken({
+      ...GRANT, family_id: claim.grant.family_id, family_started_at: claim.grant.family_started_at,
+    });
+    const left = Date.parse(next.expires_at) - Date.now();
+    expect(left).toBeLessThanOrEqual(10 * day + 1000);
+    expect(left).toBeGreaterThan(9 * day);
+  });
+
+  it('a family past its cap is refused and revoked, however fresh the token', async () => {
+    const first = await mintRefreshToken(GRANT);
+    rows[0].created_at = new Date(Date.now() - REFRESH_FAMILY_MAX_AGE_MS - 1000).toISOString();
+    const res = await claimRefreshToken(first.token, GRANT.client_id);
+    expect(res).toMatchObject({ ok: false, reason: 'expired' });
+    expect(rows.every((r) => r.revoked_at !== null)).toBe(true);
+  });
+
+  it('an RPC failure is store_error and consumes or burns nothing', async () => {
+    const first = await mintRefreshToken(GRANT);
+    failNext = (op) => (op === 'rpc' ? { code: '57014', message: 'statement timeout' } : undefined);
+    expect(await claimRefreshToken(first.token, GRANT.client_id)).toMatchObject({ ok: false, reason: 'store_error' });
+    expect(rows[0]).toMatchObject({ used_at: null, revoked_at: null });
+    failNext = null;
+    expect((await claimRefreshToken(first.token, GRANT.client_id)).ok).toBe(true);
+  });
+
+  it('a failed read-back is store_error, not "unknown token"', async () => {
+    const first = await mintRefreshToken(GRANT);
+    await claimRefreshToken(first.token, GRANT.client_id);
+    failNext = (op) => (op === 'select' ? { code: 'XX000', message: 'boom' } : undefined);
+    expect(await claimRefreshToken(first.token, GRANT.client_id)).toMatchObject({ ok: false, reason: 'store_error' });
+    expect(rows.every((r) => r.revoked_at === null)).toBe(true);
+  });
+
+  it('if the grace withdrawal cannot be written, no second live token is granted', async () => {
+    const first = await mintRefreshToken(GRANT);
+    const a = await rotate(first.token);
+    expect(a.ok).toBe(true);
+    failNext = (op) => (op === 'update' ? { code: 'XX000', message: 'boom' } : undefined);
+    expect(await claimRefreshToken(first.token, GRANT.client_id)).toMatchObject({ ok: false, reason: 'store_error' });
+    failNext = null;
+    expect(live()).toHaveLength(1);
+  });
+
+  it('revokeRefreshTokensForClient reports a failed write instead of swallowing it', async () => {
+    await mintRefreshToken(GRANT);
+    failNext = (op) => (op === 'update' ? { code: 'XX000', message: 'boom' } : undefined);
+    expect(await revokeRefreshTokensForClient(GRANT.client_id)).toBe(false);
+    failNext = null;
+    expect(await revokeRefreshTokensForClient(GRANT.client_id)).toBe(true);
+    expect(rows.every((r) => r.revoked_at !== null)).toBe(true);
+  });
+
+  it('the fake rejects columns the production table does not have', async () => {
+    const { createServiceClient } = await import('@/lib/supabase');
+    const sb = createServiceClient() as unknown as { from: (t: string) => { select: (c: string) => unknown } };
+    expect(() => sb.from('oauth_refresh_tokens').select('id')).toThrow(/no column "id"/);
+    expect(() => sb.from('oauth_refresh_tokens').select('audience')).toThrow(/no column/);
   });
 });

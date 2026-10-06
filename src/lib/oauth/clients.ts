@@ -175,12 +175,12 @@ export async function verifyClientSecret(
  * Idempotent: revoking an already-revoked client succeeds and updates the
  * timestamp.
  *
- * Also revokes every refresh-token family the client holds, so a later
- * un-revoke does not silently resurrect old sessions — the client has to go
- * through consent again. That cascade is best-effort (it must not fail the
- * revoke while the refresh-token table is still un-migrated); the refresh
- * grant independently re-checks `revoked_at` and burns the family, so a
- * failed cascade cannot be used to refresh while the client stays revoked.
+ * Also revokes every refresh token the client holds, so a later un-revoke
+ * does not silently resurrect old sessions — the client has to go through
+ * consent again. While the client stays revoked the token endpoint rejects it
+ * before any refresh is attempted, so a failed cascade cannot be used to
+ * refresh; it is logged by revokeRefreshTokensForClient and would only matter
+ * on an un-revoke.
  */
 export async function revokeClient(clientId: string): Promise<boolean> {
   const supabase = createServiceClient();
@@ -329,7 +329,10 @@ export async function countRecentClients(nowMs: number = Date.now()): Promise<nu
   return count ?? 0;
 }
 
-type PrunableFields = Pick<OAuthClient, 'client_name' | 'created_at' | 'revoked_at' | 'metadata'>;
+type PrunableFields = Pick<OAuthClient, 'client_name' | 'created_at' | 'revoked_at' | 'metadata'> & {
+  /** Optional so callers that never read it stay conservative: undefined is treated as "used". */
+  last_used_at?: string | null;
+};
 
 /**
  * A pre-registered client is one an operator inserted by hand (e.g. the
@@ -351,7 +354,9 @@ export function isPreRegisteredClient(c: Pick<OAuthClient, 'client_name' | 'meta
 /**
  * THE prune rule, as a pure function. A client may be deleted only if:
  *   (a) it was revoked more than 24h ago, OR
- *   (b) its name starts with `e2e-` AND it was created more than 24h ago.
+ *   (b) its name starts with `e2e-` AND it was created more than 24h ago, OR
+ *   (c) it registered anonymously (open DCR), has never been used, AND was
+ *       created more than 24h ago.
  * and it is not a pre-registered client. Anything unparseable is kept.
  */
 export function isPrunableClient(c: PrunableFields, nowMs: number = Date.now()): boolean {
@@ -364,6 +369,17 @@ export function isPrunableClient(c: PrunableFields, nowMs: number = Date.now()):
   }
 
   if (typeof c.client_name === 'string' && c.client_name.startsWith(E2E_NAME_PREFIX)) {
+    const createdAt = Date.parse(c.created_at);
+    if (Number.isFinite(createdAt) && createdAt < cutoff) return true;
+  }
+
+  // (c) An anonymous registration that was never used. Open DCR lets anyone
+  // create rows; without this they are never removed, so the table grows
+  // without bound and a burst of junk registrations holds the 24h cap shut.
+  // `last_used_at` must be explicitly null — a row whose usage is unknown
+  // (field not selected) is kept.
+  const meta = (c.metadata ?? {}) as Record<string, unknown>;
+  if (meta.registered_via === 'open-dcr' && c.last_used_at === null) {
     const createdAt = Date.parse(c.created_at);
     if (Number.isFinite(createdAt) && createdAt < cutoff) return true;
   }
@@ -391,7 +407,7 @@ export async function pruneStaleClients(nowMs: number = Date.now()): Promise<Pru
 
   const revoked = await supabase
     .from('oauth_clients')
-    .select('id, client_id, client_name, created_at, revoked_at, metadata')
+    .select('id, client_id, client_name, created_at, revoked_at, last_used_at, metadata')
     .lt('revoked_at', cutoffIso)
     .limit(CLIENT_PRUNE_BATCH);
   if (revoked.error) {
@@ -400,7 +416,7 @@ export async function pruneStaleClients(nowMs: number = Date.now()): Promise<Pru
 
   const e2e = await supabase
     .from('oauth_clients')
-    .select('id, client_id, client_name, created_at, revoked_at, metadata')
+    .select('id, client_id, client_name, created_at, revoked_at, last_used_at, metadata')
     .like('client_name', `${E2E_NAME_PREFIX}%`)
     .lt('created_at', cutoffIso)
     .limit(CLIENT_PRUNE_BATCH);
@@ -408,9 +424,20 @@ export async function pruneStaleClients(nowMs: number = Date.now()): Promise<Pru
     throw new Error(`oauth_clients prune (e2e scan) failed: ${e2e.error.message}`);
   }
 
+  const unusedAnon = await supabase
+    .from('oauth_clients')
+    .select('id, client_id, client_name, created_at, revoked_at, last_used_at, metadata')
+    .eq('metadata->>registered_via', 'open-dcr')
+    .is('last_used_at', null)
+    .lt('created_at', cutoffIso)
+    .limit(CLIENT_PRUNE_BATCH);
+  if (unusedAnon.error) {
+    throw new Error(`oauth_clients prune (unused anonymous scan) failed: ${unusedAnon.error.message}`);
+  }
+
   type Candidate = PrunableFields & { id: string; client_id: string };
   const byId = new Map<string, Candidate>();
-  for (const row of [...(revoked.data ?? []), ...(e2e.data ?? [])] as unknown as Candidate[]) {
+  for (const row of [...(revoked.data ?? []), ...(e2e.data ?? []), ...(unusedAnon.data ?? [])] as unknown as Candidate[]) {
     byId.set(row.id, row);
   }
   const doomed = Array.from(byId.values())

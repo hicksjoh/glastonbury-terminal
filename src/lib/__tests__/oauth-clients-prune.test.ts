@@ -31,6 +31,7 @@ const HOUR = 60 * 60 * 1000;
 const ago = (ms: number) => new Date(NOW - ms).toISOString();
 
 interface Shape {
+  last_used_at?: string | null;
   client_name: string;
   created_at: string;
   revoked_at: string | null;
@@ -48,6 +49,20 @@ describe('isPrunableClient (pure selection predicate)', () => {
   it('NEVER prunes a live, non-e2e client — however old or unused', () => {
     expect(isPrunableClient(c({}), NOW)).toBe(false);
     expect(isPrunableClient(c({ client_name: 'Glastonbury Terminal', created_at: ago(900 * 24 * HOUR) }), NOW)).toBe(false);
+  });
+
+  it('prunes an anonymous registration that was never used, after 24h', () => {
+    const anon = { metadata: { registered_via: 'open-dcr' } };
+    expect(isPrunableClient(c({ ...anon, last_used_at: null, created_at: ago(25 * HOUR) }), NOW)).toBe(true);
+    // Not yet 24h old: a connector may still be mid-setup.
+    expect(isPrunableClient(c({ ...anon, last_used_at: null, created_at: ago(23 * HOUR) }), NOW)).toBe(false);
+    // Used even once: kept forever.
+    expect(isPrunableClient(c({ ...anon, last_used_at: ago(HOUR), created_at: ago(900 * 24 * HOUR) }), NOW)).toBe(false);
+    // Usage unknown (field not selected): kept.
+    expect(isPrunableClient(c({ ...anon, created_at: ago(900 * 24 * HOUR) }), NOW)).toBe(false);
+    // Session- or token-registered and unused: kept — only anonymous rows qualify.
+    expect(isPrunableClient(c({ metadata: { registered_via: 'session' }, last_used_at: null }), NOW)).toBe(false);
+    expect(isPrunableClient(c({ metadata: {}, last_used_at: null }), NOW)).toBe(false);
   });
 
   it('prunes a client revoked more than 24h ago', () => {

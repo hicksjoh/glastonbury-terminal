@@ -211,8 +211,16 @@ export async function POST(req: NextRequest) {
     // credentials and let the mismatch burn the victim's family.
     const claim = await claimRefreshToken(params.refresh_token, client_id);
     if (!claim.ok) {
-      // 'reused' already burned the family inside claimRefreshToken. Log the
-      // real reason; the client still gets the same generic invalid_grant.
+      if (claim.reason === 'store_error') {
+        // OUR failure, not the token's. A 400 invalid_grant here would make
+        // the client discard a good refresh token and send a human back to
+        // log in; a 503 tells it to keep the token and try again.
+        log.error({ client_id }, 'token refresh store error');
+        return tokenError('server_error', 'token service temporarily unavailable', 503);
+      }
+      // 'reused' / 'revoked' already burned the family inside
+      // claimRefreshToken. Log the real reason; the client still gets the
+      // same generic invalid_grant.
       log.warn({ client_id, reason: `refresh_${claim.reason}` }, 'token refresh rejected');
       return invalidGrant(`refresh_${claim.reason}`);
     }
@@ -229,13 +237,16 @@ export async function POST(req: NextRequest) {
         scope: grant.scope,
         resource: grant.resource,
         family_id: grant.family_id,
+        family_started_at: grant.family_started_at,
       });
     } catch (err) {
       log.error(
         { err: err instanceof Error ? err.message : String(err) },
         'refresh rotation mint failed',
       );
-      return tokenError('server_error', 'could not issue refresh token', 500);
+      // Retryable: the presented token is spent, but a retry inside the grace
+      // window is granted.
+      return tokenError('server_error', 'token service temporarily unavailable', 503);
     }
 
     const { token: access, expires_in } = await createAccessToken({

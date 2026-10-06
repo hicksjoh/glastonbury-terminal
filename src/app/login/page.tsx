@@ -2,20 +2,7 @@
 import { useState } from 'react';
 import { useSearchParams } from 'next/navigation';
 import Image from 'next/image';
-
-// Honor `?next=<path>` so OAuth redirects (and any future "log in to
-// continue" flows) land back where the user started instead of bouncing
-// to the dashboard. We restrict `next` to same-origin paths to avoid
-// open-redirect into a phishing site.
-function safeNextPath(raw: string | null): string {
-  if (!raw) return '/';
-  // Must start with "/" and not "//" or "/\" (which browsers treat as
-  // protocol-relative URLs to other hosts).
-  if (!raw.startsWith('/') || raw.startsWith('//') || raw.startsWith('/\\')) {
-    return '/';
-  }
-  return raw;
-}
+import { safeNextPath } from '@/lib/safe-next-path';
 
 export default function LoginPage() {
   const [password, setPassword] = useState('');

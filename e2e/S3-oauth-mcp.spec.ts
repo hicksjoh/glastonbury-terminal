@@ -376,9 +376,8 @@ test.describe('@smoke S3 — refresh tokens', () => {
 
     // An immediate second presentation of the rotated-away token is the same
     // client retrying (lost response, parallel refresh). It must be granted,
-    // not burn the family — that burn is what kept disconnecting the
-    // connector. Replay AFTER the 60s grace still burns the family; that path
-    // needs an aged row, so it is covered in src/lib/__tests__/oauth-refresh.test.ts.
+    // not strand the client — but without forking the family: the successor
+    // issued a moment ago is withdrawn, so only the retry's token is live.
     const retry = await request.post('/api/oauth/token', {
       form: {
         grant_type: 'refresh_token',
@@ -389,16 +388,29 @@ test.describe('@smoke S3 — refresh tokens', () => {
     expect(retry.status(), 'an immediate retry must not strand the client').toBe(200);
     const retryBody = await retry.json();
     expect(retryBody.refresh_token).not.toBe(firstBody.refresh_token);
+    expect(retryBody.refresh_token).not.toBe(refreshedBody.refresh_token);
 
-    // And the family is still alive: the first successor keeps working.
-    const stillAlive = await request.post('/api/oauth/token', {
+    // The withdrawn successor is now a revoked token. Presenting it is what a
+    // thief (or the loser of a collision) would do: it must fail AND burn the
+    // family, so the retry's token dies with it and a human re-consents.
+    const withdrawn = await request.post('/api/oauth/token', {
       form: {
         grant_type: 'refresh_token',
         refresh_token: refreshedBody.refresh_token,
         client_id: client.client_id,
       },
     });
-    expect(stillAlive.status(), 'a retry must not revoke the family').toBe(200);
+    expect(withdrawn.status(), 'a withdrawn successor must not be redeemable').toBe(400);
+    expect((await withdrawn.json()).error).toBe('invalid_grant');
+
+    const afterBurn = await request.post('/api/oauth/token', {
+      form: {
+        grant_type: 'refresh_token',
+        refresh_token: retryBody.refresh_token,
+        client_id: client.client_id,
+      },
+    });
+    expect(afterBurn.status(), 'presenting a revoked token must burn the whole family').toBe(400);
   });
 
   test('a refresh token presented by a DIFFERENT client is not consumed', async ({ request }) => {

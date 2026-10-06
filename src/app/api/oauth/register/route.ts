@@ -264,9 +264,10 @@ export async function POST(req: NextRequest) {
       { status: 201, headers: { 'Access-Control-Allow-Origin': '*' } },
     );
   } catch (err) {
-    const msg = err instanceof Error ? err.message : 'registration failed';
+    // The caller may be anonymous: never echo a database error to it.
+    console.error('[oauth/register] registration failed:', err instanceof Error ? err.message : String(err));
     return NextResponse.json(
-      { error: 'server_error', error_description: msg },
+      { error: 'server_error', error_description: 'registration failed' },
       { status: 500 },
     );
   }
