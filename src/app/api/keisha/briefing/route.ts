@@ -2,9 +2,8 @@ import { NextRequest } from 'next/server';
 import { getQuote, getQuotes } from '@/lib/fmp-client';
 import {
   anthropic,
-  CLAUDE_MODEL_PRIMARY,
-  CLAUDE_MODEL_FALLBACK,
   modelBudget,
+  streamWithFallback,
 } from '@/lib/claude';
 import { createServiceClient } from '@/lib/supabase';
 import { checkRateLimitDurable } from '@/lib/rate-limit-durable';
@@ -429,37 +428,21 @@ export async function GET(req: NextRequest) {
         send({ type: 'meta', cached: false });
 
         // ── Stream Claude with fallback on 429/529 ────────────────────
-        const callStream = async (model: string) =>
-          anthropic.messages.stream({
-            model,
-            ...modelBudget(model, 1200),
-            system: KEISHA_BRIEFING_SYSTEM_PROMPT,
-            messages: [{ role: 'user', content: userPrompt }],
-          });
-
-        let modelUsed = CLAUDE_MODEL_PRIMARY;
-        let sdkStream: ReturnType<typeof anthropic.messages.stream>;
-        try {
-          sdkStream = await callStream(CLAUDE_MODEL_PRIMARY);
-        } catch (err) {
-          const status = (err as { status?: number })?.status;
-          if (status === 429 || status === 529 || status === 503) {
-            modelUsed = CLAUDE_MODEL_FALLBACK;
-            sdkStream = await callStream(CLAUDE_MODEL_FALLBACK);
-          } else {
-            throw err;
-          }
-        }
-
-        send({ type: 'model', model: modelUsed });
-
         let accumulated = '';
-        sdkStream.on('text', (delta: string) => {
-          accumulated += delta;
-          send({ type: 'token', text: delta });
+        const { message: finalMessage, modelUsed } = await streamWithFallback({
+          start: model =>
+            anthropic.messages.stream({
+              model,
+              ...modelBudget(model, 1200),
+              system: KEISHA_BRIEFING_SYSTEM_PROMPT,
+              messages: [{ role: 'user', content: userPrompt }],
+            }),
+          onModel: model => send({ type: 'model', model }),
+          onText: delta => {
+            accumulated += delta;
+            send({ type: 'token', text: delta });
+          },
         });
-
-        const finalMessage = await sdkStream.finalMessage();
         const tokensIn = finalMessage.usage?.input_tokens ?? 0;
         const tokensOut = finalMessage.usage?.output_tokens ?? 0;
         const latencyMs = Date.now() - t0;
