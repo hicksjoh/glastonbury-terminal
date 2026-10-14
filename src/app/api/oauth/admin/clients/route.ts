@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
 import {
-  listClients,
+  listClientsPage,
   revokeClient,
   unrevokeClient,
 } from '@/lib/oauth/clients';
@@ -11,7 +11,11 @@ import { checkRateLimitDurable, getRateLimitIdentity } from '@/lib/rate-limit-du
 
 // p2-1: OAuth client admin surface.
 //
-// GET  → list every registered client with revoked_at / last_used_at
+// GET  → list registered clients with revoked_at / last_used_at, newest
+//        first, one bounded page at a time (?limit=1..500, default 200;
+//        ?offset=N). The response keeps the `clients` array it always had
+//        and adds `limit`, `offset`, `has_more`.
+//        Revoking a client also revokes its refresh-token families.
 // POST → { action: 'revoke' | 'unrevoke', client_id }
 //
 // Auth: same two-path admission as /api/oauth/register (session cookie OR
@@ -54,9 +58,18 @@ export async function GET(req: NextRequest) {
   if (!(await authorizeAdmin(req))) return unauthorized();
 
   try {
-    const clients = await listClients();
+    const sp = req.nextUrl.searchParams;
+    const limitRaw = sp.get('limit');
+    const offsetRaw = sp.get('offset');
+    const page = await listClientsPage({
+      limit: limitRaw !== null && /^\d{1,6}$/.test(limitRaw) ? Number(limitRaw) : undefined,
+      offset: offsetRaw !== null && /^\d{1,9}$/.test(offsetRaw) ? Number(offsetRaw) : undefined,
+    });
     return NextResponse.json({
-      clients: clients.map(c => ({
+      limit: page.limit,
+      offset: page.offset,
+      has_more: page.has_more,
+      clients: page.clients.map(c => ({
         client_id: c.client_id,
         client_name: c.client_name,
         redirect_uris: c.redirect_uris,

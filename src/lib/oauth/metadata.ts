@@ -63,7 +63,10 @@ export function buildAuthorizationServerMetadata(
     registration_endpoint: `${issuer}/api/oauth/register`,
     scopes_supported: ['mcp'],
     response_types_supported: ['code'],
-    grant_types_supported: ['authorization_code'],
+    // refresh_token added 2026-09-19. Without it clients had no way to renew
+    // a 1-hour access token except by re-running the full human consent
+    // flow, which is what surfaced to the user as "authentication expired".
+    grant_types_supported: ['authorization_code', 'refresh_token'],
     code_challenge_methods_supported: ['S256'],
     // 'none' = public clients (PKCE only); 'client_secret_post' = confidential.
     token_endpoint_auth_methods_supported: ['none', 'client_secret_post'],

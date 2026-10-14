@@ -1,27 +1,13 @@
 'use client';
 import { useState } from 'react';
-import { useRouter, useSearchParams } from 'next/navigation';
+import { useSearchParams } from 'next/navigation';
 import Image from 'next/image';
-
-// Honor `?next=<path>` so OAuth redirects (and any future "log in to
-// continue" flows) land back where the user started instead of bouncing
-// to the dashboard. We restrict `next` to same-origin paths to avoid
-// open-redirect into a phishing site.
-function safeNextPath(raw: string | null): string {
-  if (!raw) return '/';
-  // Must start with "/" and not "//" or "/\" (which browsers treat as
-  // protocol-relative URLs to other hosts).
-  if (!raw.startsWith('/') || raw.startsWith('//') || raw.startsWith('/\\')) {
-    return '/';
-  }
-  return raw;
-}
+import { safeNextPath } from '@/lib/safe-next-path';
 
 export default function LoginPage() {
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
-  const router = useRouter();
   const searchParams = useSearchParams();
   const nextPath = safeNextPath(searchParams?.get('next') ?? null);
 
@@ -35,7 +21,18 @@ export default function LoginPage() {
       body: JSON.stringify({ password }),
     });
     if (res.ok) {
-      router.push(nextPath);
+      // Hard navigation, not router.push.
+      //
+      // The OAuth bounce sends us back to /api/oauth/authorize?... — a Route
+      // Handler, not a page. router.push() treats it as an App Router client
+      // navigation, fetches it for an RSC payload, gets a 303 to an HTML
+      // consent page instead, and only then falls back to a document load.
+      // That detour re-runs authorize and is a needless source of flake in
+      // the most fragile part of the connector flow. A full document load is
+      // what we want after login anyway — it picks up the fresh session
+      // cookie cleanly for every `next` target, page or route handler.
+      window.location.assign(nextPath);
+      return;
     } else {
       setError('Invalid access code');
     }
