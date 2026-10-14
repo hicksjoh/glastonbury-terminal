@@ -5,6 +5,7 @@ import { checkEnvironment } from '@/lib/env-check';
 import { getCached, setCache } from '@/lib/server-cache';
 import { getDurable } from '@/lib/durable-cache';
 import { withRateLimit, RATE } from '@/lib/api-rate-limit';
+import { CLAUDE_MODEL_FAST, CLAUDE_MODEL_PRIMARY, getModelDrift } from '@/lib/claude';
 
 // Without this, Next static-optimizes the route and Vercel serves a payload
 // frozen at build time — a health check that never changes is worse than none.
@@ -97,7 +98,7 @@ async function GET_impl() {
           'content-type': 'application/json',
         },
         body: JSON.stringify({
-          model: process.env.CLAUDE_MODEL_FAST || 'claude-haiku-4-5-20251001',
+          model: CLAUDE_MODEL_FAST,
           max_tokens: 1,
           messages: [{ role: 'user', content: 'ping' }],
         }),
@@ -166,6 +167,9 @@ async function GET_impl() {
     timestamp: new Date().toISOString(),
     version: '2.0.0',
     services: checks,
+    // Which model Keisha is actually running, and any tier a stale env pin
+    // is holding behind the latest (empty = following latest).
+    claudeModels: { primary: CLAUDE_MODEL_PRIMARY, drift: getModelDrift() },
     // Only present when a probe failed — names the cause so the nightly alarm
     // says "credit balance too low" instead of a bare "error".
     ...(claudeDetail ? { serviceDetail: { claude: claudeDetail } } : {}),

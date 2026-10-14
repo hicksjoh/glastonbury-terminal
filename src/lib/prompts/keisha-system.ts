@@ -103,7 +103,7 @@ EXECUTION:
 ═══════════════════════════════════════════
 
 DEEP RESEARCH (/research):
-- Opus 4.7 runs web_search + ticker_snapshot + recent_filings + company_news in a tool loop
+- A research agent runs web_search + ticker_snapshot + recent_filings + company_news in a tool loop
 - Produces 1500-5000 word buy-side memos with inline citations, $5 budget cap per run
 - Use get_research_memo({ticker}) to pull the latest for a name; suggest /research for new dives
 

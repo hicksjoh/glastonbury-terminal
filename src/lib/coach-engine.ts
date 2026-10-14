@@ -7,7 +7,7 @@
  * concrete rule for the next week.
  */
 
-import { anthropic, CLAUDE_MODEL_PRIMARY, CLAUDE_MODEL_FALLBACK } from '@/lib/claude';
+import { anthropic, CLAUDE_MODEL_PRIMARY, CLAUDE_MODEL_FALLBACK, modelBudget, textOf } from '@/lib/claude';
 import { tagAnthropicCall } from '@/lib/anthropic-cost';
 import { createServiceClient } from '@/lib/supabase';
 
@@ -130,7 +130,7 @@ Write the coaching review now.`;
 
   const call = (model: string) => anthropic.messages.create({
     model,
-    max_tokens: 2500,
+    ...modelBudget(model, 2500),
     system: COACH_SYSTEM,
     messages: [{ role: 'user', content: userPrompt }],
   });
@@ -148,7 +148,7 @@ Write the coaching review now.`;
   }
   tagAnthropicCall(msg.usage, modelUsed, { caller: 'coach-engine' });
 
-  const text = msg.content[0]?.type === 'text' ? msg.content[0].text : '';
+  const text = textOf(msg);
   const cleaned = text.trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```\s*$/i, '');
   const m = cleaned.match(/\{[\s\S]*\}/);
   const jsonStr = m ? m[0] : cleaned;

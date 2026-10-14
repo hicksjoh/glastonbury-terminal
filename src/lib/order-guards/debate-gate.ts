@@ -9,7 +9,7 @@
 // blocks "reject" unless `force: true` is set, surfaces "caution" as a
 // warning the UI can show, and lets "approve" pass through silently.
 
-import { anthropic, CLAUDE_MODEL_FAST } from '@/lib/claude';
+import { anthropic, CLAUDE_MODEL_FAST, modelBudget, textOf } from '@/lib/claude';
 import { tagAnthropicCall } from '@/lib/anthropic-cost';
 import { cachedSystem } from '@/lib/prompts';
 
@@ -102,13 +102,13 @@ export async function runDebateGate(input: DebateGateInput): Promise<DebateGateV
   try {
     const msg = await anthropic.messages.create({
       model: CLAUDE_MODEL_FAST,
-      max_tokens: 400,
+      ...modelBudget(CLAUDE_MODEL_FAST, 400),
       system: cachedSystem(DEBATE_GATE_SYSTEM),
       messages: [{ role: 'user', content: userPrompt }],
     });
     tagAnthropicCall(msg.usage, CLAUDE_MODEL_FAST, { caller: 'debate-gate' });
 
-    const text = msg.content[0]?.type === 'text' ? msg.content[0].text : '';
+    const text = textOf(msg);
     const cleaned = text.trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```\s*$/i, '');
     const parsed = JSON.parse(cleaned);
     const v = parsed.verdict as 'approve' | 'caution' | 'reject';

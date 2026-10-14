@@ -3,7 +3,7 @@
  * Chunking, sentiment scoring (Haiku), FMP transcript importer, memo generator (Opus).
  */
 
-import { anthropic, CLAUDE_MODEL_PRIMARY, CLAUDE_MODEL_FAST } from '@/lib/claude';
+import { anthropic, CLAUDE_MODEL_PRIMARY, CLAUDE_MODEL_FAST, modelBudget, textOf } from '@/lib/claude';
 import { tagAnthropicCall } from '@/lib/anthropic-cost';
 import { createServiceClient } from '@/lib/supabase';
 
@@ -78,12 +78,12 @@ ${passages.map((p, i) => `[${i}] ${p}`).join('\n\n')}`;
 
   const msg = await anthropic.messages.create({
     model: CLAUDE_MODEL_FAST,
-    max_tokens: 2000,
+    ...modelBudget(CLAUDE_MODEL_FAST, 2000),
     system: SENTIMENT_SYSTEM,
     messages: [{ role: 'user', content: userPrompt }],
   });
   tagAnthropicCall(msg.usage, CLAUDE_MODEL_FAST, { caller: 'earnings-engine.sentiment' });
-  const text = msg.content[0]?.type === 'text' ? msg.content[0].text : '';
+  const text = textOf(msg);
   const cleaned = text.trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```\s*$/i, '');
   const arrMatch = cleaned.match(/\[[\s\S]*\]/);
   const jsonStr = arrMatch ? arrMatch[0] : cleaned;
@@ -204,12 +204,12 @@ Write the post-call memo in the required JSON shape. Cite exact numbers and use 
 
   const msg = await anthropic.messages.create({
     model: CLAUDE_MODEL_PRIMARY,
-    max_tokens: 3000,
+    ...modelBudget(CLAUDE_MODEL_PRIMARY, 3000),
     system: MEMO_SYSTEM,
     messages: [{ role: 'user', content: user }],
   });
   tagAnthropicCall(msg.usage, CLAUDE_MODEL_PRIMARY, { caller: 'earnings-engine.memo' });
-  const text = msg.content[0]?.type === 'text' ? msg.content[0].text : '';
+  const text = textOf(msg);
   const cleaned = text.trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```\s*$/i, '');
   const m = cleaned.match(/\{[\s\S]*\}/);
   const jsonStr = m ? m[0] : cleaned;

@@ -6,6 +6,7 @@ import { checkRateLimitDurable } from '@/lib/rate-limit-durable';
 import { getSectorPerformance } from '@/lib/fmp-client';
 import { tagAnthropicCall } from '@/lib/anthropic-cost';
 import { cachedSystem } from '@/lib/prompts';
+import { CLAUDE_MODEL_FALLBACK, modelBudget } from '@/lib/claude';
 import { internalFetch } from '@/lib/internal-fetch';
 
 export const dynamic = 'force-dynamic';
@@ -192,10 +193,10 @@ export async function GET(req: Request): Promise<NextResponse> {
 
     // Generate narrative via Claude
     const anthropic = new Anthropic();
-    const narrativeModel = process.env.CLAUDE_MODEL_FALLBACK || 'claude-sonnet-4-6';
+    const narrativeModel = CLAUDE_MODEL_FALLBACK;
     const msg = await anthropic.messages.create({
       model: narrativeModel,
-      max_tokens: 400,
+      ...modelBudget(narrativeModel, 400),
       system: cachedSystem(NARRATIVE_SYSTEM_PROMPT),
       messages: [
         {

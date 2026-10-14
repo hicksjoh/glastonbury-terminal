@@ -26,12 +26,15 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 const streamMock = vi.fn();
 vi.mock('@/lib/claude', () => ({
   anthropic: {
-    messages: {
-      stream: (...args: unknown[]) => streamMock(...args),
+    beta: {
+      messages: {
+        stream: (...args: unknown[]) => streamMock(...args),
+      },
     },
   },
   CLAUDE_MODEL_PRIMARY: 'mock-model',
   KEISHA_SYSTEM_PROMPT: 'mock-system',
+  modelBudget: (_model: string, visibleTokens: number) => ({ max_tokens: visibleTokens }),
 }));
 
 const executeToolCallMock = vi.fn();
@@ -68,12 +71,57 @@ interface StreamEvent {
   [key: string]: any;
 }
 
+// Mimics the SDK's MessageStream: text deltas fire on the 'text' listener
+// and finalMessage() resolves to the accumulated message.
 function makeStream(events: StreamEvent[]) {
+  const textListeners: Array<(delta: string) => void> = [];
   return {
-    [Symbol.asyncIterator]: async function* () {
-      for (const e of events) yield e;
+    on(event: string, cb: (delta: string) => void) {
+      if (event === 'text') textListeners.push(cb);
+      return this;
+    },
+    async finalMessage() {
+      const content: any[] = [];
+      const usage: Record<string, number> = { output_tokens: 0 };
+      let stop_reason: string | null = null;
+      let open: any = null;
+      for (const e of events) {
+        if (e.type === 'message_start') Object.assign(usage, e.message.usage);
+        if (e.type === 'content_block_start') {
+          open = { ...e.content_block };
+          if (open.type === 'tool_use') open.inputJson = '';
+        }
+        if (e.type === 'content_block_delta' && e.delta.type === 'text_delta') {
+          open.text += e.delta.text;
+          textListeners.forEach(cb => cb(e.delta.text));
+        }
+        if (e.type === 'content_block_delta' && e.delta.type === 'input_json_delta') {
+          open.inputJson += e.delta.partial_json;
+        }
+        if (e.type === 'content_block_stop') {
+          if (open.type === 'tool_use') {
+            if (open.inputJson) open.input = JSON.parse(open.inputJson);
+            delete open.inputJson;
+          }
+          content.push(open);
+          open = null;
+        }
+        if (e.type === 'message_delta') {
+          stop_reason = e.delta.stop_reason;
+          usage.output_tokens = e.usage.output_tokens;
+        }
+      }
+      return { content, usage, stop_reason, model: 'mock-model' };
     },
   };
+}
+
+// A complete (non-delta) block, e.g. a thinking block or a fallback marker.
+function wholeBlock(index: number, block: Record<string, unknown>): StreamEvent[] {
+  return [
+    { type: 'content_block_start', index, content_block: block },
+    { type: 'content_block_stop', index },
+  ];
 }
 
 function textOnlyTurn(text: string, opts: { inputTokens?: number; outputTokens?: number } = {}): StreamEvent[] {
@@ -318,7 +366,7 @@ describe('runKeishaAgent — token budget', () => {
   });
 
   it('uses the default budget when none is supplied', async () => {
-    expect(DEFAULT_KEISHA_TOKEN_BUDGET).toBe(50_000);
+    expect(DEFAULT_KEISHA_TOKEN_BUDGET).toBe(120_000);
   });
 });
 
@@ -370,5 +418,115 @@ describe('runKeishaAgent — streaming hooks', () => {
     });
 
     expect(onToolStart).not.toHaveBeenCalled();
+  });
+});
+
+describe('runKeishaAgent — thinking models', () => {
+  const THINKING = { type: 'thinking', thinking: '', signature: 'sig-abc' };
+
+  it('sends thinking blocks back unchanged with the tool results', async () => {
+    const turn = toolUseTurn({ toolName: 'lookup_price', toolId: 't1', toolInput: { symbol: 'AAPL' } });
+    // Thinking leads the turn, ahead of the tool call.
+    turn.splice(1, 0, ...wholeBlock(0, THINKING));
+    streamMock
+      .mockReturnValueOnce(makeStream(turn))
+      .mockReturnValueOnce(makeStream(textOnlyTurn('AAPL is $200.')));
+    executeToolCallMock.mockResolvedValueOnce({ result: { price: 200 }, success: true });
+
+    await runKeishaAgent({
+      messages: [{ role: 'user', content: 'price of AAPL' }],
+      system: [{ type: 'text', text: 'sys' }],
+    });
+
+    const secondCall = streamMock.mock.calls[1][0];
+    const assistantTurn = secondCall.messages[1];
+    expect(assistantTurn.role).toBe('assistant');
+    expect(assistantTurn.content[0]).toEqual(THINKING);
+    expect(assistantTurn.content.map((b: any) => b.type)).toEqual(['thinking', 'tool_use']);
+  });
+
+  it('reads the reply from the text block, not content[0]', async () => {
+    const turn = textOnlyTurn('Hello Wes.');
+    turn.splice(1, 0, ...wholeBlock(0, THINKING));
+    streamMock.mockReturnValueOnce(makeStream(turn));
+
+    const result = await runKeishaAgent({
+      messages: [{ role: 'user', content: 'hi' }],
+      system: [{ type: 'text', text: 'sys' }],
+    });
+
+    expect(result.finalText).toBe('Hello Wes.');
+  });
+});
+
+describe('runKeishaAgent — stop reasons that must not run tools', () => {
+  function withStopReason(events: StreamEvent[], stop_reason: string): StreamEvent[] {
+    return events.map(e => (e.type === 'message_delta' ? { ...e, delta: { stop_reason } } : e));
+  }
+
+  it('does not execute a tool call from a turn cut off by max_tokens', async () => {
+    streamMock.mockReturnValueOnce(makeStream(withStopReason(
+      toolUseTurn({ toolName: 'place_order', toolId: 'p1', toolInput: { symbol: 'AAPL' } }),
+      'max_tokens',
+    )));
+    const createPending = vi.fn();
+
+    const result = await runKeishaAgent({
+      messages: [{ role: 'user', content: 'buy AAPL' }],
+      system: [{ type: 'text', text: 'sys' }],
+      createPendingConfirmation: createPending,
+    });
+
+    expect(executeToolCallMock).not.toHaveBeenCalled();
+    expect(createPending).not.toHaveBeenCalled();
+    expect(result.pendingConfirmations).toHaveLength(0);
+    expect(result.finalText).not.toBe('');
+    expect(streamMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('returns a plain reply and runs nothing when the request is refused', async () => {
+    streamMock.mockReturnValueOnce(makeStream([
+      { type: 'message_start', message: { usage: { input_tokens: 100 } } },
+      { type: 'message_delta', delta: { stop_reason: 'refusal' }, usage: { output_tokens: 0 } },
+      { type: 'message_stop' },
+    ]));
+    const onTextDelta = vi.fn();
+
+    const result = await runKeishaAgent({
+      messages: [{ role: 'user', content: 'hi' }],
+      system: [{ type: 'text', text: 'sys' }],
+      onTextDelta,
+    });
+
+    expect(result.finalText).toMatch(/can't help/);
+    expect(onTextDelta).toHaveBeenCalledWith(result.finalText);
+    expect(executeToolCallMock).not.toHaveBeenCalled();
+  });
+
+  it('drops the declined model\'s tool call when a fallback model took over mid-turn', async () => {
+    const events: StreamEvent[] = [
+      { type: 'message_start', message: { usage: { input_tokens: 100 } } },
+      ...wholeBlock(0, { type: 'thinking', thinking: '', signature: 'sig-1' }),
+      ...wholeBlock(1, { type: 'tool_use', id: 'declined', name: 'place_order', input: { symbol: 'AAPL' } }),
+      ...wholeBlock(2, { type: 'fallback', from: { model: 'a' }, to: { model: 'b' } }),
+      ...wholeBlock(3, { type: 'tool_use', id: 'served', name: 'lookup_price', input: { symbol: 'AAPL' } }),
+      { type: 'message_delta', delta: { stop_reason: 'tool_use' }, usage: { output_tokens: 50 } },
+      { type: 'message_stop' },
+    ];
+    streamMock
+      .mockReturnValueOnce(makeStream(events))
+      .mockReturnValueOnce(makeStream(textOnlyTurn('Done.')));
+    executeToolCallMock.mockResolvedValueOnce({ result: { price: 200 }, success: true });
+
+    const result = await runKeishaAgent({
+      messages: [{ role: 'user', content: 'AAPL' }],
+      system: [{ type: 'text', text: 'sys' }],
+    });
+
+    expect(result.pendingConfirmations).toHaveLength(0);
+    expect(executeToolCallMock).toHaveBeenCalledTimes(1);
+    expect(executeToolCallMock).toHaveBeenCalledWith('lookup_price', { symbol: 'AAPL' });
+    const echoed = streamMock.mock.calls[1][0].messages[1].content;
+    expect(echoed.map((b: any) => b.id ?? b.type)).toEqual(['served']);
   });
 });

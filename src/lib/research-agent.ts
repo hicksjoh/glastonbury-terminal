@@ -1,6 +1,6 @@
 /**
  * Phase 5 — Deep Research Agent.
- * Claude Opus 4.7 runs a tool-use loop to gather sources, then produces
+ * The primary Claude model runs a tool-use loop to gather sources, then produces
  * a 1500-2500 word buy-side memo with inline citations.
  *
  * Tools exposed:
@@ -16,13 +16,14 @@
  *   - Output tokens
  */
 
-import type { MessageParam, Tool, TextBlockParam, ToolUseBlockParam, ToolResultBlockParam, ImageBlockParam } from '@anthropic-ai/sdk/resources/messages';
+import type { MessageParam, Tool, TextBlock, TextBlockParam, ToolUseBlock, ToolUseBlockParam, ToolResultBlockParam, ImageBlockParam } from '@anthropic-ai/sdk/resources/messages';
 import {
   anthropic,
   CLAUDE_MODEL_PRIMARY,
   CLAUDE_MODEL_FALLBACK,
+  modelBudget,
 } from '@/lib/claude';
-import { tagAnthropicCall } from '@/lib/anthropic-cost';
+import { tagAnthropicCall, modelPricing } from '@/lib/anthropic-cost';
 import {
   fetchQuote,
   fetchCompanyProfile,
@@ -31,15 +32,9 @@ import {
 } from '@/lib/crew-data';
 
 // ── Cost table ──────────────────────────────────────────────────────────────
-const PRICE_PER_M: Record<string, { input: number; output: number }> = {
-  'claude-opus-4-7': { input: 15.0, output: 75.0 },
-  'claude-sonnet-4-6': { input: 3.0, output: 15.0 },
-  'claude-haiku-4-5-20251001': { input: 0.8, output: 4.0 },
-};
-
 function costUsd(model: string, tIn: number, tOut: number): number {
-  const p = PRICE_PER_M[model] ?? { input: 3.0, output: 15.0 };
-  return (tIn / 1_000_000) * p.input + (tOut / 1_000_000) * p.output;
+  const p = modelPricing(model);
+  return (tIn / 1_000_000) * p.input_per_mtok + (tOut / 1_000_000) * p.output_per_mtok;
 }
 
 // ── Tool definitions (sent to Claude) ───────────────────────────────────────
@@ -239,7 +234,7 @@ Use your tools to gather data, then deliver the final memo as your last message.
     try {
       response = await anthropic.messages.create({
         model: modelUsed,
-        max_tokens: 4096,
+        ...modelBudget(modelUsed, 4096),
         system: RESEARCH_SYSTEM_PROMPT,
         tools,
         messages: conversation,
@@ -270,10 +265,10 @@ Use your tools to gather data, then deliver the final memo as your last message.
 
     // ── Process content blocks ──────────────────────────────────────────
     const toolUseBlocks = response.content.filter(
-      (b): b is ToolUseBlockParam => b.type === 'tool_use',
+      (b): b is ToolUseBlock => b.type === 'tool_use',
     );
     const textBlocks = response.content.filter(
-      (b): b is TextBlockParam => b.type === 'text',
+      (b): b is TextBlock => b.type === 'text',
     );
 
     // Accumulate text from this turn into the running finalText.
@@ -289,11 +284,22 @@ Use your tools to gather data, then deliver the final memo as your last message.
       break;
     }
 
-    // Append assistant message to the running conversation.
+    // The safety classifiers declined this turn — nothing usable came back.
+    if (response.stop_reason === 'refusal') {
+      truncated = 'error';
+      onEvent({ type: 'error', message: 'Claude declined this research request.' });
+      break;
+    }
+
+    // Append the assistant message exactly as received. Thinking blocks
+    // must go back unchanged or the next turn loses its reasoning.
     conversation.push({
       role: 'assistant',
-      content: response.content as (TextBlockParam | ImageBlockParam | ToolUseBlockParam)[],
+      content: response.content as MessageParam['content'],
     });
+
+    // A long server-side web_search turn was paused; re-send to resume it.
+    if (response.stop_reason === 'pause_turn') continue;
 
     // Execute our custom tools. web_search runs server-side — its results are
     // inline in the assistant message we just pushed, so we don't produce a

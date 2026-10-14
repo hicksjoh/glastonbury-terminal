@@ -1,5 +1,5 @@
 import Anthropic from '@anthropic-ai/sdk';
-import type { MessageCreateParamsNonStreaming, MessageStreamParams } from '@anthropic-ai/sdk/resources/messages';
+import type { MessageCreateParamsNonStreaming } from '@anthropic-ai/sdk/resources/messages';
 import { tagAnthropicCall } from './anthropic-cost';
 
 export const anthropic = new Anthropic({
@@ -22,14 +22,19 @@ export const anthropic = new Anthropic({
 //
 // To pin a specific model for evals / A/B / cost tests, set:
 //   CLAUDE_AUTO_LATEST=false
-//   CLAUDE_MODEL_PRIMARY=claude-opus-4-7
+//   CLAUDE_MODEL_PRIMARY=claude-opus-5-5
 //
-// As of 2026-08 the newest family is Claude 5 (Opus 5 / Sonnet 5).
+// As of 2026-10 the most capable generally available model is Claude
+// Fable 5.1 (the tier above Opus). Sonnet 5.5 is the current Sonnet.
 // No Haiku 5 has shipped yet, so the fast tier stays on Haiku 4.5.
-const LATEST_BY_TIER = {
-  primary:  'claude-opus-5',
-  fallback: 'claude-sonnet-5',
-  fast:     'claude-haiku-4-5-20251001',
+//
+// Fable 5.1 / Sonnet 5.5 always think (it can't be disabled) and
+// max_tokens caps thinking + visible text together — size max_tokens
+// with modelBudget() and read replies with textOf(), never content[0].
+export const LATEST_BY_TIER = {
+  primary:  'claude-fable-5-1',
+  fallback: 'claude-sonnet-5-5',
+  fast:     'claude-haiku-4-5',
 } as const;
 
 function isTruthy(v: string | undefined): boolean {
@@ -51,6 +56,66 @@ function resolveModel(envValue: string | undefined, tier: keyof typeof LATEST_BY
 export const CLAUDE_MODEL_PRIMARY  = resolveModel(process.env.CLAUDE_MODEL_PRIMARY,  'primary');
 export const CLAUDE_MODEL_FALLBACK = resolveModel(process.env.CLAUDE_MODEL_FALLBACK, 'fallback');
 export const CLAUDE_MODEL_FAST     = resolveModel(process.env.CLAUDE_MODEL_FAST,     'fast');
+
+// Dead-man check for the "always latest" promise: a stale pin in the
+// environment silently beats LATEST_BY_TIER (prod sat on a 172-day-old
+// Opus 4.7 pin while this file said "auto-uses the newest"). Surface any
+// tier that is resolving to something other than the latest so /api/health
+// and the boot log can say so out loud.
+export function getModelDrift(): Array<{ tier: keyof typeof LATEST_BY_TIER; resolved: string; latest: string }> {
+  const resolved = { primary: CLAUDE_MODEL_PRIMARY, fallback: CLAUDE_MODEL_FALLBACK, fast: CLAUDE_MODEL_FAST };
+  return (Object.keys(LATEST_BY_TIER) as Array<keyof typeof LATEST_BY_TIER>)
+    .filter(tier => resolved[tier] !== LATEST_BY_TIER[tier])
+    .map(tier => ({ tier, resolved: resolved[tier], latest: LATEST_BY_TIER[tier] }));
+}
+
+for (const d of getModelDrift()) {
+  console.warn(`[claude] ${d.tier} tier is pinned to ${d.resolved}; latest is ${d.latest}. Unset CLAUDE_MODEL_${d.tier.toUpperCase()} or set CLAUDE_AUTO_LATEST=true to follow latest.`);
+}
+
+export type ClaudeEffort = 'low' | 'medium' | 'high' | 'xhigh' | 'max';
+
+// Thinking tokens come out of max_tokens on every model that thinks by
+// default. A visible-length cap sized for a non-thinking model (voice: 600)
+// gets eaten by reasoning and the reply comes back truncated or empty.
+const THINKING_HEADROOM_TOKENS = 8_000;
+
+function thinksByDefault(model: string): boolean {
+  // Haiku 4.5 and the Opus 4.x / Sonnet 4.x pins run without thinking
+  // unless asked; everything newer thinks on its own.
+  return !/^claude-(haiku|opus-4|sonnet-4)/.test(model);
+}
+
+/**
+ * Request sizing for a model: `visibleTokens` is the room the reply itself
+ * needs; thinking headroom is added on models that always think. `effort`
+ * is only sent to models that think by default (Haiku 4.5 rejects it).
+ * Spread the result into messages.create / messages.stream.
+ */
+export function modelBudget(
+  model: string,
+  visibleTokens: number,
+  effort?: ClaudeEffort,
+): { max_tokens: number; output_config?: { effort: ClaudeEffort } } {
+  if (!thinksByDefault(model)) return { max_tokens: visibleTokens };
+  return {
+    max_tokens: visibleTokens + THINKING_HEADROOM_TOKENS,
+    ...(effort ? { output_config: { effort } } : {}),
+  };
+}
+
+/**
+ * The reply text of a message. Thinking models lead `content` with
+ * thinking blocks, so `content[0]` is not the answer; a refusal
+ * (stop_reason "refusal") has no usable text at all.
+ */
+export function textOf(message: { content: Array<{ type: string; text?: string }>; stop_reason?: string | null }): string {
+  if (message.stop_reason === 'refusal') return '';
+  return message.content
+    .filter(b => b.type === 'text' && typeof b.text === 'string')
+    .map(b => b.text as string)
+    .join('');
+}
 
 function isRetryableStatus(err: unknown): boolean {
   const status = (err as { status?: number })?.status;
@@ -79,7 +144,7 @@ export async function createMessageWithFallback(
 }
 
 export async function streamMessageWithFallback(
-  params: Omit<MessageStreamParams, 'model'>,
+  params: Omit<Parameters<typeof anthropic.messages.stream>[0], 'model'>,
 ): Promise<{ stream: ReturnType<typeof anthropic.messages.stream>; modelUsed: string }> {
   try {
     const stream = anthropic.messages.stream({ model: CLAUDE_MODEL_PRIMARY, ...params });
@@ -109,7 +174,7 @@ export async function generateBriefing(portfolioContext: string): Promise<string
 
   const message = await anthropic.messages.create({
     model: CLAUDE_MODEL_PRIMARY,
-    max_tokens: 1200,
+    ...modelBudget(CLAUDE_MODEL_PRIMARY, 1200),
     system: cachedSystem(KEISHA_SYSTEM_PROMPT),
     messages: [{
       role: 'user',
@@ -129,7 +194,7 @@ Keep it under 250 words. Sharp, actionable, and personalized to Wes's actual por
   });
 
   tagAnthropicCall(message.usage, CLAUDE_MODEL_PRIMARY, { caller: 'generateBriefing' });
-  return message.content[0].type === 'text' ? message.content[0].text : '';
+  return textOf(message);
 }
 
 export async function generateAnalysis(
@@ -152,7 +217,7 @@ When answering, always ground your response in the live data above. If certain d
 
   const response = await anthropic.messages.create({
     model: CLAUDE_MODEL_PRIMARY,
-    max_tokens: 4096,
+    ...modelBudget(CLAUDE_MODEL_PRIMARY, 4096),
     system: cachedSystem(KEISHA_SYSTEM_PROMPT, dynamicContext),
     messages: conversationHistory.map(m => ({
       role: m.role as 'user' | 'assistant',
@@ -161,5 +226,5 @@ When answering, always ground your response in the live data above. If certain d
   });
 
   tagAnthropicCall(response.usage, CLAUDE_MODEL_PRIMARY, { caller: 'generateAnalysis' });
-  return response.content[0].type === 'text' ? response.content[0].text : '';
+  return textOf(response);
 }

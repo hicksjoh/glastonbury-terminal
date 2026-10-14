@@ -10,7 +10,7 @@ import { color, font, size as sz, weight, tracking, space, radius, motion } from
 //   - Card tone="aiAccent" (gold-ring elevation)
 //   - EditorialProse for the long-form body (Fraunces)
 //   - StreamingIndicator (three-dot pulse + inline cursor)
-//   - ModelBadge for the "Opus 4.7 · 1.2s · cached" chip
+//   - ModelBadge for the "Fable 5.1 · 1.2s · cached" chip
 // See docs/DESIGN-SYSTEM.md.
 
 type StreamEvent =

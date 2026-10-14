@@ -169,7 +169,9 @@ export default function SettingsPage() {
         body: JSON.stringify({ messages: [{ role: 'user', content: 'ping' }], mode: 'general' }),
       });
       if (res.ok) {
-        updateConnection('keisha', 'connected', process.env.NEXT_PUBLIC_CLAUDE_MODEL_LABEL || 'claude-opus-4-7');
+        // Show the model the server actually ran, not a hard-coded label.
+        const data = await res.json().catch(() => null);
+        updateConnection('keisha', 'connected', data?.model || process.env.NEXT_PUBLIC_CLAUDE_MODEL_LABEL || 'Connected');
       } else {
         updateConnection('keisha', 'disconnected', `HTTP ${res.status}`);
       }

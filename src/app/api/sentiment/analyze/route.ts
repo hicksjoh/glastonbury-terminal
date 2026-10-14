@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { checkRateLimitDurable, getRateLimitIdentity } from '@/lib/rate-limit-durable';
 import { tagAnthropicCall } from '@/lib/anthropic-cost';
+import { CLAUDE_MODEL_FAST, modelBudget, textOf } from '@/lib/claude';
 import { captureRouteError } from '@/lib/api-error';
 import { loggerFor } from '@/lib/request-id';
 
@@ -24,7 +25,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'text field required' }, { status: 400 });
     }
 
-    const model = process.env.CLAUDE_MODEL_FAST || 'claude-haiku-4-5-20251001';
+    const model = CLAUDE_MODEL_FAST;
     const res = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
       headers: {
@@ -34,7 +35,7 @@ export async function POST(req: NextRequest) {
       },
       body: JSON.stringify({
         model,
-        max_tokens: 500,
+        ...modelBudget(model, 500),
         messages: [{
           role: 'user',
           content: `Analyze the sentiment of this text. Score 1-10 (1=very bearish, 10=very bullish). Return JSON only: {"score": number, "summary": string, "flags": string[]}\n\nText: ${text}`,
@@ -53,7 +54,7 @@ export async function POST(req: NextRequest) {
       tagAnthropicCall(data.usage, model, { caller: 'sentiment/analyze' });
     }
 
-    const content = data.content?.[0]?.text || '';
+    const content = textOf({ content: data.content ?? [], stop_reason: data.stop_reason });
     const jsonMatch = content.match(/\{[\s\S]*\}/);
 
     if (jsonMatch) {

@@ -4,6 +4,7 @@ import {
   anthropic,
   CLAUDE_MODEL_PRIMARY,
   CLAUDE_MODEL_FALLBACK,
+  modelBudget,
 } from '@/lib/claude';
 import { createServiceClient } from '@/lib/supabase';
 import { checkRateLimitDurable } from '@/lib/rate-limit-durable';
@@ -431,7 +432,7 @@ export async function GET(req: NextRequest) {
         const callStream = async (model: string) =>
           anthropic.messages.stream({
             model,
-            max_tokens: 1200,
+            ...modelBudget(model, 1200),
             system: KEISHA_BRIEFING_SYSTEM_PROMPT,
             messages: [{ role: 'user', content: userPrompt }],
           });

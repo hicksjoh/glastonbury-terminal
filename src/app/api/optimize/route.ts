@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { equilibriumReturns, blackLitterman, efficientFrontier, View } from '@/lib/black-litterman';
 import { correlationMatrix, isUsableReturnSeries } from '@/lib/correlation';
-import { anthropic, CLAUDE_MODEL_FALLBACK } from '@/lib/claude';
+import { anthropic, CLAUDE_MODEL_FALLBACK, modelBudget, textOf } from '@/lib/claude';
 import { tagAnthropicCall } from '@/lib/anthropic-cost';
 import { getHistoricalPrices } from '@/lib/fmp-client';
 import { withRateLimit, RATE } from '@/lib/api-rate-limit';
@@ -129,17 +129,17 @@ Respond ONLY with a JSON array, no other text.`;
 
     const message = await anthropic.messages.create({
       model: CLAUDE_MODEL_FALLBACK,
-      max_tokens: 1024,
+      ...modelBudget(CLAUDE_MODEL_FALLBACK, 1024),
       messages: [{ role: 'user', content: prompt }],
     });
     tagAnthropicCall(message.usage, CLAUDE_MODEL_FALLBACK, { caller: 'optimize' });
 
-    const content = message.content[0];
-    if (content.type !== 'text') {
+    const replyText = textOf(message);
+    if (!replyText) {
       throw new Error('Unexpected response type from Claude');
     }
 
-    const parsed = JSON.parse(content.text);
+    const parsed = JSON.parse(replyText);
     const views: View[] = [];
     const viewConfidences: number[] = [];
     const aiViewDetails: Array<{ symbol: string; view: string; confidence: number; reasoning: string }> = [];

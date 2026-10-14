@@ -6,6 +6,7 @@ import {
   CLAUDE_MODEL_PRIMARY,
   CLAUDE_MODEL_FALLBACK,
   CLAUDE_MODEL_FAST,
+  modelBudget,
 } from '@/lib/claude';
 import { checkRateLimitDurable, getRateLimitIdentity } from '@/lib/rate-limit-durable';
 import { readBoundedJson, BodyTooLargeError, BODY_LIMIT } from '@/lib/bounded-body';
@@ -200,7 +201,8 @@ export async function POST(req: NextRequest) {
         const startClaude = (model: string) =>
           anthropic.messages.stream({
             model,
-            max_tokens: 600,
+            // Voice is latency-bound: low effort keeps time-to-first-word short.
+            ...modelBudget(model, 600, 'low'),
             system: KEISHA_VOICE_SYSTEM_PROMPT,
             messages,
           });
