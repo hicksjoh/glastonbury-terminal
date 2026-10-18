@@ -9,7 +9,7 @@
 // the hood (beta surface for the refusal-fallback opt-in). Streaming consumers wire up real-time hooks; non-streaming consumers
 // just await the final result. One code path, zero divergence.
 
-import { anthropic, CLAUDE_MODEL_PRIMARY, modelBudget } from '@/lib/claude';
+import { anthropic, CLAUDE_MODEL_PRIMARY, CLAUDE_MODEL_FALLBACK, modelBudget, streamWithFallback } from '@/lib/claude';
 import {
   KEISHA_TOOLS,
   DANGEROUS_TOOLS,
@@ -127,6 +127,8 @@ export interface KeishaAgentOutput {
   actions: KeishaAgentAction[];
   pendingConfirmations: KeishaAgentPending[];
   usage: KeishaAgentUsage;
+  /** The model that served the run (the fallback, if the primary was overloaded). */
+  modelUsed: string;
 }
 
 export async function runKeishaAgent(input: KeishaAgentInput): Promise<KeishaAgentOutput> {
@@ -154,20 +156,29 @@ export async function runKeishaAgent(input: KeishaAgentInput): Promise<KeishaAge
     budgetExceeded: false,
   };
 
+  let modelUsed = CLAUDE_MODEL_PRIMARY;
+
   for (let iteration = 0; iteration < MAX_TOOL_ITERATIONS; iteration++) {
-    const stream = anthropic.beta.messages.stream({
-      model: CLAUDE_MODEL_PRIMARY,
-      ...modelBudget(CLAUDE_MODEL_PRIMARY, 4096),
-      system: system as BetaTextBlockParam[],
-      messages: currentMessages as BetaMessageParam[],
-      tools: KEISHA_TOOLS,
-      ...refusalFallback(CLAUDE_MODEL_PRIMARY),
+    // Overload fallback, opening turn only. Once a tool round-trip is in
+    // the conversation it carries the serving model's thinking and tool
+    // calls, which another model cannot replay — so the loop stays on
+    // whichever model answered first and a later overload surfaces.
+    const { message, modelUsed: servedBy } = await streamWithFallback({
+      models: [modelUsed, iteration === 0 ? CLAUDE_MODEL_FALLBACK : modelUsed],
+      start: model =>
+        anthropic.beta.messages.stream({
+          model,
+          ...modelBudget(model, 4096),
+          system: system as BetaTextBlockParam[],
+          messages: currentMessages as BetaMessageParam[],
+          tools: KEISHA_TOOLS,
+          ...refusalFallback(model),
+        }),
+      onText: text => onTextDelta?.(text),
     });
+    modelUsed = servedBy;
 
     usage.iterations += 1;
-
-    stream.on('text', (text: string) => onTextDelta?.(text));
-    const message = await stream.finalMessage();
 
     // usage covers the attempt that produced this message. We accumulate
     // across iterations to enforce the budget.
@@ -323,9 +334,9 @@ export async function runKeishaAgent(input: KeishaAgentInput): Promise<KeishaAge
       cache_creation_input_tokens: usage.cacheCreationTokens,
       cache_read_input_tokens: usage.cacheReadTokens,
     },
-    CLAUDE_MODEL_PRIMARY,
+    modelUsed,
     { caller: 'keisha-agent', iterations: usage.iterations },
   );
 
-  return { finalText, suggestions, actions, pendingConfirmations, usage };
+  return { finalText, suggestions, actions, pendingConfirmations, usage, modelUsed };
 }

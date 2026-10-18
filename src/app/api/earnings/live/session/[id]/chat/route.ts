@@ -1,5 +1,5 @@
 import { NextRequest } from 'next/server';
-import { anthropic, CLAUDE_MODEL_PRIMARY, CLAUDE_MODEL_FALLBACK, modelBudget } from '@/lib/claude';
+import { anthropic, modelBudget, streamWithFallback } from '@/lib/claude';
 import { tagAnthropicCall } from '@/lib/anthropic-cost';
 import { createServiceClient } from '@/lib/supabase';
 import { checkRateLimitDurable, getRateLimitIdentity } from '@/lib/rate-limit-durable';
@@ -80,20 +80,11 @@ Answer using only what's in the transcript above. Quote specific lines where app
           system: KEISHA_EARNINGS_CHAT_SYSTEM,
           messages,
         });
-        let modelUsed = CLAUDE_MODEL_PRIMARY;
-        let s: ReturnType<typeof anthropic.messages.stream>;
-        try {
-          s = callStream(modelUsed);
-        } catch (err) {
-          const status = (err as { status?: number })?.status;
-          if (status === 429 || status === 529 || status === 503) {
-            modelUsed = CLAUDE_MODEL_FALLBACK;
-            s = callStream(modelUsed);
-          } else { throw err; }
-        }
-        send({ type: 'meta', model: modelUsed, transcript_chars: transcriptBlob.length });
-        s.on('text', (delta: string) => send({ type: 'token', delta }));
-        const finalChatMsg = await s.finalMessage();
+        const { message: finalChatMsg, modelUsed } = await streamWithFallback({
+          start: callStream,
+          onModel: model => send({ type: 'meta', model, transcript_chars: transcriptBlob.length }),
+          onText: delta => send({ type: 'token', delta }),
+        });
         tagAnthropicCall(finalChatMsg.usage, modelUsed, { caller: 'earnings/live/chat' });
         send({ type: 'done' });
       } catch (err) {

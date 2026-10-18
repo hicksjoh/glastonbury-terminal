@@ -6,7 +6,7 @@
  * Persists to trade_debates.
  */
 
-import { anthropic, CLAUDE_MODEL_PRIMARY, CLAUDE_MODEL_FALLBACK, modelBudget } from '@/lib/claude';
+import { anthropic, CLAUDE_MODEL_PRIMARY, CLAUDE_MODEL_FALLBACK, modelBudget, streamWithFallback } from '@/lib/claude';
 import { tagAnthropicCall, modelPricing } from '@/lib/anthropic-cost';
 import { fetchQuote, fetchCompanyProfile, fetchRecentNews, fetchBars, computeIndicators } from '@/lib/crew-data';
 
@@ -113,21 +113,12 @@ ${historyText ? `\nDEBATE SO FAR:\n${historyText}\n\n` : ''}It is now Round ${ar
     model, ...modelBudget(model, 500), system, messages: [{ role: 'user', content: userPrompt }],
   });
 
-  let model = CLAUDE_MODEL_FALLBACK; // Sonnet for debaters — speed + cost
-  let stream: ReturnType<typeof anthropic.messages.stream>;
-  try {
-    stream = callStream(model);
-  } catch (err) {
-    const status = (err as { status?: number })?.status;
-    if (status === 429 || status === 529 || status === 503) {
-      model = CLAUDE_MODEL_PRIMARY;
-      stream = callStream(model);
-    } else throw err;
-  }
-
   let text = '';
-  stream.on('text', (delta: string) => { text += delta; args.onToken(delta); });
-  const finalMsg = await stream.finalMessage();
+  const { message: finalMsg, modelUsed: model } = await streamWithFallback({
+    models: [CLAUDE_MODEL_FALLBACK, CLAUDE_MODEL_PRIMARY], // Sonnet for debaters — speed + cost
+    start: callStream,
+    onText: delta => { text += delta; args.onToken(delta); },
+  });
   tagAnthropicCall(finalMsg.usage, model, { caller: 'debate-engine:debater', side: args.side, round: args.round });
   return {
     side: args.side,
@@ -152,21 +143,11 @@ async function runModerator(args: {
     model, ...modelBudget(model, 1500), system: MODERATOR_SYSTEM, messages: [{ role: 'user', content: userPrompt }],
   });
 
-  let model = CLAUDE_MODEL_PRIMARY; // Opus for moderator
-  let stream: ReturnType<typeof anthropic.messages.stream>;
-  try {
-    stream = callStream(model);
-  } catch (err) {
-    const status = (err as { status?: number })?.status;
-    if (status === 429 || status === 529 || status === 503) {
-      model = CLAUDE_MODEL_FALLBACK;
-      stream = callStream(model);
-    } else throw err;
-  }
-
   let text = '';
-  stream.on('text', (delta: string) => { text += delta; args.onToken(delta); });
-  const finalMsg = await stream.finalMessage();
+  const { message: finalMsg, modelUsed: model } = await streamWithFallback({
+    start: callStream, // primary for the moderator
+    onText: delta => { text += delta; args.onToken(delta); },
+  });
   tagAnthropicCall(finalMsg.usage, model, { caller: 'debate-engine:moderator' });
   return {
     raw: text,
