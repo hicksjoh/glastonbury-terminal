@@ -37,14 +37,29 @@ interface TestClient {
   redirect_uri: string;
 }
 
+/** Mirrors the limiter on /api/oauth/register: 5 per fixed, clock-aligned minute. */
+const REGISTER_WINDOW_MS = 60_000;
+
 async function registerTestClient(req: APIRequestContext, label: string): Promise<TestClient> {
-  const res = await req.post('/api/oauth/register', {
-    data: {
-      client_name: `e2e-${label}-${Date.now()}`,
-      redirect_uris: [TEST_REDIRECT],
-      token_endpoint_auth_method: 'none',
-    },
-  });
+  const register = () =>
+    req.post('/api/oauth/register', {
+      data: {
+        client_name: `e2e-${label}-${Date.now()}`,
+        redirect_uris: [TEST_REDIRECT],
+        token_endpoint_auth_method: 'none',
+      },
+    });
+  let res = await register();
+  // This file registers more clients than the route allows per minute, and
+  // every test shares one session, so one bucket. A 429 here is the limiter
+  // working, not a regression: wait for the next window instead of failing
+  // (retrying immediately would only land in the same full bucket).
+  for (let attempt = 0; res.status() === 429 && attempt < 2; attempt++) {
+    const wait = REGISTER_WINDOW_MS - (Date.now() % REGISTER_WINDOW_MS) + 2_000;
+    test.setTimeout(test.info().timeout + wait);
+    await new Promise((resolve) => setTimeout(resolve, wait));
+    res = await register();
+  }
   expect(res.status(), `register ${label} expected 201`).toBe(201);
   const body = await res.json();
   return { client_id: body.client_id, redirect_uri: TEST_REDIRECT };
