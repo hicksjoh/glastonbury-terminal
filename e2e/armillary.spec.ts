@@ -53,9 +53,40 @@ test.describe('Armillary — public assets and login', () => {
     await expect(sphere).toBeVisible();
     await expect(sphere).toHaveAttribute('aria-hidden', 'true');
     await expect(sphere).toHaveAttribute('data-state', /^(live|poster)$/, { timeout: 15000 });
-    await expect(page.getByPlaceholder('Access code')).toBeVisible();
+    await expect(page.getByRole('heading', { name: /Glastonbury Terminal/i })).toBeVisible();
+    await expect(page.getByLabel('Access code')).toBeVisible();
     await expect(page.getByRole('button', { name: /Access Terminal/i })).toBeVisible();
+    // the instrument readout: Eastern time, Miami's coordinates, the market session
+    const readout = page.getByTestId('login-readout');
+    await expect(readout).toContainText(/\d{1,2}:\d{2}\s?(AM|PM) ET/);
+    await expect(readout).toContainText('25.76° N');
+    await expect(readout).toContainText(/Market Open|Pre-Market|After Hours|Market Closed/i);
     expectNoConsoleErrors(errors);
+  });
+
+  test('login says why a code was refused, without touching the real sign-in', async ({ page }) => {
+    // Answers come from page.route, so no real attempt reaches the rate limiter.
+    // Swap the PWA worker for an empty one so it can't answer the POST itself.
+    await page.context().route('**/sw.js', route =>
+      route.fulfill({ status: 200, contentType: 'application/javascript', body: '/* test: no-op worker */' }));
+    let answer = { status: 401, json: { error: 'Invalid password' } };
+    await page.route('**/api/auth/login', route => route.fulfill(answer));
+    await page.goto('/login');
+
+    const code = page.getByLabel('Access code');
+    await code.fill('not-the-code');
+    await page.getByRole('button', { name: /Access Terminal/i }).click();
+    await expect(page.getByTestId('login-message')).toContainText(/didn.t work/i);
+    await expect(code).toHaveAttribute('aria-invalid', 'true');
+    await expect(page.getByTestId('login-message')).toHaveAttribute('role', 'alert');
+
+    answer = { status: 429, json: { error: 'Too many requests' } };
+    await page.getByRole('button', { name: /Access Terminal/i }).click();
+    await expect(page.getByTestId('login-message')).toContainText(/too many tries/i);
+
+    answer = { status: 503, json: { error: 'degraded' } };
+    await page.getByRole('button', { name: /Access Terminal/i }).click();
+    await expect(page.getByTestId('login-message')).toContainText(/unavailable/i);
   });
 });
 

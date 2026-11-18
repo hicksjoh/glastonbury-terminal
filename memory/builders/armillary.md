@@ -18,6 +18,7 @@ verified (locally) · PR opened
 - [x] Self-refine 2: crowded labels in the narrow card → show only the selected orb's label; labels clamped inside the frame; phone login raises the sphere above the card
 - [x] `npx tsc --noEmit`, `npm run lint`, `npm run build` green
 - [x] Local Playwright run against `next start`: all armillary assertions pass; the run's only console errors come from this sandbox (placeholder Supabase realtime socket, 500s from APIs without credentials)
+- [x] Login panel redesign (test first): instrument-plate panel, labelled field, ET/coordinates/market readout, refusal messages per status (401/429/503, network). New e2e case mocks /api/auth/login, so it never touches the real rate limiter. 4/4 locally.
 
 ## Files touched
 - e2e/armillary.spec.ts
