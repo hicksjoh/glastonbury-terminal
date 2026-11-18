@@ -24,7 +24,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 // ─── Mocks ────────────────────────────────────────────────────────────
 
 const streamMock = vi.fn();
-vi.mock('@/lib/claude', () => ({
+vi.mock('@sentry/nextjs', () => ({}));
+vi.mock('@/lib/claude', async () => ({
+  // The real overload-fallback helper: the loop's retry behavior is under test.
+  streamWithFallback: (await vi.importActual<typeof import('@/lib/claude')>('@/lib/claude')).streamWithFallback,
   anthropic: {
     beta: {
       messages: {
@@ -33,6 +36,7 @@ vi.mock('@/lib/claude', () => ({
     },
   },
   CLAUDE_MODEL_PRIMARY: 'mock-model',
+  CLAUDE_MODEL_FALLBACK: 'mock-fallback',
   KEISHA_SYSTEM_PROMPT: 'mock-system',
   modelBudget: (_model: string, visibleTokens: number) => ({ max_tokens: visibleTokens }),
 }));
@@ -528,5 +532,55 @@ describe('runKeishaAgent — stop reasons that must not run tools', () => {
     expect(executeToolCallMock).toHaveBeenCalledWith('lookup_price', { symbol: 'AAPL' });
     const echoed = streamMock.mock.calls[1][0].messages[1].content;
     expect(echoed.map((b: any) => b.id ?? b.type)).toEqual(['served']);
+  });
+});
+
+describe('runKeishaAgent — overload fallback', () => {
+  // The SDK stream never throws on creation; an overloaded model rejects
+  // finalMessage() instead.
+  function overloadedStream() {
+    return {
+      on() { return this; },
+      async finalMessage() { throw Object.assign(new Error('529 Overloaded'), { status: 529 }); },
+    };
+  }
+
+  it('retries the opening turn on the fallback model and stays on it for the rest of the loop', async () => {
+    streamMock
+      .mockReturnValueOnce(overloadedStream())
+      .mockReturnValueOnce(makeStream(toolUseTurn({ toolName: 'get_quote', toolId: 't1', toolInput: { symbol: 'AAPL' } })))
+      .mockReturnValueOnce(makeStream(textOnlyTurn('AAPL is at 190.')));
+    executeToolCallMock.mockResolvedValue({ result: { price: 190 }, success: true });
+
+    const result = await runKeishaAgent({
+      messages: [{ role: 'user', content: 'AAPL?' }],
+      system: [],
+    });
+
+    expect(streamMock.mock.calls.map(c => c[0].model)).toEqual(['mock-model', 'mock-fallback', 'mock-fallback']);
+    expect(result.finalText).toBe('AAPL is at 190.');
+    expect(result.modelUsed).toBe('mock-fallback');
+  });
+
+  it('does not switch models after a tool round-trip — the error surfaces', async () => {
+    // By then the conversation carries the primary model's thinking and
+    // tool calls, which another model cannot replay.
+    streamMock
+      .mockReturnValueOnce(makeStream(toolUseTurn({ toolName: 'get_quote', toolId: 't1', toolInput: { symbol: 'AAPL' } })))
+      .mockReturnValueOnce(overloadedStream());
+    executeToolCallMock.mockResolvedValue({ result: { price: 190 }, success: true });
+
+    await expect(runKeishaAgent({
+      messages: [{ role: 'user', content: 'AAPL?' }],
+      system: [],
+    })).rejects.toMatchObject({ status: 529 });
+
+    expect(streamMock.mock.calls.map(c => c[0].model)).toEqual(['mock-model', 'mock-model']);
+  });
+
+  it('reports the primary model when no fallback was needed', async () => {
+    streamMock.mockReturnValueOnce(makeStream(textOnlyTurn('Hello.')));
+    const result = await runKeishaAgent({ messages: [{ role: 'user', content: 'hi' }], system: [] });
+    expect(result.modelUsed).toBe('mock-model');
   });
 });
