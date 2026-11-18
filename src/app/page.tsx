@@ -1,7 +1,9 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import { useRouter } from 'next/navigation';
+import { Armillary, ARMILLARY_ENABLED } from '@/components/armillary/Armillary';
+import type { ArmillaryBody } from '@/components/armillary/Armillary';
 import Image from 'next/image';
 import { AppShell } from '@/components/layout/AppShell';
 import { ErrorBoundary } from '@/components/ErrorBoundary';
@@ -369,6 +371,26 @@ export default function DashboardPage() {
   const dateStr = nowEt ? getLongDateLabel(nowEt) : '';
   const fiftyMPct = (totalNetWorth / 50000000) * 100;
 
+  // ─── Wealth armillary: one orb per piece of net worth, sized by its share ─
+  const segmentValue = (key: (typeof WEALTH_SEGMENTS)[number]['key']) =>
+    key === 'cr3Equity' ? cr3
+      : key === 'miamiShoresProperty' ? miami
+      : key === 'alpacaEquity' ? investments
+      : key === 'cashReserves' ? wealthCash : rsus;
+  const [wealthSel, setWealthSel] = useState<string | null>(null);
+  const wealthOrbs = useMemo<ArmillaryBody[]>(() => {
+    if (!(totalNetWorth > 0)) return [];
+    const vals: Record<string, number> = { cr3Equity: cr3, miamiShoresProperty: miami, alpacaEquity: investments, cashReserves: wealthCash, anthropicRSUs: rsus };
+    return WEALTH_SEGMENTS
+      .map(seg => ({ seg, share: (vals[seg.key] ?? 0) / totalNetWorth }))
+      .filter(x => x.share > 0)
+      .sort((a, b) => b.share - a.share) // biggest piece on the innermost orbit
+      .map(({ seg, share }) => ({ id: seg.key, label: `${seg.label} ${Math.round(share * 100)}%`, color: seg.colorToken, weight: Math.min(1, share) }));
+  }, [cr3, miami, investments, wealthCash, rsus, totalNetWorth]);
+  const wealthOrbsLabel = wealthOrbs.length
+    ? `Net worth as an armillary, one orb per piece, sized by its share: ${wealthOrbs.map(o => o.label).join(', ')}.`
+    : 'Net worth armillary. Waiting for wealth data.';
+
   // VIX tone
   const vixTone: 'positive' | 'negative' | 'warning' | 'neutral' =
     vix <= 0 ? 'neutral' : vix > 30 ? 'negative' : vix > 20 ? 'warning' : 'positive';
@@ -718,15 +740,24 @@ export default function DashboardPage() {
         marginBottom: space[5],
       }}>
         <ErrorBoundary label="wealth-breakdown">
-          <Card size="lg">
+          <Card size="lg" data-testid="wealth-breakdown">
             <SectionHeader>Wealth Breakdown</SectionHeader>
+
+            {ARMILLARY_ENABLED && (
+              <Armillary
+                bodies={wealthOrbs}
+                label={wealthOrbsLabel}
+                showLabels="selected"
+                selectedId={wealthSel}
+                onSelect={setWealthSel}
+                latitude={25.76}
+                style={{ height: 240, borderRadius: radius.chip, marginBottom: space[4] }}
+              />
+            )}
 
             <div style={{ display: 'flex', height: 12, borderRadius: radius.chip, overflow: 'hidden', marginBottom: space[4] }}>
               {WEALTH_SEGMENTS.map(seg => {
-                const val = seg.key === 'cr3Equity' ? cr3
-                  : seg.key === 'miamiShoresProperty' ? miami
-                  : seg.key === 'alpacaEquity' ? investments
-                  : seg.key === 'cashReserves' ? wealthCash : rsus;
+                const val = segmentValue(seg.key);
                 const pct = totalNetWorth > 0 ? (val / totalNetWorth) * 100 : 0;
                 return (
                   <div key={seg.key} style={{
@@ -739,13 +770,23 @@ export default function DashboardPage() {
 
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: space[2] }}>
               {WEALTH_SEGMENTS.map(seg => {
-                const val = seg.key === 'cr3Equity' ? cr3
-                  : seg.key === 'miamiShoresProperty' ? miami
-                  : seg.key === 'alpacaEquity' ? investments
-                  : seg.key === 'cashReserves' ? wealthCash : rsus;
+                const val = segmentValue(seg.key);
                 const pct = totalNetWorth > 0 ? (val / totalNetWorth) * 100 : 0;
+                const picked = wealthSel === seg.key;
                 return (
-                  <div key={seg.key} style={{ display: 'flex', alignItems: 'center', gap: space[2] }}>
+                  // Each row picks its orb in the armillary above.
+                  <button
+                    key={seg.key}
+                    type="button"
+                    aria-pressed={picked}
+                    onClick={() => setWealthSel(picked ? null : seg.key)}
+                    style={{
+                      display: 'flex', alignItems: 'center', gap: space[2], textAlign: 'left', cursor: 'pointer',
+                      background: picked ? color.glassHi : 'transparent', color: 'inherit', font: 'inherit',
+                      border: `1px solid ${picked ? color.borderStrong : 'transparent'}`, borderRadius: radius.chip,
+                      padding: '4px 6px', margin: '-5px -7px',
+                    }}
+                  >
                     <div style={{
                       width: 8, height: 8, borderRadius: 2, background: seg.colorToken, flexShrink: 0,
                     }} />
@@ -758,7 +799,7 @@ export default function DashboardPage() {
                         {formatCurrency(val)} · {pct.toFixed(1)}%
                       </div>
                     </div>
-                  </div>
+                  </button>
                 );
               })}
             </div>
