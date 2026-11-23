@@ -5,6 +5,7 @@ import { safeNextPath } from '@/lib/safe-next-path';
 import { Armillary, ARMILLARY_ENABLED } from '@/components/armillary/Armillary';
 import type { ArmillaryBody } from '@/components/armillary/Armillary';
 import { getMarketPhase } from '@/components/MarketStatusChip';
+import { LogoHero, LOGO_HERO_ENABLED } from '@/components/brand/LogoHero';
 
 // Plain orbs in the Terminal's own colors. The login page shows no data.
 const LOGIN_ORBS: ArmillaryBody[] = [
@@ -55,6 +56,7 @@ const CSS = `
 .lg-tick.tr { top: 10px; right: 10px; border-top-width: 1px; border-right-width: 1px; }
 .lg-tick.bl { bottom: 10px; left: 10px; border-bottom-width: 1px; border-left-width: 1px; }
 .lg-tick.br { bottom: 10px; right: 10px; border-bottom-width: 1px; border-right-width: 1px; }
+.lg-logo { display: block; margin: -6px -10px 6px; }
 .lg-eyebrow { font: 500 10.5px/1 var(--font-mono), "JetBrains Mono", Menlo, monospace; letter-spacing: .3em; text-transform: uppercase; color: #C9A84C; }
 .lg-title { margin: 16px 0 10px; font-family: var(--font-serif), Fraunces, Georgia, serif; font-weight: 400;
   font-size: clamp(36px, 4.4vw, 46px); line-height: 1.02; letter-spacing: -.01em; color: #EDEBE4; }
@@ -183,7 +185,9 @@ export default function LoginPage() {
         <span className="lg-tick bl" aria-hidden="true" />
         <span className="lg-tick br" aria-hidden="true" />
 
-        <div className="lg-eyebrow">The Glastonbury Group</div>
+        {LOGO_HERO_ENABLED
+          ? <LogoHero className="lg-logo" />
+          : <div className="lg-eyebrow">The Glastonbury Group</div>}
         <h1 id="lg-title" className="lg-title">Glastonbury <em>Terminal</em></h1>
         <p className="lg-sub">Private wealth command center.</p>
 
