@@ -177,9 +177,12 @@ export function buildTerminalMcpServer(): McpServer {
   );
 
   // ─── tool: terminal_add_to_watchlist ───────────────────────────────
+  // Idempotent: a symbol that is already watched is not an error (the table
+  // has a unique key on symbol). The existing row keeps its note unless a new
+  // one is given, and gets a fresh price.
   server.tool(
     'terminal_add_to_watchlist',
-    'Add a stock symbol to the watchlist. Symbol is uppercased automatically. Returns the inserted row (or an error if the symbol already exists).',
+    'Add a stock symbol to the watchlist. Symbol is uppercased automatically. Safe to call for a symbol that is already watched: the existing row is kept (its note is replaced only when `notes` is given) and the result says already_watching: true.',
     {
       symbol: z.string().min(1).max(10).describe('Ticker symbol (e.g., "NVDA")'),
       notes: z.string().optional().describe('Optional free-form note about why'),
@@ -188,6 +191,7 @@ export function buildTerminalMcpServer(): McpServer {
       try {
         const sym = validateEquitySymbol(symbol);
         if (!sym) return fail(`invalid ticker symbol: ${symbol.slice(0, 20)}`);
+        const note = notes?.trim() ? notes.trim() : null;
 
         // Enrich with name + live price so the row is never born empty.
         let companyName: string | null = null;
@@ -198,18 +202,45 @@ export function buildTerminalMcpServer(): McpServer {
         const quote = (await getLiveQuotes([sym])).get(sym) ?? null;
 
         const supabase = createServiceClient();
+
+        // Already watched: refresh it in place instead of inserting a duplicate.
+        const refresh = async (existing: { company_name?: string | null } | null) => {
+          const patch: Record<string, unknown> = { updated_at: new Date().toISOString() };
+          if (note) patch.notes = note;
+          if (quote) patch.current_price = quote.price;
+          if (companyName && !existing?.company_name) patch.company_name = companyName;
+          const { data, error } = await supabase
+            .from('watchlist')
+            .update(patch as never)
+            .eq('symbol', sym)
+            .select()
+            .single();
+          if (error) return fail(`watchlist update failed: ${error.message}`);
+          return okJson({ already_watching: true, item: data });
+        };
+
+        const { data: existing, error: lookupError } = await supabase
+          .from('watchlist')
+          .select('symbol, company_name, notes')
+          .eq('symbol', sym)
+          .maybeSingle();
+        if (lookupError) return fail(`watchlist lookup failed: ${lookupError.message}`);
+        if (existing) return refresh(existing as { company_name?: string | null });
+
         const { data, error } = await supabase
           .from('watchlist')
           .insert({
             symbol: sym,
             company_name: companyName,
             current_price: quote?.price ?? null,
-            notes: notes ?? null,
+            notes: note,
           })
           .select()
           .single();
+        // 23505 = unique_violation: added by someone else since the lookup.
+        if (error && (error as { code?: string }).code === '23505') return refresh(null);
         if (error) return fail(`watchlist insert failed: ${error.message}`);
-        return okJson({ added: data });
+        return okJson({ already_watching: false, added: data });
       } catch (err) {
         return fail(`terminal_add_to_watchlist failed: ${(err as Error).message}`);
       }
