@@ -60,6 +60,10 @@ export async function POST(req: NextRequest) {
           current_price: currentPrice,
         });
 
+        // 23505 = unique_violation: the row exists after all (added since the lookup, or the lookup failed).
+        if ((error as { code?: string } | null)?.code === '23505') {
+          return NextResponse.json({ success: true, message: `${symbol} is already on your watchlist` });
+        }
         if (error) return NextResponse.json({ error: error.message }, { status: 500 });
         return NextResponse.json({ success: true, message: `Added ${symbol} (${companyName}) to watchlist` });
       }
