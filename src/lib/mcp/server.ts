@@ -177,9 +177,13 @@ export function buildTerminalMcpServer(): McpServer {
   );
 
   // ─── tool: terminal_add_to_watchlist ───────────────────────────────
+  // Idempotent: watchlist.symbol is UNIQUE, so adding a symbol that is already
+  // watched returns that row (already_watching: true) instead of surfacing the
+  // Postgres duplicate-key error. A note given on a re-add replaces the old one,
+  // and the old one is returned as previous_note.
   server.tool(
     'terminal_add_to_watchlist',
-    'Add a stock symbol to the watchlist. Symbol is uppercased automatically. Returns the inserted row (or an error if the symbol already exists).',
+    'Add a stock symbol to the watchlist. Symbol is uppercased automatically. Adding a symbol that is already watched is not an error: it returns the existing row with already_watching: true, and saves the note if one is given (the replaced note comes back as previous_note).',
     {
       symbol: z.string().min(1).max(10).describe('Ticker symbol (e.g., "NVDA")'),
       notes: z.string().optional().describe('Optional free-form note about why'),
@@ -188,6 +192,32 @@ export function buildTerminalMcpServer(): McpServer {
       try {
         const sym = validateEquitySymbol(symbol);
         if (!sym) return fail(`invalid ticker symbol: ${symbol.slice(0, 20)}`);
+        const note = notes?.trim() || null;
+        const supabase = createServiceClient();
+
+        // Already watched: keep the row, take the new note if there is one.
+        const keepWatching = async () => {
+          const { data: row, error: readErr } = await supabase
+            .from('watchlist')
+            .select('*')
+            .eq('symbol', sym)
+            .maybeSingle();
+          if (readErr) return fail(`watchlist lookup failed: ${readErr.message}`);
+          if (!row) return null;
+          const previous = (row as { notes?: string | null }).notes ?? null;
+          if (!note || note === previous) return okJson({ added: row, already_watching: true, note_updated: false });
+          const { data: updated, error: updErr } = await supabase
+            .from('watchlist')
+            .update({ notes: note, updated_at: new Date().toISOString() })
+            .eq('symbol', sym)
+            .select()
+            .single();
+          if (updErr) return fail(`watchlist note update failed: ${updErr.message}`);
+          return okJson({ added: updated ?? { ...row, notes: note }, already_watching: true, note_updated: true, previous_note: previous });
+        };
+
+        const existing = await keepWatching();
+        if (existing) return existing;
 
         // Enrich with name + live price so the row is never born empty.
         let companyName: string | null = null;
@@ -197,19 +227,23 @@ export function buildTerminalMcpServer(): McpServer {
         } catch { /* non-critical — insert without a name */ }
         const quote = (await getLiveQuotes([sym])).get(sym) ?? null;
 
-        const supabase = createServiceClient();
         const { data, error } = await supabase
           .from('watchlist')
           .insert({
             symbol: sym,
             company_name: companyName,
             current_price: quote?.price ?? null,
-            notes: notes ?? null,
+            notes: note,
           })
           .select()
           .single();
+        if (error?.code === '23505') {
+          // Lost a race with a concurrent add of the same symbol: it is watched now.
+          const raced = await keepWatching();
+          if (raced) return raced;
+        }
         if (error) return fail(`watchlist insert failed: ${error.message}`);
-        return okJson({ added: data });
+        return okJson({ added: data, already_watching: false });
       } catch (err) {
         return fail(`terminal_add_to_watchlist failed: ${(err as Error).message}`);
       }
