@@ -4,6 +4,7 @@ import {
   CLAUDE_MODEL_PRIMARY,
   CLAUDE_MODEL_FALLBACK,
   modelBudget,
+  streamWithFallback,
 } from '@/lib/claude';
 import { tagAnthropicCall, modelPricing } from '@/lib/anthropic-cost';
 import { createServiceClient } from '@/lib/supabase';
@@ -171,27 +172,15 @@ async function runSpecialist(
       messages: [{ role: 'user', content: user }],
     });
 
-  let modelUsed = CLAUDE_MODEL_FALLBACK; // Sonnet for specialists (speed/cost)
-  let stream: ReturnType<typeof anthropic.messages.stream>;
-  try {
-    stream = callStream(modelUsed);
-  } catch (err) {
-    const status = (err as { status?: number })?.status;
-    if (status === 429 || status === 529 || status === 503) {
-      modelUsed = CLAUDE_MODEL_PRIMARY;
-      stream = callStream(CLAUDE_MODEL_PRIMARY);
-    } else {
-      throw err;
-    }
-  }
-
   let accumulated = '';
-  stream.on('text', (delta: string) => {
-    accumulated += delta;
-    onToken(delta);
+  const { message: finalMsg, modelUsed } = await streamWithFallback({
+    models: [CLAUDE_MODEL_FALLBACK, CLAUDE_MODEL_PRIMARY], // Sonnet for specialists (speed/cost)
+    start: callStream,
+    onText: delta => {
+      accumulated += delta;
+      onToken(delta);
+    },
   });
-
-  const finalMsg = await stream.finalMessage();
   tagAnthropicCall(finalMsg.usage, modelUsed, { caller: 'crew/analyze:specialist', name });
   const tokensIn = finalMsg.usage?.input_tokens ?? 0;
   const tokensOut = finalMsg.usage?.output_tokens ?? 0;
@@ -299,27 +288,14 @@ async function runJudge(
       messages: [{ role: 'user', content: userPromptForJudge(ticker, data, specialists) }],
     });
 
-  let modelUsed = CLAUDE_MODEL_PRIMARY; // Opus for judge
-  let stream: ReturnType<typeof anthropic.messages.stream>;
-  try {
-    stream = callStream(modelUsed);
-  } catch (err) {
-    const status = (err as { status?: number })?.status;
-    if (status === 429 || status === 529 || status === 503) {
-      modelUsed = CLAUDE_MODEL_FALLBACK;
-      stream = callStream(CLAUDE_MODEL_FALLBACK);
-    } else {
-      throw err;
-    }
-  }
-
   let accumulated = '';
-  stream.on('text', (delta: string) => {
-    accumulated += delta;
-    onToken(delta);
+  const { message: finalMsg, modelUsed } = await streamWithFallback({
+    start: callStream, // primary for the judge
+    onText: delta => {
+      accumulated += delta;
+      onToken(delta);
+    },
   });
-
-  const finalMsg = await stream.finalMessage();
   tagAnthropicCall(finalMsg.usage, modelUsed, { caller: 'crew/analyze:judge' });
   const tokensIn = finalMsg.usage?.input_tokens ?? 0;
   const tokensOut = finalMsg.usage?.output_tokens ?? 0;

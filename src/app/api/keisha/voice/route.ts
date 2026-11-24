@@ -3,10 +3,8 @@ import WebSocket from 'ws';
 import { z } from 'zod';
 import {
   anthropic,
-  CLAUDE_MODEL_PRIMARY,
-  CLAUDE_MODEL_FALLBACK,
-  CLAUDE_MODEL_FAST,
   modelBudget,
+  streamWithFallback,
 } from '@/lib/claude';
 import { checkRateLimitDurable, getRateLimitIdentity } from '@/lib/rate-limit-durable';
 import { readBoundedJson, BodyTooLargeError, BODY_LIMIT } from '@/lib/bounded-body';
@@ -207,39 +205,18 @@ export async function POST(req: NextRequest) {
             messages,
           });
 
-        let modelUsed = CLAUDE_MODEL_PRIMARY;
-        try {
-          claudeStream = startClaude(CLAUDE_MODEL_PRIMARY);
-        } catch (err) {
-          const status = (err as { status?: number })?.status;
-          if (status === 429 || status === 529 || status === 503) {
-            modelUsed = CLAUDE_MODEL_FALLBACK;
-            claudeStream = startClaude(CLAUDE_MODEL_FALLBACK);
-          } else if (status === 401 || status === 403) {
-            // auth error — try fast model as last resort (still invalid, but fails fast)
-            modelUsed = CLAUDE_MODEL_FAST;
-            claudeStream = startClaude(CLAUDE_MODEL_FAST);
-          } else {
-            throw err;
-          }
-        }
-
-        send({ type: 'model', model: modelUsed });
-
-        claudeStream.on('text', (delta: string) => {
-          send({ type: 'text', delta });
-          if (elevenWs && elevenWs.readyState === WebSocket.OPEN) {
-            try {
-              elevenWs.send(JSON.stringify({ text: delta }));
-            } catch { /* WS may have closed */ }
-          }
+        const { message: finalMsg, modelUsed } = await streamWithFallback({
+          start: model => (claudeStream = startClaude(model)),
+          onModel: model => send({ type: 'model', model }),
+          onText: delta => {
+            send({ type: 'text', delta });
+            if (elevenWs && elevenWs.readyState === WebSocket.OPEN) {
+              try {
+                elevenWs.send(JSON.stringify({ text: delta }));
+              } catch { /* WS may have closed */ }
+            }
+          },
         });
-
-        claudeStream.on('error', (err: Error) => {
-          send({ type: 'error', source: 'claude', message: err.message });
-        });
-
-        const finalMsg = await claudeStream.finalMessage();
         // p6-6 + p6-3: tag Anthropic spend on the streaming path. Without
         // this, voice — one of the most expensive routes (Opus + ElevenLabs
         // simultaneous) — is invisible to the budget-burn alert.

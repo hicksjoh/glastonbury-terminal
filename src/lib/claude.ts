@@ -117,9 +117,12 @@ export function textOf(message: { content: Array<{ type: string; text?: string }
     .join('');
 }
 
+// Overloads / rate limits worth retrying on the other model tier. An error
+// raised mid-stream (after the 200) carries no HTTP status — only its type.
 function isRetryableStatus(err: unknown): boolean {
-  const status = (err as { status?: number })?.status;
-  return status === 429 || status === 529 || status === 503;
+  const { status, type } = (err ?? {}) as { status?: number; type?: string | null };
+  return status === 429 || status === 529 || status === 503
+    || type === 'overloaded_error' || type === 'rate_limit_error';
 }
 
 export async function createMessageWithFallback(
@@ -143,16 +146,62 @@ export async function createMessageWithFallback(
   }
 }
 
-export async function streamMessageWithFallback(
-  params: Omit<Parameters<typeof anthropic.messages.stream>[0], 'model'>,
-): Promise<{ stream: ReturnType<typeof anthropic.messages.stream>; modelUsed: string }> {
+/** The slice of the SDK's MessageStream / BetaMessageStream the fallback needs. */
+interface FallbackableStream<M> {
+  on(event: 'text', listener: (delta: string) => void): unknown;
+  finalMessage(): Promise<M>;
+}
+
+/**
+ * Stream a reply with a one-shot overload fallback.
+ *
+ * messages.stream() never throws synchronously — an overloaded model
+ * surfaces when the stream is consumed — so a try/catch around the stream()
+ * call can't catch it. This owns the stream instead: if the first model
+ * fails with a retryable error (429/529/503) before any text has reached
+ * `onText`, it starts over once on the second model. After text has been
+ * emitted it never restarts (the caller would see a doubled reply); the
+ * error is thrown.
+ *
+ * `start` builds the stream for a given model — size it with
+ * modelBudget(model, n) there, since the two tiers budget differently.
+ * `onModel` fires once with the model that is actually serving, before its
+ * first text. Tag cost with the returned `modelUsed`.
+ */
+export async function streamWithFallback<M>(opts: {
+  start: (model: string) => FallbackableStream<M>;
+  /** [first choice, backup]. Defaults to [primary, fallback]. */
+  models?: readonly [string, string];
+  onText?: (delta: string) => void;
+  onModel?: (model: string) => void;
+}): Promise<{ message: M; modelUsed: string; fellBack: boolean }> {
+  const [first, second] = opts.models ?? [CLAUDE_MODEL_PRIMARY, CLAUDE_MODEL_FALLBACK];
+  let textEmitted = false;
+
+  const attempt = async (model: string): Promise<M> => {
+    let announced = false;
+    const announce = () => {
+      if (announced) return;
+      announced = true;
+      opts.onModel?.(model);
+    };
+    const stream = opts.start(model);
+    stream.on('text', delta => {
+      announce();
+      textEmitted = true;
+      opts.onText?.(delta);
+    });
+    const message = await stream.finalMessage();
+    announce();
+    return message;
+  };
+
   try {
-    const stream = anthropic.messages.stream({ model: CLAUDE_MODEL_PRIMARY, ...params });
-    return { stream, modelUsed: CLAUDE_MODEL_PRIMARY };
+    return { message: await attempt(first), modelUsed: first, fellBack: false };
   } catch (err) {
-    if (!isRetryableStatus(err)) throw err;
-    const stream = anthropic.messages.stream({ model: CLAUDE_MODEL_FALLBACK, ...params });
-    return { stream, modelUsed: CLAUDE_MODEL_FALLBACK };
+    if (textEmitted || second === first || !isRetryableStatus(err)) throw err;
+    console.warn(`[claude] ${first} unavailable (${(err as { status?: number }).status ?? (err as { type?: string }).type}); retrying on ${second}`);
+    return { message: await attempt(second), modelUsed: second, fellBack: true };
   }
 }
 

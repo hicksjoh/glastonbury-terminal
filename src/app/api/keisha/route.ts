@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { CLAUDE_MODEL_PRIMARY, KEISHA_SYSTEM_PROMPT } from '@/lib/claude';
+import { KEISHA_SYSTEM_PROMPT } from '@/lib/claude';
 import { cachedSystem } from '@/lib/prompts';
 import { checkRateLimitDurable, getRateLimitIdentity } from '@/lib/rate-limit-durable';
 import { sanitizeInput } from '@/lib/sanitize';
@@ -87,7 +87,7 @@ TOOL USAGE RULES:
     }
 
     // ── Run agentic loop via shared module ──────────────────────────────
-    const { finalText, suggestions, actions, pendingConfirmations } = await runKeishaAgent({
+    const { finalText, suggestions, actions, pendingConfirmations, modelUsed } = await runKeishaAgent({
       messages: conversationHistory,
       system: cachedSystem(KEISHA_SYSTEM_PROMPT, dynamicContext),
       createPendingConfirmation: (p) =>
@@ -104,7 +104,7 @@ TOOL USAGE RULES:
 
     return NextResponse.json({
       content: finalText,
-      model: CLAUDE_MODEL_PRIMARY,
+      model: modelUsed,
       suggestions: suggestions.length > 0 ? suggestions : undefined,
       actions: actions.length > 0
         ? actions.map(a => ({ type: a.type, result: a.result, success: a.success, ...(a.renderCard ? { renderCard: a.renderCard } : {}) }))
