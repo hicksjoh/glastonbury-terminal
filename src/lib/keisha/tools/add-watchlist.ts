@@ -59,6 +59,10 @@ export const addWatchlist: ToolDef<z.infer<typeof inputSchema>> = {
       current_price: currentPrice,
     });
 
+    // 23505 = unique_violation: the row exists after all (added since the lookup, or the lookup failed).
+    if ((error as { code?: string } | null)?.code === '23505') {
+      return { result: { message: `${symbol} is already on your watchlist` }, success: true };
+    }
     if (error) return { result: { error: error.message }, success: false };
     return { result: { message: `Added ${symbol} (${companyName}) to watchlist` }, success: true };
   },
